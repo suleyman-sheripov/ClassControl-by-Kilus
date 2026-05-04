@@ -29,9 +29,17 @@ let lastX = 0, lastY = 0;
 let currentTool = 'brush'; // 'brush' или 'eraser'
 
 // --- Подключение к серверу ---
-socket.on('connect', () => {
+socket.on('connect', async () => {
     console.log('[TEACHER] Подключено к серверу:', socket.id);
-    socket.emit('register-teacher', 'main', teacherName);
+    let token = '';
+    if (window.electronAPI && window.electronAPI.getTeacherToken) {
+        token = await window.electronAPI.getTeacherToken();
+    }
+    socket.emit('register-teacher', 'main', teacherName, token);
+});
+
+socket.on('auth-error', (msg) => {
+    console.error('[TEACHER] Ошибка авторизации:', msg);
 });
 
 // --- Секция 1: Мониторинг ПК ---
