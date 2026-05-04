@@ -30,10 +30,13 @@ function createWindow() {
   });
 }
 
+let teacherToken = '';
+
 app.whenReady().then(() => {
   // --- Server integration ---
   try {
-    require('../server/server.js');
+    const serverModule = require('../server/server.js');
+    teacherToken = serverModule.TEACHER_TOKEN || '';
   } catch (err) {
     console.error('[TEACHER] Server startup error:', err.message);
   }
@@ -50,6 +53,8 @@ app.on('window-all-closed', function () {
 });
 
 // --- IPC Handlers ---
+ipcMain.handle('get-teacher-token', () => teacherToken);
+
 ipcMain.handle('get-sources', async () => {
   const sources = await desktopCapturer.getSources({
     types: ['window', 'screen'],

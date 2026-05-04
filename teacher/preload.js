@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Вызов получения источников экрана
   getSources: () => ipcRenderer.invoke('get-sources'),
   
+  // Токен авторизации учителя
+  getTeacherToken: () => ipcRenderer.invoke('get-teacher-token'),
+  
   // Слушатель событий навигации (если понадобится)
   onNavigate: (callback) => ipcRenderer.on('navigate', (event, path) => callback(path)),
   

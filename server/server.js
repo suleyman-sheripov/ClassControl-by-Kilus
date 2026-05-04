@@ -6,6 +6,12 @@ const multer = require('multer');
 const dgram = require('dgram');
 const os = require('os');
 const fs = require('fs');
+const crypto = require('crypto');
+
+// --- Токен авторизации учителя ---
+const TEACHER_TOKEN = process.env.TEACHER_TOKEN || crypto.randomBytes(24).toString('hex');
+console.log(`[SERVER] Teacher auth token: ${TEACHER_TOKEN}`);
+module.exports = { TEACHER_TOKEN };
 
 const app = express();
 const server = http.createServer(app);
@@ -151,10 +157,16 @@ app.post('/upload', (req, res) => {
 io.on('connection', (socket) => {
     console.log(`[SERVER] Новое подключение: ${socket.id}`);
 
-    // Регистрирация учителя
-    socket.on('register-teacher', (roomId, username) => {
+    // Регистрация учителя (требуется токен авторизации)
+    socket.on('register-teacher', (roomId, username, token) => {
+        if (token !== TEACHER_TOKEN) {
+            console.warn(`[SERVER] Неудачная попытка регистрации учителя: ${username} (неверный токен)`);
+            socket.emit('auth-error', 'Неверный токен авторизации учителя');
+            return;
+        }
         teacherSocket = socket;
         teacherName = username;
+        socket.isTeacher = true;
         console.log(`[SERVER] Учитель зарегистрирован: ${username}`);
         
         socket.emit('agents-list', Object.values(agents));
@@ -201,8 +213,9 @@ io.on('connection', (socket) => {
         socket.emit('agents-list', Object.values(agents));
     });
 
-    // Демонстрация (Broadcast)
+    // Демонстрация (Broadcast) — только учитель
     socket.on('start-broadcast', () => {
+        if (!socket.isTeacher) return;
         isBroadcasting = true;
         socket.broadcast.emit('broadcast-started');
         console.log('[SERVER] Трансляция началась');
@@ -218,6 +231,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('stop-broadcast', () => {
+        if (!socket.isTeacher) return;
         isBroadcasting = false;
         socket.broadcast.emit('broadcast-stopped');
         console.log('[SERVER] Трансляция остановлена');
@@ -236,19 +250,21 @@ io.on('connection', (socket) => {
         io.to(data.target).emit('ice-candidate', { source: socket.id, candidate: data.candidate });
     });
 
-    // Онлайн-доска
+    // Онлайн-доска — только учитель
     socket.on('draw', (data) => {
+        if (!socket.isTeacher) return;
         if (data.image) canvasState = data.image;
         socket.broadcast.emit('draw', data);
     });
 
     socket.on('clear-canvas', () => {
+        if (!socket.isTeacher) return;
         canvasState = null;
         socket.broadcast.emit('clear-canvas');
     });
 
-    // Whiteboard mode toggle (teacher switches tabs)
     socket.on('whiteboard-mode', (active) => {
+        if (!socket.isTeacher) return;
         socket.broadcast.emit('whiteboard-mode', active);
     });
 
@@ -272,10 +288,12 @@ io.on('connection', (socket) => {
 
     // Удаленное управление агентом
     socket.on('request-agent-screen', (agentId) => {
+        if (!socket.isTeacher) return;
         io.to(agentId).emit('request-screen-share');
     });
 
     socket.on('agent-control', (data) => {
+        if (!socket.isTeacher) return;
         io.to(data.agentId).emit('control-command', { 
             action: data.action, 
             data: data.data 
@@ -299,6 +317,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('teacher-close-share', (data) => {
+        if (!socket.isTeacher) return;
         io.to(data.userId).emit('force-stop-sharing');
     });
 
