@@ -40,6 +40,14 @@ function sanitize(str) {
 }
 
 // --- Настройка Multer (загрузка файлов) ---
+const ALLOWED_EXTENSIONS = [
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp',
+    '.txt', '.csv', '.rtf',
+    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg',
+    '.mp4', '.webm', '.mp3', '.wav', '.ogg',
+    '.zip', '.rar', '.7z', '.tar', '.gz'
+];
+
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         const uploadDir = path.join(__dirname, 'uploads');
@@ -49,11 +57,24 @@ const storage = multer.diskStorage({
         cb(null, uploadDir);
     },
     filename: function (req, file, cb) {
-        cb(null, Date.now() + '-' + file.originalname);
+        const ext = path.extname(file.originalname).toLowerCase();
+        const safeName = Date.now() + '-' + Math.random().toString(36).slice(2, 8) + ext;
+        cb(null, safeName);
     }
 });
+
+function fileFilter(req, file, cb) {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ALLOWED_EXTENSIONS.includes(ext)) {
+        cb(null, true);
+    } else {
+        cb(new Error(`Тип файла "${ext}" не разрешён. Допустимые: ${ALLOWED_EXTENSIONS.join(', ')}`));
+    }
+}
+
 const upload = multer({ 
     storage: storage,
+    fileFilter: fileFilter,
     limits: { fileSize: 50 * 1024 * 1024 } 
 });
 
@@ -62,22 +83,30 @@ app.use(express.static(path.join(__dirname, '../online')));
 app.use('/files', express.static(path.join(__dirname, 'uploads')));
 
 // Маршрут для загрузки файлов через чат
-app.post('/upload', upload.single('file'), (req, res) => {
-    if (!req.file) return res.status(400).send('No file uploaded.');
-    
-    const fileInfo = {
-        filename: sanitize(req.file.originalname),
-        url: `/files/${req.file.filename}`,
-        size: req.file.size,
-        timestamp: Date.now(),
-        sender: sanitize(req.body.sender || 'Unknown')
-    };
-    
-    io.emit('chat-file', fileInfo);
-    chatHistory.push({ type: 'file', ...fileInfo });
-    if (chatHistory.length > 200) chatHistory.shift();
-    
-    res.json(fileInfo);
+app.post('/upload', (req, res) => {
+    upload.single('file')(req, res, (err) => {
+        if (err) {
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(413).json({ error: 'Файл слишком большой. Максимум: 50 MB.' });
+            }
+            return res.status(400).json({ error: err.message });
+        }
+        if (!req.file) return res.status(400).json({ error: 'Файл не загружен.' });
+        
+        const fileInfo = {
+            filename: sanitize(req.file.originalname),
+            url: `/files/${req.file.filename}`,
+            size: req.file.size,
+            timestamp: Date.now(),
+            sender: sanitize(req.body.sender || 'Unknown')
+        };
+        
+        io.emit('chat-file', fileInfo);
+        chatHistory.push({ type: 'file', ...fileInfo });
+        if (chatHistory.length > 200) chatHistory.shift();
+        
+        res.json(fileInfo);
+    });
 });
 
 // --- Socket.IO Логика ---
