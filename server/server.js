@@ -54,6 +54,29 @@ let isBroadcasting = false;
 let canvasState = null;         // Последнее состояние доски (DataURL)
 let chatHistory = [];           // Массив сообщений чата (макс 200)
 
+// --- Rate Limiting (в памяти, по socketId / IP) ---
+const rateLimiters = new Map();
+
+function rateLimit(key, maxRequests, windowMs) {
+    const now = Date.now();
+    let entry = rateLimiters.get(key);
+    if (!entry || now - entry.start > windowMs) {
+        entry = { start: now, count: 1 };
+        rateLimiters.set(key, entry);
+        return true;
+    }
+    entry.count++;
+    return entry.count <= maxRequests;
+}
+
+// Очистка старых записей каждые 60 секунд
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of rateLimiters) {
+        if (now - entry.start > 60000) rateLimiters.delete(key);
+    }
+}, 60000);
+
 // --- Санитизация пользовательского ввода от XSS ---
 function sanitize(str) {
     return String(str)
@@ -126,8 +149,13 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, '../online')));
 app.use('/files', express.static(path.join(__dirname, 'uploads')));
 
-// Маршрут для загрузки файлов через чат
+// Маршрут для загрузки файлов через чат (rate limit: 5 файлов в 60 секунд на IP)
 app.post('/upload', (req, res) => {
+    const clientIP = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!rateLimit(`upload:${clientIP}`, 5, 60000)) {
+        return res.status(429).json({ error: 'Слишком много загрузок. Подождите минуту.' });
+    }
+
     upload.single('file')(req, res, (err) => {
         if (err) {
             if (err.code === 'LIMIT_FILE_SIZE') {
@@ -268,8 +296,16 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('whiteboard-mode', active);
     });
 
-    // Чат
+    // Чат (rate limit: 10 сообщений в 10 секунд на сокет)
     socket.on('chat-message', (data) => {
+        if (!rateLimit(`chat:${socket.id}`, 10, 10000)) {
+            socket.emit('chat-message', {
+                sender: 'Система',
+                text: 'Слишком много сообщений. Подождите несколько секунд.',
+                timestamp: Date.now()
+            });
+            return;
+        }
 
         const msg = { 
             sender: sanitize(data.sender), 
