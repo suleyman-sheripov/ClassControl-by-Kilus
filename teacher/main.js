@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, session } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog } = require('electron');
 const path = require('path');
 
 let mainWindow;
@@ -20,6 +20,27 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   mainWindow.setMenuBarVisibility(false);
+
+  // Подтверждение перед закрытием — закрытие окна убивает сервер и отключает всех учеников
+  mainWindow.on('close', (e) => {
+    if (app.isQuitting) return;
+    e.preventDefault();
+    dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Закрытие ClassControl',
+      message: 'Вы уверены, что хотите закрыть ClassControl?',
+      detail: 'Все подключённые ученики и агенты будут отключены. Сервер будет остановлен.',
+      buttons: ['Отмена', 'Закрыть'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    }).then(({ response }) => {
+      if (response === 1) {
+        app.isQuitting = true;
+        app.quit();
+      }
+    });
+  });
 
   // --- Electron 28+: enable getDisplayMedia in renderer ---
   session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
