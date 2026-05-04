@@ -7,13 +7,23 @@
     video { width: 100vw; height: 100vh; object-fit: contain; }
     canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; }
     #status { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #888; font-size: 1.2rem; font-family: sans-serif; }
+    #close-btn { position: fixed; top: 12px; right: 12px; z-index: 100; background: rgba(0,0,0,0.6);
+      color: #aaa; border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 6px 14px;
+      font-size: 0.8rem; font-family: sans-serif; cursor: pointer; opacity: 0; transition: opacity 0.3s; }
+    #close-btn:hover { background: rgba(220,38,38,0.8); color: white; opacity: 1; }
+    body:hover #close-btn { opacity: 0.6; }
   </style>
 </head>
 <body>
   <video id="demoVideo" autoplay playsinline></video>
   <canvas id="demoCanvas"></canvas>
   <div id="status">Подключение к трансляции...</div>
+  <button id="close-btn" title="Esc — закрыть демонстрацию">✕ Esc</button>
   <script>
+    // Закрытие по Escape или кнопке
+    document.getElementById('close-btn').addEventListener('click', () => window.electronAPI.closeDemo());
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.electronAPI.closeDemo(); });
+
     let socket = null;
     let teacherPC = null;
     const iceConfig = { iceServers: [{urls:'stun:stun.l.google.com:19302'}] };
