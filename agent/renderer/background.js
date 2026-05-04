@@ -1,4 +1,5 @@
 let socket = null;
+let screenshotInterval = null;
 let agentName = window.electronAPI.hostname || 'Ученик'; 
 
 // Ждём адрес сервера от main process
@@ -7,13 +8,24 @@ window.electronAPI.onServerAddress((address) => {
 });
 
 function connectToServer(address) {
-  if (socket) return; // Уже подключены
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+  stopScreenshots();
+
   socket = io(address);
 
   socket.on('connect', () => {
       console.log('[AGENT] Подключён:', socket.id);
       socket.emit('register-agent', agentName);
+      stopScreenshots();
       startScreenshots();
+    });
+
+    socket.on('disconnect', () => {
+      console.log('[AGENT] Отключён от сервера');
+      stopScreenshots();
     });
 
     // Удалённое управление
@@ -39,7 +51,8 @@ function connectToServer(address) {
 
 // Скриншоты каждую секунду
 function startScreenshots() {
-  setInterval(async () => {
+  if (screenshotInterval) return;
+  screenshotInterval = setInterval(async () => {
     if (!socket || !socket.connected) return;
     try {
         const imageBase64 = await window.electronAPI.takeScreenshot();
@@ -50,4 +63,11 @@ function startScreenshots() {
         console.error('Screenshot error', err);
     }
   }, 1000);
+}
+
+function stopScreenshots() {
+  if (screenshotInterval) {
+    clearInterval(screenshotInterval);
+    screenshotInterval = null;
+  }
 }
