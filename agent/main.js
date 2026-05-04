@@ -25,9 +25,10 @@ function createTray() {
   }
   tray.setToolTip('ClassControl Agent');
 
-  // ТОЛЬКО пункт "Открыть чат" — ПУНКТА "ВЫХОД" НЕТ!
   const contextMenu = Menu.buildFromTemplate([
-    { label: '💬 Открыть беседу', click: () => openChatWindow() }
+    { label: '💬 Открыть беседу', click: () => openChatWindow() },
+    { type: 'separator' },
+    { label: '❌ Выход', click: () => { app.isQuitting = true; app.quit(); } }
   ]);
   tray.setContextMenu(contextMenu);
 }
@@ -146,9 +147,11 @@ app.whenReady().then(() => {
   // setTimeout(discoverServer, 1000); 
 });
 
-// НЕ закрывать приложение при закрытии всех окон!
+// НЕ закрывать приложение при закрытии всех окон — остаёмся в трее
 app.on('window-all-closed', () => {
-  // Пустой обработчик — остаёмся в трее
+  if (app.isQuitting) {
+    app.quit();
+  }
 });
 
 // LAN Discovery (встроен в main.js)
