@@ -69,13 +69,26 @@
 
     function renderMessage(m) {
       const d = document.createElement('div'); d.className = 'msg';
-      d.innerHTML = `<span class="author">${m.sender}:</span> ${m.text}`;
+      const authorSpan = document.createElement('span');
+      authorSpan.className = 'author';
+      authorSpan.textContent = m.sender + ':';
+      d.appendChild(authorSpan);
+      d.appendChild(document.createTextNode(' ' + m.text));
       document.getElementById('messages').appendChild(d);
       d.scrollIntoView();
     }
     function renderFile(m) {
       const d = document.createElement('div'); d.className = 'msg file';
-      d.innerHTML = `<span class="author">${m.sender}:</span> 📎 <a href="${socket.io.uri}${m.url}" target="_blank">${m.filename}</a>`;
+      const authorSpan = document.createElement('span');
+      authorSpan.className = 'author';
+      authorSpan.textContent = m.sender + ':';
+      d.appendChild(authorSpan);
+      d.appendChild(document.createTextNode(' 📎 '));
+      const link = document.createElement('a');
+      link.href = socket.io.uri + m.url;
+      link.target = '_blank';
+      link.textContent = m.filename;
+      d.appendChild(link);
       document.getElementById('messages').appendChild(d);
       d.scrollIntoView();
     }

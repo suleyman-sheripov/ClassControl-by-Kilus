@@ -28,6 +28,17 @@ let isBroadcasting = false;
 let canvasState = null;         // Последнее состояние доски (DataURL)
 let chatHistory = [];           // Массив сообщений чата (макс 200)
 
+// --- Санитизация пользовательского ввода от XSS ---
+function sanitize(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#x27;')
+        .replace(/`/g, '&#x60;');
+}
+
 // --- Настройка Multer (загрузка файлов) ---
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -55,11 +66,11 @@ app.post('/upload', upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).send('No file uploaded.');
     
     const fileInfo = {
-        filename: req.file.originalname,
+        filename: sanitize(req.file.originalname),
         url: `/files/${req.file.filename}`,
         size: req.file.size,
         timestamp: Date.now(),
-        sender: req.body.sender || 'Unknown'
+        sender: sanitize(req.body.sender || 'Unknown')
     };
     
     io.emit('chat-file', fileInfo);
@@ -88,7 +99,7 @@ io.on('connection', (socket) => {
     socket.on('register-agent', (agentName) => {
         agents[socket.id] = { 
             id: socket.id, 
-            name: agentName,
+            name: sanitize(agentName),
             ip: socket.handshake.address 
         };
         console.log(`[SERVER] Агент зарегистрирован: ${agentName} (${socket.id})`);
@@ -100,7 +111,7 @@ io.on('connection', (socket) => {
 
     // Регистрация онлайн-участника (из дома)
     socket.on('register-online-user', (username) => {
-        onlineUsers[socket.id] = { id: socket.id, name: username };
+        onlineUsers[socket.id] = { id: socket.id, name: sanitize(username) };
         console.log(`[SERVER] Онлайн-пользователь вошел: ${username}`);
         
         if (teacherSocket) {
@@ -176,8 +187,7 @@ io.on('connection', (socket) => {
 
     // Чат
     socket.on('chat-message', (data) => {
-        // Санитизация от XSS
-        const sanitize = (str) => String(str).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
         const msg = { 
             sender: sanitize(data.sender), 
             text: sanitize(data.text), 

@@ -53,19 +53,41 @@ socket.on('agents-list', (agents) => {
         const card = document.createElement('div');
         card.className = 'pc-card';
         card.setAttribute('data-agent-id', agent.id);
-        card.innerHTML = `
-            <img class="screenshot" id="screen-${agent.id}" src="" alt="Экран ${agent.name}">
-            <div class="pc-info">
-                <span class="pc-name">${agent.name}</span>
-                <button class="btn btn-primary" style="padding: 4px 8px; font-size: 0.7rem;" onclick="openRemoteControl('${agent.id}', '${agent.name}')">🖱️ Управление</button>
-            </div>
-        `;
+
+        const img = document.createElement('img');
+        img.className = 'screenshot';
+        img.id = `screen-${agent.id}`;
+        img.src = '';
+        img.alt = `Экран ${agent.name}`;
+        card.appendChild(img);
+
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'pc-info';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'pc-name';
+        nameSpan.textContent = agent.name;
+        infoDiv.appendChild(nameSpan);
+
+        const controlBtn = document.createElement('button');
+        controlBtn.className = 'btn btn-primary';
+        controlBtn.style.cssText = 'padding: 4px 8px; font-size: 0.7rem;';
+        controlBtn.textContent = '🖱️ Управление';
+        controlBtn.addEventListener('click', () => openRemoteControl(agent.id, agent.name));
+        infoDiv.appendChild(controlBtn);
+
+        card.appendChild(infoDiv);
         monitoringGrid.appendChild(card);
 
         // Добавляем в список слева
         const li = document.createElement('li');
         li.className = 'item-list-entry';
-        li.innerHTML = `<span>🖥️ ${agent.name}</span> <span class="status-dot"></span>`;
+        const liSpan = document.createElement('span');
+        liSpan.textContent = `🖥️ ${agent.name}`;
+        li.appendChild(liSpan);
+        const dotSpan = document.createElement('span');
+        dotSpan.className = 'status-dot';
+        li.appendChild(dotSpan);
         agentsListUl.appendChild(li);
     });
 });
@@ -403,7 +425,11 @@ socket.on('chat-history', (history) => {
 function renderChatMessage(msg) {
     const div = document.createElement('div');
     div.className = 'chat-msg';
-    div.innerHTML = `<span class="sender">${msg.sender}:</span> ${msg.text}`;
+    const senderSpan = document.createElement('span');
+    senderSpan.className = 'sender';
+    senderSpan.textContent = msg.sender + ':';
+    div.appendChild(senderSpan);
+    div.appendChild(document.createTextNode(' ' + msg.text));
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
@@ -412,7 +438,18 @@ function renderChatFile(msg) {
     const div = document.createElement('div');
     div.className = 'chat-msg chat-file';
     const sizeMB = (msg.size / 1024 / 1024).toFixed(1);
-    div.innerHTML = `<span class="sender">${msg.sender}:</span> 📎 <a href="http://localhost:3000${msg.url}" target="_blank" download="${msg.filename}">${msg.filename}</a> (${sizeMB} MB)`;
+    const senderSpan = document.createElement('span');
+    senderSpan.className = 'sender';
+    senderSpan.textContent = msg.sender + ':';
+    div.appendChild(senderSpan);
+    div.appendChild(document.createTextNode(' 📎 '));
+    const link = document.createElement('a');
+    link.href = `http://localhost:3000${msg.url}`;
+    link.target = '_blank';
+    link.download = msg.filename;
+    link.textContent = msg.filename;
+    div.appendChild(link);
+    div.appendChild(document.createTextNode(` (${sizeMB} MB)`));
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
@@ -425,7 +462,12 @@ socket.on('online-users-list', (users) => {
     users.forEach(u => {
         const li = document.createElement('li');
         li.className = 'item-list-entry';
-        li.innerHTML = `<span>👤 ${u.name}</span> <span class="status-dot"></span>`;
+        const uSpan = document.createElement('span');
+        uSpan.textContent = `👤 ${u.name}`;
+        li.appendChild(uSpan);
+        const uDot = document.createElement('span');
+        uDot.className = 'status-dot';
+        li.appendChild(uDot);
         onlineUsersListUl.appendChild(li);
     });
 });
