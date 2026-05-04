@@ -1,3 +1,6 @@
 node_modules/
 cloudflared.exe
 agent/node_modules/
+server/uploads/
+*.tmp
+dist/
