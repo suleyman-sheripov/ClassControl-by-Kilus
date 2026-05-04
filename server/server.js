@@ -9,9 +9,29 @@ const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
+
+// --- CORS: разрешаем только localhost и локальную сеть ---
+function isAllowedOrigin(origin) {
+    if (!origin) return true;
+    try {
+        const { hostname } = new URL(origin);
+        if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+        if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
+        if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
+        if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
+    } catch (e) {}
+    return false;
+}
+
 const io = new Server(server, {
     cors: {
-        origin: "*",
+        origin: function (origin, callback) {
+            if (isAllowedOrigin(origin)) {
+                callback(null, true);
+            } else {
+                callback(new Error('CORS: origin not allowed'));
+            }
+        },
         methods: ["GET", "POST"]
     }
 });
@@ -79,6 +99,24 @@ const upload = multer({
 });
 
 // --- Express Middleware & Static ---
+
+// Базовые заголовки безопасности
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+    const origin = req.headers.origin;
+    if (isAllowedOrigin(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin || '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    }
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+});
+
 app.use(express.static(path.join(__dirname, '../online')));
 app.use('/files', express.static(path.join(__dirname, 'uploads')));
 
