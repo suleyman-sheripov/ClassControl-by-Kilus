@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, desktopCapturer } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, desktopCapturer, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const dgram = require('dgram');
@@ -211,6 +211,11 @@ ipcMain.on('server-found', (event, address) => {
 ipcMain.on('open-demo', () => openDemoWindow());
 ipcMain.on('close-demo', () => closeDemoWindow());
 ipcMain.on('open-chat', () => openChatWindow());
+
+ipcMain.on('show-notification', (event, { title, body }) => {
+  if (!settings.showNotifications) return;
+  new Notification({ title, body }).show();
+});
 
 // Для скриншотов
 ipcMain.handle('take-screenshot', async () => {

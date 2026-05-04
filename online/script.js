@@ -118,6 +118,12 @@ socket.on('broadcast-stopped', () => {
     document.getElementById('waiting-msg').classList.remove('hidden');
 });
 
+socket.on('teacher-disconnected', () => {
+    console.log('[ONLINE] Учитель отключился');
+    document.getElementById('waiting-msg').textContent = 'Учитель отключился. Ожидание переподключения...';
+    document.getElementById('waiting-msg').classList.remove('hidden');
+});
+
 // WebRTC: receive offer from teacher, create answer
 socket.on('offer', async ({ source, sdp }) => {
     console.log('[ONLINE] Received offer from', source);

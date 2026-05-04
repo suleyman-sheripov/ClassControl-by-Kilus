@@ -329,6 +329,8 @@ io.on('connection', (socket) => {
             teacherSocket = null;
             isBroadcasting = false;
             console.log('[SERVER] Учитель отключился');
+            io.emit('teacher-disconnected');
+            io.emit('broadcast-stopped');
         } else if (agents[socket.id]) {
             console.log(`[SERVER] Агент отключился: ${agents[socket.id].name}`);
             delete agents[socket.id];

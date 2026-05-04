@@ -47,6 +47,13 @@ function connectToServer(address) {
     socket.on('broadcast-stopped', () => {
       window.electronAPI.closeDemo();
     });
+
+    // Уведомление об отключении учителя
+    socket.on('teacher-disconnected', () => {
+      console.log('[AGENT] Учитель отключился');
+      window.electronAPI.closeDemo();
+      window.electronAPI.showNotification('ClassControl', 'Учитель отключился от сервера');
+    });
 }
 
 // Скриншоты каждую секунду
