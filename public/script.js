@@ -167,15 +167,20 @@ function updateParticipantsList(participants) {
         participants.forEach(p => {
             const div = document.createElement('div');
             div.className = 'participant-item';
-            // Небольшой кружок-аватарка и имя
-            div.innerHTML = `
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <div style="width: 24px; height: 24px; border-radius: 50%; background: var(--accent-color); display: flex; align-items: center; justify-content: center; color: white; font-size: 0.75rem; font-weight: bold;">
-                        ${p.name.charAt(0).toUpperCase()}
-                    </div>
-                    <span>${p.name}</span>
-                </div>
-            `;
+
+            const row = document.createElement('div');
+            row.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+
+            const avatar = document.createElement('div');
+            avatar.style.cssText = 'width: 24px; height: 24px; border-radius: 50%; background: var(--accent-color); display: flex; align-items: center; justify-content: center; color: white; font-size: 0.75rem; font-weight: bold;';
+            avatar.textContent = p.name.charAt(0).toUpperCase();
+            row.appendChild(avatar);
+
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = p.name;
+            row.appendChild(nameSpan);
+
+            div.appendChild(row);
             list.appendChild(div);
         });
     }
@@ -204,11 +209,23 @@ function updateAgentsList(agents) {
         const card = document.createElement('div');
         card.className = 'computer-card';
         card.onclick = () => viewAgent(agent.id, agent.name);
-        card.innerHTML = `
-            <div class="screen-thumbnail">🖥️</div>
-            <div class="pc-name" title="${agent.name}">${agent.name}</div>
-            <button class="btn-connect">Управление</button>
-        `;
+
+        const thumb = document.createElement('div');
+        thumb.className = 'screen-thumbnail';
+        thumb.textContent = '🖥️';
+        card.appendChild(thumb);
+
+        const pcName = document.createElement('div');
+        pcName.className = 'pc-name';
+        pcName.title = agent.name;
+        pcName.textContent = agent.name;
+        card.appendChild(pcName);
+
+        const btn = document.createElement('button');
+        btn.className = 'btn-connect';
+        btn.textContent = 'Управление';
+        card.appendChild(btn);
+
         list.appendChild(card);
     });
 }

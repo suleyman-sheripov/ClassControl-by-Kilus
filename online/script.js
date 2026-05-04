@@ -72,7 +72,11 @@ socket.on('chat-history', (history) => {
 function renderChatMessage(msg) {
     const div = document.createElement('div');
     div.className = 'chat-msg';
-    div.innerHTML = `<span class="sender">${msg.sender}:</span> ${msg.text}`;
+    const senderSpan = document.createElement('span');
+    senderSpan.className = 'sender';
+    senderSpan.textContent = msg.sender + ':';
+    div.appendChild(senderSpan);
+    div.appendChild(document.createTextNode(' ' + msg.text));
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
@@ -81,7 +85,18 @@ function renderChatFile(msg) {
     const div = document.createElement('div');
     div.className = 'chat-msg file';
     const sizeMB = (msg.size / 1024 / 1024).toFixed(1);
-    div.innerHTML = `<span class="sender">${msg.sender}:</span> 📎 <a href="${window.location.origin}${msg.url}" target="_blank" download="${msg.filename}">${msg.filename}</a> (${sizeMB} MB)`;
+    const senderSpan = document.createElement('span');
+    senderSpan.className = 'sender';
+    senderSpan.textContent = msg.sender + ':';
+    div.appendChild(senderSpan);
+    div.appendChild(document.createTextNode(' 📎 '));
+    const link = document.createElement('a');
+    link.href = `${window.location.origin}${msg.url}`;
+    link.target = '_blank';
+    link.download = msg.filename;
+    link.textContent = msg.filename;
+    div.appendChild(link);
+    div.appendChild(document.createTextNode(` (${sizeMB} MB)`));
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
