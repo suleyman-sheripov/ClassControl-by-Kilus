@@ -1,5 +1,6 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, desktopCapturer } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const dgram = require('dgram');
 
 let tray = null;
@@ -8,12 +9,104 @@ let chatWindow = null;    // Окно чата
 let demoWindow = null;    // Окно демонстрации (fullscreen)
 let serverAddress = null; // 'http://IP:PORT'
 
-// Автозапуск с Windows
-app.setLoginItemSettings({
-  openAtLogin: true,
-  path: app.getPath('exe'),
-  args: ['--hidden']
-});
+// --- Настройки агента (с сохранением в файл) ---
+const SETTINGS_PATH = path.join(app.getPath('userData'), 'agent-settings.json');
+
+const DEFAULT_SETTINGS = {
+  showExitButton: false,      // Скрыта по умолчанию (чтобы ученики не вырубали)
+  autoStartWithOS: true,      // Автозапуск с Windows
+  showNotifications: true,    // Показывать уведомления в трее
+  screenshotInterval: 1000    // Интервал скриншотов (мс)
+};
+
+let settings = { ...DEFAULT_SETTINGS };
+
+function loadSettings() {
+  try {
+    if (fs.existsSync(SETTINGS_PATH)) {
+      const data = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
+      settings = { ...DEFAULT_SETTINGS, ...data };
+    }
+  } catch (err) {
+    console.error('[AGENT] Ошибка загрузки настроек:', err.message);
+    settings = { ...DEFAULT_SETTINGS };
+  }
+}
+
+function saveSettings() {
+  try {
+    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('[AGENT] Ошибка сохранения настроек:', err.message);
+  }
+}
+
+function applyAutoStart() {
+  app.setLoginItemSettings({
+    openAtLogin: settings.autoStartWithOS,
+    path: app.getPath('exe'),
+    args: ['--hidden']
+  });
+}
+
+// --- Трей и контекстное меню ---
+
+function buildTrayMenu() {
+  const menuItems = [
+    { label: '💬 Открыть беседу', click: () => openChatWindow() },
+    { type: 'separator' },
+    {
+      label: '⚙️ Настройки',
+      submenu: [
+        {
+          label: 'Показывать кнопку "Выход"',
+          type: 'checkbox',
+          checked: settings.showExitButton,
+          click: (menuItem) => {
+            settings.showExitButton = menuItem.checked;
+            saveSettings();
+            rebuildTrayMenu();
+          }
+        },
+        {
+          label: 'Автозапуск с Windows',
+          type: 'checkbox',
+          checked: settings.autoStartWithOS,
+          click: (menuItem) => {
+            settings.autoStartWithOS = menuItem.checked;
+            saveSettings();
+            applyAutoStart();
+          }
+        },
+        {
+          label: 'Показывать уведомления',
+          type: 'checkbox',
+          checked: settings.showNotifications,
+          click: (menuItem) => {
+            settings.showNotifications = menuItem.checked;
+            saveSettings();
+          }
+        }
+      ]
+    }
+  ];
+
+  if (settings.showExitButton) {
+    menuItems.push({ type: 'separator' });
+    menuItems.push({
+      label: '❌ Выход',
+      click: () => { app.isQuitting = true; app.quit(); }
+    });
+  }
+
+  return Menu.buildFromTemplate(menuItems);
+}
+
+function rebuildTrayMenu() {
+  if (tray && !tray.isDestroyed()) {
+    tray.setContextMenu(buildTrayMenu());
+  }
+}
 
 function createTray() {
   const iconPath = path.join(__dirname, 'assets', 'icon.png');
@@ -24,12 +117,7 @@ function createTray() {
     return;
   }
   tray.setToolTip('ClassControl Agent');
-
-  // ТОЛЬКО пункт "Открыть чат" — ПУНКТА "ВЫХОД" НЕТ!
-  const contextMenu = Menu.buildFromTemplate([
-    { label: '💬 Открыть беседу', click: () => openChatWindow() }
-  ]);
-  tray.setContextMenu(contextMenu);
+  tray.setContextMenu(buildTrayMenu());
 }
 
 function createHiddenWindow() {
@@ -135,6 +223,8 @@ ipcMain.handle('take-screenshot', async () => {
 
 // Жизненный цикл
 app.whenReady().then(() => {
+  loadSettings();
+  applyAutoStart();
   createTray();
   createHiddenWindow();
   
@@ -146,9 +236,11 @@ app.whenReady().then(() => {
   // setTimeout(discoverServer, 1000); 
 });
 
-// НЕ закрывать приложение при закрытии всех окон!
+// НЕ закрывать приложение при закрытии всех окон — остаёмся в трее
 app.on('window-all-closed', () => {
-  // Пустой обработчик — остаёмся в трее
+  if (app.isQuitting) {
+    app.quit();
+  }
 });
 
 // LAN Discovery (встроен в main.js)
