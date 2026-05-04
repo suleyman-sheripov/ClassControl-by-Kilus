@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html><head>
+  <meta charset="UTF-8">
+  <title>Демонстрация</title>
+  <style>
+    * { margin: 0; } body { background: black; overflow: hidden; }
+    video { width: 100vw; height: 100vh; object-fit: contain; }
+    canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; }
+    #status { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #888; font-size: 1.2rem; font-family: sans-serif; }
+  </style>
+</head>
+<body>
+  <video id="demoVideo" autoplay playsinline></video>
+  <canvas id="demoCanvas"></canvas>
+  <div id="status">Подключение к трансляции...</div>
+  <script>
+    let socket = null;
+    let teacherPC = null;
+    const iceConfig = { iceServers: [{urls:'stun:stun.l.google.com:19302'}] };
+
+    window.electronAPI.onServerAddress((address) => {
+      const s = document.createElement('script');
+      s.src = address + '/socket.io/socket.io.js';
+      s.onload = () => {
+        socket = io(address);
+        console.log('[DEMO] Connected to', address);
+        
+        socket.on('offer', async ({ source, sdp }) => {
+            console.log('[DEMO] Received offer from', source);
+            
+            if (teacherPC) teacherPC.close();
+            teacherPC = new RTCPeerConnection(iceConfig);
+            
+            teacherPC.ontrack = (e) => { 
+                console.log('[DEMO] Got track:', e.track.kind);
+                document.getElementById('demoVideo').srcObject = e.streams[0];
+                document.getElementById('status').style.display = 'none';
+            };
+            teacherPC.onicecandidate = (e) => { 
+                if(e.candidate) socket.emit('ice-candidate',{target:source,candidate:e.candidate}); 
+            };
+            teacherPC.onconnectionstatechange = () => {
+                console.log('[DEMO] Connection:', teacherPC.connectionState);
+            };
+            
+            await teacherPC.setRemoteDescription(new RTCSessionDescription(sdp));
+            const answer = await teacherPC.createAnswer();
+            await teacherPC.setLocalDescription(answer);
+            socket.emit('answer', { target: source, sdp: teacherPC.localDescription });
+        });
+
+        // Handle ICE candidates from teacher
+        socket.on('ice-candidate', async ({ source, candidate }) => {
+            if (teacherPC) {
+                try {
+                    await teacherPC.addIceCandidate(candidate);
+                } catch(err) {
+                    console.error('[DEMO] ICE error:', err);
+                }
+            }
+        });
+
+        // Whiteboard rendering over demo video
+        const canvas = document.getElementById('demoCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Whiteboard mode
+        socket.on('whiteboard-mode', (active) => {
+            if (active) {
+                canvas.style.background = 'white';
+                document.getElementById('status').style.display = 'none';
+            } else {
+                canvas.style.background = 'transparent';
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        });
+
+        socket.on('draw', (data) => {
+            const x0 = data.x0 * canvas.width;
+            const y0 = data.y0 * canvas.height;
+            const x1 = data.x1 * canvas.width;
+            const y1 = data.y1 * canvas.height;
+
+            ctx.beginPath();
+            ctx.moveTo(x0, y0);
+            ctx.lineTo(x1, y1);
+            
+            if (data.tool === 'eraser') {
+                ctx.globalCompositeOperation = 'destination-out';
+            } else {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = data.color;
+            }
+            
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = data.width;
+            ctx.stroke();
+        });
+
+        socket.on('clear-canvas', () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        });
+
+        socket.on('broadcast-stopped', () => {
+            if (teacherPC) { teacherPC.close(); teacherPC = null; }
+            document.getElementById('demoVideo').srcObject = null;
+            // Close demo window via IPC
+            window.electronAPI.closeDemo();
+        });
+      };
+      document.head.appendChild(s);
+    });
+  </script>
+</body>
+</html>

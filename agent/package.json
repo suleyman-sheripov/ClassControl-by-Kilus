@@ -1,0 +1,34 @@
+{
+  "name": "classcontrol-agent",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.classcontrol.agent",
+    "productName": "ClassControl Agent",
+    "directories": {
+      "output": "../dist/agent"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "menuCategory": "ClassControl",
+      "shortcutName": "ClassControl Configurator"
+    }
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.0"
+  }
+}

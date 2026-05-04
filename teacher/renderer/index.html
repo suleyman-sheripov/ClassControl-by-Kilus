@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClassControl — Учитель</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app-container">
+        <!-- Навигационная панель сверху (Тулбар) -->
+        <header class="main-header">
+            <div class="logo">
+                <span class="icon">🛡️</span>
+                <span class="text">ClassControl</span>
+            </div>
+            
+            <div class="header-center">
+                <div class="tabs">
+                    <button id="tab-monitoring" class="tab-btn active">
+                        <span class="tab-icon">💻</span> Мониторинг ПК
+                    </button>
+                    <button id="tab-whiteboard" class="tab-btn">
+                        <span class="tab-icon">🖍️</span> Онлайн-доска
+                    </button>
+                </div>
+            </div>
+
+            <div class="header-right">
+                <div id="record-timer" class="record-timer hidden">00:00</div>
+                <button id="recordBtn" class="btn btn-ghost">🔴 Запись</button>
+                <div class="user-profile">
+                    <span id="teacher-name-display">Учитель</span>
+                    <div class="status-indicator online"></div>
+                </div>
+            </div>
+        </header>
+
+        <main class="content-layout">
+            <!-- Левая колонка: Участники и Чат -->
+            <aside class="sidebar sidebar-left">
+                <section class="panel participants-panel">
+                    <div class="panel-header">
+                        <h3>👥 В классе (<span id="agents-count">0</span>)</h3>
+                    </div>
+                    <ul id="agents-list" class="item-list">
+                        <!-- Список агентов (ПК в классе) -->
+                    </ul>
+                </section>
+
+                <section class="panel online-panel">
+                    <div class="panel-header">
+                        <h3>🏠 Онлайн (<span id="online-count">0</span>)</h3>
+                    </div>
+                    <ul id="online-users-list" class="item-list">
+                        <!-- Список онлайн-участников -->
+                    </ul>
+                </section>
+
+                <section class="panel chat-panel">
+                    <div class="panel-header">
+                        <h3>💬 Общий чат</h3>
+                    </div>
+                    <div id="chat-messages" class="chat-messages">
+                        <!-- Сообщения чата -->
+                    </div>
+                    <div class="chat-input-wrapper">
+                        <button id="chat-attach-btn" class="chat-action-btn">📎</button>
+                        <input type="file" id="chat-file-input" class="hidden">
+                        <input type="text" id="chat-text-input" placeholder="Написать..." autocomplete="off">
+                        <button id="chat-send-btn" class="chat-send-btn">→</button>
+                    </div>
+                </section>
+            </aside>
+
+            <!-- Центральная область: Сетка или Доска -->
+            <section class="main-viewport">
+                <!-- Мониторинг (Сетка ПК) -->
+                <div id="monitoring-grid" class="monitoring-grid">
+                    <!-- Сюда будут добавляться карточки ПК .pc-card -->
+                    <div class="grid-placeholder">Ожидание подключения компьютеров...</div>
+                </div>
+
+                <!-- Онлайн-доска (Скрыта по умолчанию) -->
+                <div id="whiteboard-container" class="whiteboard-container hidden">
+                    <canvas id="whiteboard"></canvas>
+                </div>
+            </section>
+
+            <!-- Правая колонка: Студия эфира и Инструменты -->
+            <aside class="sidebar sidebar-right">
+                <section class="panel studio-panel">
+                    <div class="panel-header">
+                        <h3>🎥 Студия эфира</h3>
+                    </div>
+                    <div class="broadcast-preview">
+                        <video id="preview-video" autoplay playsinline muted></video>
+                        <div id="preview-placeholder" class="preview-placeholder">
+                            <span>Нет активного потока</span>
+                        </div>
+                    </div>
+                    
+                    <div class="studio-controls">
+                        <label class="control-label">Качество</label>
+                        <select id="qualitySelect" class="styled-select">
+                            <option value="1920x1080">1080p (Full HD)</option>
+                            <option value="1280x720" selected>720p (HD)</option>
+                            <option value="854x480">480p (SD)</option>
+                        </select>
+
+                        <label class="control-label">Частота кадров</label>
+                        <div class="fps-toggle">
+                            <button id="fps30" class="fps-btn active">30 FPS</button>
+                            <button id="fps60" class="fps-btn">60 FPS</button>
+                        </div>
+
+                        <button id="btn-start-broadcast" class="btn btn-primary w-full mt-4">Начать эфир</button>
+                        <button id="btn-stop-broadcast" class="btn btn-danger w-full mt-4 hidden">Остановить эфир</button>
+                    </div>
+                </section>
+
+                <!-- Инструменты доски (Показываются только на вкладке Доска) -->
+                <section id="whiteboard-tools-section" class="panel tools-panel hidden">
+                    <div class="panel-header">
+                        <h3>🎨 Инструменты</h3>
+                    </div>
+                    <div class="tools-grid">
+                        <button id="tool-brush" class="tool-btn active" title="Кисть">🖌️</button>
+                        <button id="tool-eraser" class="tool-btn" title="Ластик">🧽</button>
+                        <button id="clear-canvas-btn" class="tool-btn danger" title="Очистить">🗑️</button>
+                    </div>
+                    <div id="brush-color-row" class="tool-row">
+                        <label>Цвет:</label>
+                        <input type="color" id="colorPicker" value="#6366f1">
+                    </div>
+                    <div class="tool-row">
+                        <label>Толщина:</label>
+                        <input type="range" id="lineWidth" min="1" max="25" value="5">
+                    </div>
+                </section>
+            </aside>
+        </main>
+
+        <!-- Модальное окно Удаленного управления -->
+        <div id="remote-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="remote-modal-title">Удаленное управление: ПК-01</h2>
+                    <button id="remote-modal-close" class="close-btn">&times;</button>
+                </div>
+                <div class="remote-viewer-wrapper">
+                    <video id="remote-video" autoplay playsinline></video>
+                    <div id="remote-mouse-catcher" class="mouse-catcher"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Зависимости -->
+    <script src="http://localhost:3000/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

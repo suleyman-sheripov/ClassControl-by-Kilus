@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Алгоритм автоматического обнаружения</title>
+    <style>
+        body {
+            background: #f8fafc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+        }
+        .diagram {
+            position: relative;
+            width: 760px;
+            height: 400px;
+        }
+        
+        /* Вертикальные линии (пунктир) */
+        .line {
+            position: absolute;
+            top: 50px;
+            bottom: 0;
+            border-left: 2px dashed #94a3b8;
+            z-index: 1;
+        }
+        .l-1 { left: 120px; }
+        .l-2 { left: 380px; }
+        .l-3 { left: 640px; }
+
+        /* Узлы (Участники) */
+        .actor {
+            position: absolute;
+            top: 0;
+            width: 200px;
+            height: 40px;
+            line-height: 40px;
+            text-align: center;
+            border: 2px solid;
+            background: white;
+            font-weight: bold;
+            border-radius: 4px;
+            font-size: 14px;
+            z-index: 2;
+            margin-left: -100px; /* Центрирование относительно линии */
+        }
+        .a-1 { left: 120px; border-color: #16a34a; color: #14532d; }
+        .a-2 { left: 380px; border-color: #ca8a04; color: #78350f; }
+        .a-3 { left: 640px; border-color: #2563eb; color: #1e3a8a; }
+
+        /* Горизонтальные линии (Стрелки) */
+        .msg {
+            position: absolute;
+            height: 2px;
+            background: #334155;
+            z-index: 3;
+        }
+        
+        /* Текст над стрелкой */
+        .msg-text {
+            position: absolute;
+            width: 100%;
+            text-align: center;
+            top: -22px;
+            font-size: 14px;
+            color: #0f172a;
+            font-weight: 500;
+        }
+        
+        /* Наконечники стрелок */
+        .arrow-right::after {
+            content: '';
+            position: absolute;
+            right: -2px;
+            top: -4px;
+            border-top: 5px solid transparent;
+            border-bottom: 5px solid transparent;
+            border-left: 10px solid #334155;
+        }
+        .arrow-left::before {
+            content: '';
+            position: absolute;
+            left: -2px;
+            top: -4px;
+            border-top: 5px solid transparent;
+            border-bottom: 5px solid transparent;
+            border-right: 10px solid #334155;
+        }
+
+        /* Координаты шагов (жестко привязаны к линиям) */
+        .m-1 { top: 120px; left: 120px; width: 260px; }
+        .m-2 { top: 190px; left: 120px; width: 260px; }
+        .m-3 { top: 260px; left: 120px; width: 260px; }
+        .m-4 { top: 330px; left: 380px; width: 260px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="diagram">
+            <!-- Вертикальные оси -->
+            <div class="line l-1"></div>
+            <div class="line l-2"></div>
+            <div class="line l-3"></div>
+
+            <!-- Узлы -->
+            <div class="actor a-1">Программа-агент</div>
+            <div class="actor a-2">Сервер маршрутизации</div>
+            <div class="actor a-3">Приложение преподавателя</div>
+
+            <!-- Шаг 1 -->
+            <div class="msg m-1 arrow-right">
+                <div class="msg-text">1. Широковещательный запрос в сеть</div>
+            </div>
+
+            <!-- Шаг 2 -->
+            <div class="msg m-2 arrow-left">
+                <div class="msg-text">2. Ответ с сетевым адресом сервера</div>
+            </div>
+
+            <!-- Шаг 3 -->
+            <div class="msg m-3 arrow-right">
+                <div class="msg-text">3. Установка постоянного соединения</div>
+            </div>
+
+            <!-- Шаг 4 -->
+            <div class="msg m-4 arrow-right">
+                <div class="msg-text">4. Передача данных о новом ученике</div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

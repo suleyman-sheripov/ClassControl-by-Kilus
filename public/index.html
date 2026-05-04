@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StreamHub | Интерактивные трансляции</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div id="main-container">
+        <!-- Entry View -->
+        <div id="entry-controls">
+            <h1>StreamHub</h1>
+
+            <div class="input-group">
+                <input type="text" id="usernameInput" placeholder="Ваше имя" />
+                <div
+                    style="display: flex; align-items: center; gap: 0.5rem; justify-content: flex-start; margin-top: 0.5rem;">
+                    <input type="checkbox" id="rememberMe">
+                    <label for="rememberMe" style="color: var(--text-muted); font-size: 0.9rem;">Запомнить меня</label>
+                </div>
+            </div>
+
+            <div class="input-group">
+                <input type="text" id="roomIdInput" placeholder="ID комнаты (для подключения)" />
+                <button id="joinRoomBtn" class="btn btn-primary">Подключиться</button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 1rem; margin: 1.5rem 0;">
+                <div style="flex: 1; height: 1px; background-color: var(--border-color);"></div>
+                <span style="color: var(--text-muted); font-size: 0.9rem;">ИЛИ</span>
+                <div style="flex: 1; height: 1px; background-color: var(--border-color);"></div>
+            </div>
+
+            <button id="createRoomBtn" class="btn btn-secondary" style="width: 100%;">Создать новую комнату</button>
+        </div>
+
+        <!-- Top Navbar (Visible in Room) -->
+        <div id="top-navbar" class="top-navbar hidden">
+            <div class="brand">StreamHub</div>
+            <div id="navbar-room-info" class="navbar-room-info">
+                <span>Комната: <strong id="room-info">...</strong></span>
+                <button id="copyRoomIdBtn" class="btn-icon" title="Копировать" style="background:none; border:none; cursor:pointer; color: var(--accent-color); margin-left: 0.5rem;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+            </div>
+            <div class="navbar-actions">
+                <button id="teacherLeaveBtn" class="btn btn-danger hidden">Завершить урок</button>
+                <button id="leaveRoomBtn" class="btn btn-danger hidden">Выйти из комнаты</button>
+            </div>
+        </div>
+
+        <!-- Room View (3-Column Layout) -->
+        <div id="room-layout" class="room-layout hidden">
+
+            <!-- Left Sidebar: Lists -->
+            <div class="sidebar sidebar-left">
+                <!-- Participants Section -->
+                <div id="participants-section" class="control-section hidden">
+                    <p class="control-label" style="display: flex; align-items: center; gap: 0.5rem;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                        Участники (<span id="participant-count">0</span>)
+                    </p>
+                    <div id="participants-list" class="participants-list">
+                        <!-- Participants will be added here -->
+                    </div>
+                </div>
+
+                <!-- Student View Elements (Hidden for Teacher) -->
+                <div id="student-controls" class="hidden mt-4">
+                    <div class="room-info-card">
+                        <p class="control-label">Статус трансляции</p>
+                        <p id="student-room-info" style="font-weight: 600; color: var(--accent-color);">Ожидание...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Center: Main Area -->
+            <div class="main-area">
+                
+                <!-- Central Tabs (Teacher Only) -->
+                <div id="teacher-tabs" class="veyon-toolbar hidden" style="justify-content: center;">
+                    <div class="toolbar-group" style="border: none; padding: 0;">
+                        <button class="toolbar-btn active" id="tab-monitoring">
+                            <span class="icon">💻</span>
+                            <span class="label">Мониторинг ПК</span>
+                        </button>
+                        <button class="toolbar-btn" id="tab-whiteboard">
+                            <span class="icon">🖍️</span>
+                            <span class="label">Онлайн-доска</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Veyon Agents Grid (Teacher Only) -->
+                <div id="agents-grid-container" class="agents-grid hidden">
+                    <div class="grid-header">
+                        <h2>Подключенные компьютеры (<span id="agent-count">0</span>)</h2>
+                    </div>
+                    <div id="agents-list" class="grid-content">
+                        <!-- Cards will be populated here by script.js -->
+                    </div>
+                </div>
+
+                <!-- Whiteboard Area (Teacher Only) -->
+                <div id="whiteboard-container" class="hidden" style="flex: 1; position: relative; border-radius: var(--radius-lg); overflow: hidden; background: #000; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);">
+                    <canvas id="whiteboard"></canvas>
+                </div>
+
+                <!-- Video View Full (For Students only) -->
+                <div id="video-container" class="hidden" style="flex: 1; position: relative; border-radius: var(--radius-lg); overflow: hidden; background: #000;">
+                    <video id="student-video" autoplay playsinline muted style="width:100%; height:100%; object-fit:contain;"></video>
+                    <!-- Status Overlay -->
+                    <div id="status-overlay" class="hidden" style="position: absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); display: flex; flex-direction:column; align-items:center; justify-content:center; z-index:10;">
+                        <div class="loader"></div>
+                        <p id="status-text" style="color:white; margin-top:1rem;">Загрузка...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Sidebar: Demo Studio (Teacher Only) -->
+            <div class="sidebar sidebar-right" id="studio-sidebar" style="display: none;">
+                <!-- Video Preview -->
+                <div class="control-section">
+                    <p class="control-label" style="font-weight: 600; color: var(--primary-light);">📺 Превью эфира</p>
+                    <div id="video-preview-wrapper" style="width: 100%; aspect-ratio: 16/9; background: #000; border-radius: var(--radius-sm); overflow: hidden; position: relative; margin-bottom: 1rem; border: 1px solid var(--border-color);">
+                        <video id="video" autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover;"></video>
+                        <div id="video-overlay-name" class="hidden"
+                            style="position: absolute; bottom: 5px; left: 5px; background: rgba(0,0,0,0.6); color: white; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;">
+                        </div>
+                    </div>
+
+                    <button id="btn-demo" class="btn btn-success w-full" style="padding: 0.75rem;">▶ Начать эфир</button>
+                    <button id="btn-stop-demo" class="btn btn-danger w-full hidden" style="padding: 0.75rem;">⏹ Остановить эфир</button>
+                </div>
+
+                <div id="demo-settings" class="control-section mt-4">
+                    <p class="control-label">Настройки эфира</p>
+                    
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem; background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <label class="control-label" style="margin: 0; font-size: 0.8rem;">Качество</label>
+                            <select id="qualitySelect" style="width: 100%; padding: 0.5rem; border-radius: var(--radius-sm); background: rgba(0,0,0,0.4); color: white; border: 1px solid var(--border-color); outline: none; font-size: 0.85rem;">
+                                <option value="1920x1080">FHD (1080p)</option>
+                                <option value="1280x720">HD (720p)</option>
+                                <option value="854x480" selected>SD (480p)</option>
+                                <option value="640x360">Low (360p)</option>
+                            </select>
+                        </div>
+
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <label class="control-label" style="margin: 0; font-size: 0.8rem;">FPS (Кадры)</label>
+                            <div style="display: flex; background: rgba(0,0,0,0.4); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 2px;">
+                                <button id="fps30Btn" class="w-full active" style="padding: 0.4rem; font-size: 0.8rem; background: var(--primary-color); color: white; border: none; border-radius: 4px; cursor: pointer;">30 FPS</button>
+                                <button id="fps60Btn" class="w-full" style="padding: 0.4rem; font-size: 0.8rem; background: transparent; color: var(--text-muted); border: none; border-radius: 4px; cursor: pointer;">60 FPS</button>
+                            </div>
+                        </div>
+
+                        <!-- Hidden value for script.js to read from -->
+                        <input type="hidden" id="selectedFps" value="30">
+                    </div>
+                </div>
+
+                <div id="whiteboard-tools" class="control-section mt-4 hidden">
+                    <p class="control-label">Инструменты доски</p>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem; background: rgba(0,0,0,0.2); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                        
+                        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                            <button id="toolBrushBtn" class="w-full" style="padding: 0.5rem; background: var(--primary-color); border: none; border-radius: 4px; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 0.25rem;">
+                                <span>✏️</span> Кисть
+                            </button>
+                            <button id="toolEraserBtn" class="w-full" style="padding: 0.5rem; background: rgba(255,255,255,0.1); border: 1px solid var(--border-color); border-radius: 4px; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 0.25rem;">
+                                <span>🧽</span> Ластик
+                            </button>
+                        </div>
+
+                        <div id="brushColorWrapper" style="display: flex; align-items: center; justify-content: space-between;">
+                            <label class="control-label" style="margin: 0; font-size: 0.85rem;">Цвет кисти</label>
+                            <input type="color" id="colorPicker" value="#0ea5e9" style="width: 40px; height: 32px; border: none; cursor: pointer; padding: 0; background: transparent;">
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <label class="control-label" style="margin: 0; font-size: 0.85rem;">Толщина линии</label>
+                            <input type="range" id="lineWidth" min="1" max="20" value="3" style="width: 100%;">
+                        </div>
+                        <button id="clearCanvasBtn" class="btn btn-secondary w-full mt-2">Очистить доску</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Agent Remote Control Modal -->
+    <div id="agent-modal" class="modal-backdrop hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="agent-modal-title">🖥️ Панель управления ПК</h3>
+                <button id="closeAgentModalBtn" class="btn btn-danger" style="padding: 0.5rem 1rem; border-radius: 8px;">Закрыть удаленный доступ</button>
+            </div>
+            
+            <div class="video-wrapper">
+                <video id="agentVideo" autoplay playsinline muted></video>
+                <!-- Этот прозрачный div ловит клики мыши для передачи агенту -->
+                <div id="agent-mouse-catcher" style="position: absolute; top:0; left:0; width: 100%; height: 100%; z-index: 10;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

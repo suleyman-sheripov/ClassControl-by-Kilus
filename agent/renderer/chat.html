@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>ClassControl — Чат</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e4e4e7;
+           height: 100vh; display: flex; flex-direction: column; }
+    .header { padding: 12px 16px; background: #1a1d27; border-bottom: 1px solid rgba(255,255,255,0.08);
+              font-weight: 600; font-size: 0.95rem; }
+    #messages { flex: 1; overflow-y: auto; padding: 12px; }
+    .msg { margin-bottom: 10px; font-size: 0.9rem; }
+    .msg .author { font-weight: 600; color: #6366f1; }
+    .msg.file a { color: #10b981; text-decoration: underline; }
+    .input-area { display: flex; gap: 4px; padding: 8px; border-top: 1px solid rgba(255,255,255,0.08); }
+    #text-input { flex: 1; background: #252836; border: 1px solid rgba(255,255,255,0.08);
+                  color: white; padding: 10px; border-radius: 6px; outline: none; }
+    button { background: #6366f1; color: white; border: none; padding: 10px 14px;
+             border-radius: 6px; cursor: pointer; }
+    button:hover { background: #818cf8; }
+    .attach-btn { background: #252836; }
+  </style>
+</head>
+<body>
+  <div class="header">💬 Чат класса</div>
+  <div id="messages"></div>
+  <div class="input-area">
+    <button class="attach-btn" id="attachBtn">📎</button>
+    <input type="file" id="fileInput" style="display:none">
+    <input type="text" id="text-input" placeholder="Сообщение...">
+    <button id="sendBtn">→</button>
+  </div>
+
+  <script src="../node_modules/socket.io-client/dist/socket.io.js"></script>
+  <script>
+    let socket = null;
+    const myName = window.electronAPI?.hostname || 'Ученик';
+
+    window.electronAPI.onServerAddress((address) => {
+      if (socket) return;
+      socket = io(address);
+      socket.on('connect', () => {
+        // Не регистрируемся как агент повторно — только запрашиваем историю
+        socket.emit('request-chat-history');
+      });
+      socket.on('chat-message', renderMessage);
+      socket.on('chat-file', renderFile);
+      socket.on('chat-history', (h) => h.forEach(m => m.type==='file' ? renderFile(m) : renderMessage(m)));
+    });
+
+    document.getElementById('sendBtn').addEventListener('click', send);
+    document.getElementById('text-input').addEventListener('keypress', e => { if (e.key==='Enter') send(); });
+
+    function send() {
+      const text = document.getElementById('text-input').value.trim();
+      if (!text || !socket) return;
+      socket.emit('chat-message', { sender: myName, text });
+      document.getElementById('text-input').value = '';
+    }
+
+    document.getElementById('attachBtn').addEventListener('click', () => document.getElementById('fileInput').click());
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      const fd = new FormData(); fd.append('file', file); fd.append('sender', myName);
+      await fetch(socket.io.uri + '/upload', { method: 'POST', body: fd });
+      e.target.value = '';
+    });
+
+    function renderMessage(m) {
+      const d = document.createElement('div'); d.className = 'msg';
+      d.innerHTML = `<span class="author">${m.sender}:</span> ${m.text}`;
+      document.getElementById('messages').appendChild(d);
+      d.scrollIntoView();
+    }
+    function renderFile(m) {
+      const d = document.createElement('div'); d.className = 'msg file';
+      d.innerHTML = `<span class="author">${m.sender}:</span> 📎 <a href="${socket.io.uri}${m.url}" target="_blank">${m.filename}</a>`;
+      document.getElementById('messages').appendChild(d);
+      d.scrollIntoView();
+    }
+  </script>
+</body>
+</html>
