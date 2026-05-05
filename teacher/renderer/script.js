@@ -282,23 +282,10 @@ let localStream = null;
 let isBroadcasting = false;
 const peerConnections = {};
 const iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-let selectedFps = 30;
-
-document.getElementById('fps30').addEventListener('click', () => {
-    selectedFps = 30;
-    document.getElementById('fps30').classList.add('active');
-    document.getElementById('fps60').classList.remove('active');
-});
-
-document.getElementById('fps60').addEventListener('click', () => {
-    selectedFps = 60;
-    document.getElementById('fps60').classList.add('active');
-    document.getElementById('fps30').classList.remove('active');
-});
-
 document.getElementById('btn-start-broadcast').addEventListener('click', async () => {
     const quality = document.getElementById('qualitySelect').value;
     const [w, h] = quality.split('x').map(Number);
+    const selectedFps = parseInt(document.getElementById('fpsSelect').value, 10);
 
     try {
         localStream = await navigator.mediaDevices.getDisplayMedia({

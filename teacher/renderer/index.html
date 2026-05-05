@@ -105,15 +105,22 @@
                         <label class="control-label">Качество</label>
                         <select id="qualitySelect" class="styled-select">
                             <option value="1920x1080">1080p (Full HD)</option>
-                            <option value="1280x720" selected>720p (HD)</option>
-                            <option value="854x480">480p (SD)</option>
+                            <option value="1280x720">720p (HD)</option>
+                            <option value="854x480" selected>480p (SD)</option>
+                            <option value="640x360">360p</option>
+                            <option value="426x240">240p</option>
+                            <option value="320x180">180p (min)</option>
                         </select>
 
                         <label class="control-label">Частота кадров</label>
-                        <div class="fps-toggle">
-                            <button id="fps30" class="fps-btn active">30 FPS</button>
-                            <button id="fps60" class="fps-btn">60 FPS</button>
-                        </div>
+                        <select id="fpsSelect" class="styled-select">
+                            <option value="5">5 FPS</option>
+                            <option value="10">10 FPS</option>
+                            <option value="15" selected>15 FPS</option>
+                            <option value="20">20 FPS</option>
+                            <option value="30">30 FPS</option>
+                            <option value="60">60 FPS</option>
+                        </select>
 
                         <button id="btn-start-broadcast" class="btn btn-primary w-full mt-4">Начать эфир</button>
                         <button id="btn-stop-broadcast" class="btn btn-danger w-full mt-4 hidden">Остановить эфир</button>
