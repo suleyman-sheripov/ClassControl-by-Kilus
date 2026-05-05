@@ -3,48 +3,86 @@
 <head>
   <meta charset="UTF-8">
   <title>ClassControl — Чат</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-dark: #0a0b10;
-      --bg-panel: #161923;
-      --bg-card: #1c1f2e;
-      --bg-input: #1a1d2b;
-      --accent: #6366f1;
-      --accent-hover: #818cf8;
-      --text-primary: #f0f0f3;
-      --text-secondary: #9ca3b0;
-      --text-muted: #6b7280;
-      --border: rgba(255, 255, 255, 0.06);
-      --success: #10b981;
-      --radius: 8px;
+      --bg-base: #0c0d12;
+      --bg-surface: #14161e;
+      --bg-elevated: #1a1d28;
+      --bg-overlay: #22253a;
+      --accent-primary: #7c5cfc;
+      --accent-secondary: #5b8def;
+      --accent-gradient: linear-gradient(135deg, #7c5cfc 0%, #5b8def 100%);
+      --text-white: #ffffff;
+      --text-primary: #e8eaf0;
+      --text-secondary: #8b8fa7;
+      --text-muted: #555872;
+      --border-subtle: rgba(255, 255, 255, 0.05);
+      --border-light: rgba(255, 255, 255, 0.08);
+      --success: #2dd4a8;
+      --radius-xs: 6px;
+      --radius-sm: 10px;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: 'Inter', -apple-system, sans-serif;
-      background: var(--bg-dark);
+      background: var(--bg-base);
       color: var(--text-primary);
       height: 100vh;
       display: flex;
       flex-direction: column;
+      -webkit-font-smoothing: antialiased;
     }
     .header {
-      padding: 14px 16px;
-      background: var(--bg-panel);
-      border-bottom: 1px solid var(--border);
+      padding: 16px 20px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-subtle);
       font-weight: 600;
       font-size: 0.9rem;
       letter-spacing: -0.01em;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
     }
-    .header::before {
+    .header-logo {
+      width: 28px;
+      height: 28px;
+      background: var(--accent-gradient);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.6rem;
+      font-weight: 800;
+      color: white;
+      letter-spacing: 0.5px;
+      box-shadow: 0 4px 10px rgba(124, 92, 252, 0.2);
+    }
+    .header-text {
+      flex: 1;
+      color: var(--text-white);
+    }
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(45, 212, 168, 0.1);
+      color: var(--success);
+      padding: 3px 10px;
+      border-radius: 100px;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+    .status-badge::before {
       content: '';
-      width: 8px;
-      height: 8px;
+      width: 6px;
+      height: 6px;
       background: var(--success);
       border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
     }
     #messages {
       flex: 1;
@@ -52,78 +90,87 @@
       padding: 16px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
     }
     #messages::-webkit-scrollbar { width: 4px; }
     #messages::-webkit-scrollbar-track { background: transparent; }
-    #messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+    #messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 4px; }
     .msg {
       font-size: 0.88rem;
-      line-height: 1.5;
-      padding: 8px 12px;
-      background: var(--bg-card);
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
+      line-height: 1.55;
+      padding: 10px 14px;
+      background: var(--bg-elevated);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
     }
-    .msg .author { font-weight: 600; color: var(--accent); margin-right: 4px; }
+    .msg .author { font-weight: 600; color: var(--accent-primary); margin-right: 6px; }
     .msg.file a { color: var(--success); text-decoration: none; font-weight: 500; }
     .msg.file a:hover { text-decoration: underline; }
     .input-area {
       display: flex;
       gap: 8px;
-      padding: 12px 16px;
-      border-top: 1px solid var(--border);
-      background: var(--bg-panel);
+      padding: 14px 16px;
+      border-top: 1px solid var(--border-subtle);
+      background: var(--bg-elevated);
       align-items: center;
     }
     #text-input {
       flex: 1;
-      background: var(--bg-input);
-      border: 1px solid var(--border);
-      color: var(--text-primary);
-      padding: 10px 14px;
-      border-radius: var(--radius);
+      background: var(--bg-overlay);
+      border: 1.5px solid var(--border-light);
+      color: var(--text-white);
+      padding: 11px 14px;
+      border-radius: var(--radius-xs);
       outline: none;
       font-size: 0.88rem;
-      transition: border-color 0.2s;
+      transition: border-color 0.25s;
     }
-    #text-input:focus { border-color: var(--accent); }
-    button {
-      background: var(--accent);
+    #text-input:focus { border-color: var(--accent-primary); box-shadow: 0 0 0 3px rgba(124, 92, 252, 0.1); }
+    #text-input::placeholder { color: var(--text-muted); }
+    .send-btn {
+      background: var(--accent-gradient);
       color: white;
       border: none;
-      padding: 10px 16px;
-      border-radius: var(--radius);
+      padding: 11px 18px;
+      border-radius: var(--radius-xs);
       cursor: pointer;
       font-weight: 600;
       font-size: 0.82rem;
       transition: all 0.2s;
+      white-space: nowrap;
     }
-    button:hover { background: var(--accent-hover); }
+    .send-btn:hover { box-shadow: 0 4px 12px rgba(124, 92, 252, 0.3); transform: translateY(-1px); }
     .attach-btn {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
+      background: var(--bg-overlay);
+      border: 1px solid var(--border-light);
       color: var(--text-secondary);
       width: 38px;
       height: 38px;
       padding: 0;
+      border-radius: var(--radius-xs);
+      cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 1.1rem;
       flex-shrink: 0;
+      transition: all 0.2s;
     }
-    .attach-btn:hover { background: var(--accent); color: white; border-color: var(--accent); }
+    .attach-btn:hover { background: var(--accent-primary); color: white; border-color: var(--accent-primary); }
   </style>
 </head>
 <body>
-  <div class="header">Чат класса</div>
+  <div class="header">
+    <div class="header-logo">CC</div>
+    <span class="header-text">Чат класса</span>
+    <div class="status-badge">Подключено</div>
+  </div>
   <div id="messages"></div>
   <div class="input-area">
     <button class="attach-btn" id="attachBtn" title="Прикрепить файл">+</button>
     <input type="file" id="fileInput" style="display:none">
-    <input type="text" id="text-input" placeholder="Сообщение...">
-    <button id="sendBtn">Отправить</button>
+    <input type="text" id="text-input" placeholder="Написать сообщение...">
+    <button class="send-btn" id="sendBtn">Отправить</button>
   </div>
 
   <script src="../node_modules/socket.io-client/dist/socket.io.js"></script>
@@ -155,39 +202,38 @@
     document.getElementById('attachBtn').addEventListener('click', () => document.getElementById('fileInput').click());
     document.getElementById('fileInput').addEventListener('change', async (e) => {
       const file = e.target.files[0]; if (!file) return;
-      const fd = new FormData(); fd.append('file', file); fd.append('sender', myName);
-      try {
-        await fetch(socket.io.uri + '/upload', { method: 'POST', body: fd });
-      } catch (err) {
-        console.error('[AGENT] File upload failed:', err);
-      }
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) { alert('Файл слишком большой (макс. 10 МБ)'); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (!socket) return;
+        socket.emit('chat-file', { sender: myName, fileName: file.name, data: reader.result });
+      };
+      reader.readAsArrayBuffer(file);
       e.target.value = '';
     });
 
     function renderMessage(m) {
-      const d = document.createElement('div'); d.className = 'msg';
-      const authorSpan = document.createElement('span');
-      authorSpan.className = 'author';
-      authorSpan.textContent = m.sender + ':';
-      d.appendChild(authorSpan);
-      d.appendChild(document.createTextNode(' ' + m.text));
-      document.getElementById('messages').appendChild(d);
-      d.scrollIntoView({ behavior: 'smooth' });
+      const div = document.createElement('div');
+      div.className = 'msg';
+      div.innerHTML = '<span class="author">' + escapeHtml(m.sender) + ':</span>' + escapeHtml(m.text);
+      document.getElementById('messages').appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth' });
     }
+
     function renderFile(m) {
-      const d = document.createElement('div'); d.className = 'msg file';
-      const authorSpan = document.createElement('span');
-      authorSpan.className = 'author';
-      authorSpan.textContent = m.sender + ':';
-      d.appendChild(authorSpan);
-      d.appendChild(document.createTextNode(' '));
-      const link = document.createElement('a');
-      link.href = socket.io.uri + m.url;
-      link.target = '_blank';
-      link.textContent = m.filename;
-      d.appendChild(link);
-      document.getElementById('messages').appendChild(d);
-      d.scrollIntoView({ behavior: 'smooth' });
+      const div = document.createElement('div');
+      div.className = 'msg file';
+      const url = m.url || '#';
+      div.innerHTML = '<span class="author">' + escapeHtml(m.sender) + ':</span> <a href="' + url + '" download="' + escapeHtml(m.fileName) + '">' + escapeHtml(m.fileName) + '</a>';
+      document.getElementById('messages').appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
     }
   </script>
 </body>

@@ -301,12 +301,12 @@ window.openRemoteControl = function(agentId, agentName) {
 };
 
 // Получение offer (от агента или от онлайн-ученика)
-socket.on('offer', async ({ source, sdp }) => {
-    if (source === currentShareUserId) {
+socket.on('offer', async ({ source, sdp, connectionType }) => {
+    if (connectionType === 'share' || source === currentShareUserId) {
         handleStudentShareOffer(source, sdp);
         return;
     }
-    if (source === currentRemoteAgentId || agents_contains(source)) {
+    if (connectionType === 'remote' || source === currentRemoteAgentId || agents_contains(source)) {
         console.log('[TEACHER] Получен offer от агента:', source);
         if (remoteAgentPC) remoteAgentPC.close();
         remoteAgentPC = new RTCPeerConnection(iceConfig);
@@ -318,7 +318,7 @@ socket.on('offer', async ({ source, sdp }) => {
 
         remoteAgentPC.onicecandidate = (e) => {
             if (e.candidate) {
-                socket.emit('ice-candidate', { target: source, candidate: e.candidate });
+                socket.emit('ice-candidate', { target: source, candidate: e.candidate, connectionType: 'remote' });
             }
         };
 
@@ -329,7 +329,7 @@ socket.on('offer', async ({ source, sdp }) => {
         await remoteAgentPC.setRemoteDescription(new RTCSessionDescription(sdp));
         const answer = await remoteAgentPC.createAnswer();
         await remoteAgentPC.setLocalDescription(answer);
-        socket.emit('answer', { target: source, sdp: remoteAgentPC.localDescription });
+        socket.emit('answer', { target: source, sdp: remoteAgentPC.localDescription, connectionType: 'remote' });
     }
 });
 
@@ -418,13 +418,13 @@ socket.on('initiate-peer-connections', async (users) => {
 
         pc.onicecandidate = (e) => {
             if (e.candidate) {
-                socket.emit('ice-candidate', { target, candidate: e.candidate });
+                socket.emit('ice-candidate', { target, candidate: e.candidate, connectionType: 'broadcast' });
             }
         };
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        socket.emit('offer', { target, sdp: pc.localDescription });
+        socket.emit('offer', { target, sdp: pc.localDescription, connectionType: 'broadcast' });
     }
 });
 
@@ -447,7 +447,7 @@ async function handleStudentShareOffer(source, sdp) {
 
     studentSharePC.onicecandidate = (e) => {
         if (e.candidate) {
-            socket.emit('ice-candidate', { target: source, candidate: e.candidate });
+            socket.emit('ice-candidate', { target: source, candidate: e.candidate, connectionType: 'share' });
         }
     };
 
@@ -458,29 +458,38 @@ async function handleStudentShareOffer(source, sdp) {
     await studentSharePC.setRemoteDescription(new RTCSessionDescription(sdp));
     const answer = await studentSharePC.createAnswer();
     await studentSharePC.setLocalDescription(answer);
-    socket.emit('answer', { target: source, sdp: studentSharePC.localDescription });
+    socket.emit('answer', { target: source, sdp: studentSharePC.localDescription, connectionType: 'share' });
 }
 
-socket.on('ice-candidate', async ({ source, candidate }) => {
-    if (peerConnections[source]) {
+socket.on('ice-candidate', async ({ source, candidate, connectionType }) => {
+    if (connectionType === 'broadcast' && peerConnections[source]) {
         try {
             await peerConnections[source].addIceCandidate(candidate);
         } catch (err) {
             console.error('[TEACHER] ICE error for broadcast:', err);
         }
-    }
-    if (source === currentShareUserId && studentSharePC) {
+    } else if (connectionType === 'share' && studentSharePC) {
         try {
             await studentSharePC.addIceCandidate(candidate);
         } catch (err) {
             console.error('[TEACHER] ICE error for student share:', err);
         }
-    }
-    if (remoteAgentPC && source === currentRemoteAgentId) {
+    } else if (connectionType === 'remote' && remoteAgentPC) {
         try {
             await remoteAgentPC.addIceCandidate(candidate);
         } catch (err) {
             console.error('[TEACHER] ICE error for remote agent:', err);
+        }
+    } else {
+        // Fallback for backward compat: try all matching PCs
+        if (peerConnections[source]) {
+            try { await peerConnections[source].addIceCandidate(candidate); } catch (e) {}
+        }
+        if (source === currentShareUserId && studentSharePC) {
+            try { await studentSharePC.addIceCandidate(candidate); } catch (e) {}
+        }
+        if (remoteAgentPC && source === currentRemoteAgentId) {
+            try { await remoteAgentPC.addIceCandidate(candidate); } catch (e) {}
         }
     }
 });

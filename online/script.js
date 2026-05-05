@@ -156,7 +156,7 @@ socket.on('offer', async ({ source, sdp }) => {
     
     teacherPC.onicecandidate = (e) => { 
         if (e.candidate) {
-            socket.emit('ice-candidate', { target: source, candidate: e.candidate }); 
+            socket.emit('ice-candidate', { target: source, candidate: e.candidate, connectionType: 'broadcast' }); 
         }
     };
 
@@ -167,25 +167,28 @@ socket.on('offer', async ({ source, sdp }) => {
     await teacherPC.setRemoteDescription(new RTCSessionDescription(sdp));
     const answer = await teacherPC.createAnswer();
     await teacherPC.setLocalDescription(answer);
-    socket.emit('answer', { target: source, sdp: teacherPC.localDescription });
+    socket.emit('answer', { target: source, sdp: teacherPC.localDescription, connectionType: 'broadcast' });
 });
 
 // WebRTC: handle ICE candidates from teacher
-socket.on('ice-candidate', async ({ source, candidate }) => {
-    console.log('[ONLINE] Received ICE candidate from', source);
-    if (sharePC) {
+socket.on('ice-candidate', async ({ source, candidate, connectionType }) => {
+    console.log('[ONLINE] Received ICE candidate from', source, 'type:', connectionType);
+    if (connectionType === 'share' && sharePC) {
         try {
             await sharePC.addIceCandidate(candidate);
         } catch (err) {
             console.error('[ONLINE] ICE error (sharePC):', err);
         }
-    }
-    if (teacherPC) {
+    } else if (connectionType === 'broadcast' && teacherPC) {
         try {
             await teacherPC.addIceCandidate(candidate);
         } catch (err) {
             console.error('[ONLINE] ICE error (teacherPC):', err);
         }
+    } else {
+        // Fallback: try both
+        if (sharePC) { try { await sharePC.addIceCandidate(candidate); } catch(e) {} }
+        if (teacherPC) { try { await teacherPC.addIceCandidate(candidate); } catch(e) {} }
     }
 });
 
@@ -206,8 +209,12 @@ const videoArea = document.getElementById('video-area');
 function applyTransform() {
     const content = videoArea.querySelector('video');
     const transforms = `scale(${zoomLevel}) translate(${panX}px, ${panY}px)`;
-    if (content) content.style.transform = transforms;
+    if (content) {
+        content.style.transform = transforms;
+        content.style.transformOrigin = 'center center';
+    }
     canvas.style.transform = transforms;
+    canvas.style.transformOrigin = 'center center';
 }
 
 videoArea.addEventListener('wheel', (e) => {
@@ -367,7 +374,7 @@ socket.on('share-accepted', async ({ teacherId }) => {
 
     sharePC.onicecandidate = (e) => {
         if (e.candidate) {
-            socket.emit('ice-candidate', { target: teacherId, candidate: e.candidate });
+            socket.emit('ice-candidate', { target: teacherId, candidate: e.candidate, connectionType: 'share' });
         }
     };
 
@@ -380,7 +387,7 @@ socket.on('share-accepted', async ({ teacherId }) => {
 
     const offer = await sharePC.createOffer();
     await sharePC.setLocalDescription(offer);
-    socket.emit('offer', { target: teacherId, sdp: sharePC.localDescription });
+    socket.emit('offer', { target: teacherId, sdp: sharePC.localDescription, connectionType: 'share' });
 });
 
 // Обработка answer от учителя для нашего share PC

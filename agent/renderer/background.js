@@ -47,7 +47,7 @@ function connectToServer(address) {
 
         remotePC.onicecandidate = (e) => {
           if (e.candidate) {
-            socket.emit('ice-candidate', { target: 'teacher', candidate: e.candidate });
+            socket.emit('ice-candidate', { target: 'teacher', candidate: e.candidate, connectionType: 'remote' });
           }
         };
 
@@ -62,7 +62,7 @@ function connectToServer(address) {
 
         const offer = await remotePC.createOffer();
         await remotePC.setLocalDescription(offer);
-        socket.emit('offer', { target: 'teacher', sdp: remotePC.localDescription });
+        socket.emit('offer', { target: 'teacher', sdp: remotePC.localDescription, connectionType: 'remote' });
       } catch (err) {
         console.error('[AGENT] Ошибка захвата экрана:', err);
       }
