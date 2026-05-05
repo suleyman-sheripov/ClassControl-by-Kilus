@@ -204,12 +204,14 @@
       const file = e.target.files[0]; if (!file) return;
       const maxSize = 10 * 1024 * 1024;
       if (file.size > maxSize) { alert('Файл слишком большой (макс. 10 МБ)'); return; }
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (!socket) return;
-        socket.emit('chat-file', { sender: myName, fileName: file.name, data: reader.result });
-      };
-      reader.readAsArrayBuffer(file);
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('sender', myName);
+      try {
+        await fetch(socket.io.uri + '/upload', { method: 'POST', body: fd });
+      } catch (err) {
+        console.error('[AGENT] File upload failed:', err);
+      }
       e.target.value = '';
     });
 
@@ -225,7 +227,7 @@
       const div = document.createElement('div');
       div.className = 'msg file';
       const url = m.url || '#';
-      div.innerHTML = '<span class="author">' + escapeHtml(m.sender) + ':</span> <a href="' + url + '" download="' + escapeHtml(m.fileName) + '">' + escapeHtml(m.fileName) + '</a>';
+      div.innerHTML = '<span class="author">' + escapeHtml(m.sender) + ':</span> <a href="' + escapeHtml(url) + '" download="' + escapeHtml(m.filename || m.fileName) + '">' + escapeHtml(m.filename || m.fileName) + '</a>';
       document.getElementById('messages').appendChild(div);
       div.scrollIntoView({ behavior: 'smooth' });
     }

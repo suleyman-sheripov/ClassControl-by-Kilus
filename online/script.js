@@ -114,7 +114,7 @@ function renderChatFile(msg) {
 // --- ПРИЕМ ДЕМОНСТРАЦИИ УЧИТЕЛЯ (WebRTC) ---
 socket.on('broadcast-started', () => {
     console.log('[ONLINE] Broadcast started');
-    document.getElementById('waiting-msg').textContent = 'Подключение к трансляции...';
+    document.querySelector('#waiting-msg span').textContent = 'Подключение к трансляции...';
     showToast('Учитель начал трансляцию', 'info');
 });
 
@@ -125,14 +125,14 @@ socket.on('broadcast-stopped', () => {
         teacherPC = null;
     }
     document.getElementById('teacher-video').srcObject = null;
-    document.getElementById('waiting-msg').textContent = 'Ожидание демонстрации учителя...';
+    document.querySelector('#waiting-msg span').textContent = 'Ожидание демонстрации учителя...';
     document.getElementById('waiting-msg').classList.remove('hidden');
     showToast('Трансляция учителя остановлена', 'info');
 });
 
 socket.on('teacher-disconnected', () => {
     console.log('[ONLINE] Учитель отключился');
-    document.getElementById('waiting-msg').textContent = 'Учитель отключился. Ожидание переподключения...';
+    document.querySelector('#waiting-msg span').textContent = 'Учитель отключился. Ожидание переподключения...';
     document.getElementById('waiting-msg').classList.remove('hidden');
     showToast('Учитель отключился');
 });
