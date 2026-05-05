@@ -273,17 +273,17 @@ io.on('connection', (socket) => {
 
     socket.on('offer', (data) => {
         const targetId = resolveTarget(data.target);
-        if (targetId) io.to(targetId).emit('offer', { source: socket.id, sdp: data.sdp });
+        if (targetId) io.to(targetId).emit('offer', { source: socket.id, sdp: data.sdp, connectionType: data.connectionType });
     });
 
     socket.on('answer', (data) => {
         const targetId = resolveTarget(data.target);
-        if (targetId) io.to(targetId).emit('answer', { source: socket.id, sdp: data.sdp });
+        if (targetId) io.to(targetId).emit('answer', { source: socket.id, sdp: data.sdp, connectionType: data.connectionType });
     });
 
     socket.on('ice-candidate', (data) => {
         const targetId = resolveTarget(data.target);
-        if (targetId) io.to(targetId).emit('ice-candidate', { source: socket.id, candidate: data.candidate });
+        if (targetId) io.to(targetId).emit('ice-candidate', { source: socket.id, candidate: data.candidate, connectionType: data.connectionType });
     });
 
     // Онлайн-доска — только учитель

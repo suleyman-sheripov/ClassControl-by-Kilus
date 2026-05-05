@@ -5,16 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ClassControl — Онлайн-участник</title>
   <link rel="stylesheet" href="style.css">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
   <!-- ЭКРАН 1: Вход -->
   <div id="login-screen">
+    <div class="login-bg-shapes">
+      <div class="shape shape-1"></div>
+      <div class="shape shape-2"></div>
+      <div class="shape shape-3"></div>
+    </div>
     <div class="login-card">
+      <div class="login-logo">
+        <div class="logo-icon">CC</div>
+      </div>
       <h1>ClassControl</h1>
-      <p>Введите имя для подключения к уроку</p>
-      <input type="text" id="name-input" placeholder="Ваше имя" maxlength="30">
-      <button id="join-btn" class="btn btn-primary">Присоединиться</button>
+      <p class="login-subtitle">Подключитесь к уроку онлайн</p>
+      <div class="input-group">
+        <label for="name-input">Ваше имя</label>
+        <input type="text" id="name-input" placeholder="Введите имя..." maxlength="30">
+      </div>
+      <button id="join-btn" class="btn btn-primary btn-lg">
+        Присоединиться
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </button>
     </div>
   </div>
 
@@ -23,8 +37,21 @@
   <!-- ЭКРАН 2: Основной -->
   <div id="main-screen" class="hidden">
     <header id="header">
-      <span>ClassControl — Онлайн</span>
-      <button id="leave-btn" class="btn btn-secondary">Выйти</button>
+      <div class="header-left">
+        <div class="header-logo">CC</div>
+        <span class="header-title">ClassControl</span>
+        <div class="connection-badge">
+          <span class="pulse-dot"></span>
+          Онлайн
+        </div>
+      </div>
+      <div class="header-right">
+        <span id="user-name-display" class="user-badge"></span>
+        <button id="leave-btn" class="btn btn-outline-danger btn-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          Выйти
+        </button>
+      </div>
     </header>
     <main id="layout">
       <!-- Видео / Доска -->
@@ -32,23 +59,41 @@
         <div id="video-area">
           <video id="teacher-video" autoplay playsinline></video>
           <canvas id="teacher-canvas"></canvas>
-          <div id="waiting-msg">Ожидание демонстрации учителя...</div>
+          <div id="waiting-msg">
+            <div class="waiting-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            </div>
+            <span>Ожидание демонстрации учителя...</span>
+          </div>
         </div>
         <div id="share-bar">
-          <button id="share-screen-btn" class="btn btn-primary">Показать мой экран (макс. 5 мин)</button>
-          <span id="share-timer" class="hidden">05:00</span>
-          <button id="stop-share-btn" class="btn btn-danger hidden">Остановить</button>
+          <button id="share-screen-btn" class="btn btn-accent">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M12 7v4M10 9h4"/></svg>
+            Показать мой экран
+          </button>
+          <span id="share-timer" class="share-timer hidden">05:00</span>
+          <button id="stop-share-btn" class="btn btn-danger btn-sm hidden">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+            Остановить
+          </button>
         </div>
       </section>
       <!-- Чат -->
       <aside id="chat-panel">
-        <h3>Чат</h3>
+        <div class="chat-header">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          <span>Чат урока</span>
+        </div>
         <div id="chat-messages"></div>
         <div id="chat-input-area">
-          <button id="attach-btn" title="Прикрепить файл">+</button>
+          <button id="attach-btn" class="chat-attach-btn" title="Прикрепить файл">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+          </button>
           <input type="file" id="file-input" class="hidden">
-          <input type="text" id="msg-input" placeholder="Сообщение...">
-          <button id="send-btn">Отправить</button>
+          <input type="text" id="msg-input" placeholder="Написать сообщение...">
+          <button id="send-btn" class="chat-send-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          </button>
         </div>
       </aside>
     </main>
