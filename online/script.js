@@ -172,6 +172,7 @@ socket.on('ice-candidate', async ({ source, candidate }) => {
 // --- ДОСКА ---
 const canvas = document.getElementById('teacher-canvas');
 const ctx = canvas.getContext('2d');
+let savedWhiteboardImage = null;
 
 function resizeCanvas() {
     const rect = document.getElementById('video-area').getBoundingClientRect();
@@ -185,18 +186,25 @@ window.addEventListener('resize', resizeCanvas);
 socket.on('whiteboard-mode', (active) => {
     console.log('[ONLINE] Whiteboard mode:', active);
     if (active) {
-        // Show white canvas background for whiteboard
         document.getElementById('waiting-msg').classList.add('hidden');
         canvas.style.background = 'white';
         canvas.style.pointerEvents = 'none';
         resizeCanvas();
+        // Restore saved whiteboard drawing if available
+        if (savedWhiteboardImage) {
+            const img = new Image();
+            img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            img.src = savedWhiteboardImage;
+        }
     } else {
-        // Return to normal (video/waiting)
+        // Save whiteboard drawing before hiding
+        if (canvas.width > 0 && canvas.height > 0) {
+            savedWhiteboardImage = canvas.toDataURL();
+        }
         canvas.style.background = 'transparent';
         if (!document.getElementById('teacher-video').srcObject) {
             document.getElementById('waiting-msg').classList.remove('hidden');
         }
-        // Clear any whiteboard drawings
         ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
 });
@@ -226,6 +234,7 @@ socket.on('draw', (data) => {
 
 socket.on('clear-canvas', () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    savedWhiteboardImage = null;
 });
 
 // --- ПОКАЗ СВОЕГО ЭКРАНА (5 минут) ---
