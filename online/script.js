@@ -5,6 +5,15 @@ let shareTimerInterval = null;
 let teacherPC = null; // WebRTC PeerConnection for receiving teacher broadcast
 const iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
+function showToast(text, type) {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast' + (type === 'info' ? ' info' : '');
+    toast.textContent = text;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 5000);
+}
+
 // ВХОД
 document.getElementById('join-btn').addEventListener('click', () => {
     myName = document.getElementById('name-input').value.trim();
@@ -105,6 +114,7 @@ function renderChatFile(msg) {
 socket.on('broadcast-started', () => {
     console.log('[ONLINE] Broadcast started');
     document.getElementById('waiting-msg').textContent = 'Подключение к трансляции...';
+    showToast('Учитель начал трансляцию', 'info');
 });
 
 socket.on('broadcast-stopped', () => {
@@ -116,12 +126,14 @@ socket.on('broadcast-stopped', () => {
     document.getElementById('teacher-video').srcObject = null;
     document.getElementById('waiting-msg').textContent = 'Ожидание демонстрации учителя...';
     document.getElementById('waiting-msg').classList.remove('hidden');
+    showToast('Трансляция учителя остановлена', 'info');
 });
 
 socket.on('teacher-disconnected', () => {
     console.log('[ONLINE] Учитель отключился');
     document.getElementById('waiting-msg').textContent = 'Учитель отключился. Ожидание переподключения...';
     document.getElementById('waiting-msg').classList.remove('hidden');
+    showToast('Учитель отключился');
 });
 
 // WebRTC: receive offer from teacher, create answer
