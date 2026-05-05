@@ -16,7 +16,8 @@ const DEFAULT_SETTINGS = {
   showExitButton: false,      // Скрыта по умолчанию (чтобы ученики не вырубали)
   autoStartWithOS: true,      // Автозапуск с Windows
   showNotifications: true,    // Показывать уведомления в трее
-  screenshotInterval: 1000    // Интервал скриншотов (мс)
+  screenshotInterval: 1000,   // Интервал скриншотов (мс)
+  networkMode: 'auto'         // 'auto' = LAN Discovery, 'localhost' = только localhost
 };
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -58,6 +59,27 @@ function buildTrayMenu() {
     {
       label: 'Настройки',
       submenu: [
+        {
+          label: 'Режим сети: LAN Discovery',
+          type: 'radio',
+          checked: settings.networkMode !== 'localhost',
+          click: () => {
+            settings.networkMode = 'auto';
+            saveSettings();
+            rebuildTrayMenu();
+          }
+        },
+        {
+          label: 'Режим сети: Только localhost',
+          type: 'radio',
+          checked: settings.networkMode === 'localhost',
+          click: () => {
+            settings.networkMode = 'localhost';
+            saveSettings();
+            rebuildTrayMenu();
+          }
+        },
+        { type: 'separator' },
         {
           label: 'Показывать кнопку "Выход"',
           type: 'checkbox',
@@ -223,7 +245,13 @@ ipcMain.handle('take-screenshot', async () => {
     types: ['screen'],
     thumbnailSize: { width: 320, height: 180 }
   });
-  return sources[0]?.thumbnail.toJPEG(30).toString('base64');
+  return sources[0]?.thumbnail.toJPEG(60).toString('base64');
+});
+
+// Для WebRTC стрима экрана (удалённое управление)
+ipcMain.handle('get-screen-stream-source', async () => {
+  const sources = await desktopCapturer.getSources({ types: ['screen'] });
+  return sources[0]?.id || null;
 });
 
 // Жизненный цикл
@@ -232,14 +260,33 @@ app.whenReady().then(() => {
   applyAutoStart();
   createTray();
   createHiddenWindow();
-  
-  // Для тестирования на одном ПК - сразу localhost без задержек и Firewall
-  serverAddress = 'http://localhost:3000';
-  console.log('[AGENT] Используем localhost для сервера:', serverAddress);
-  
-  // Убираем ожидание discoverServer, но оставляем на всякий случай
-  // setTimeout(discoverServer, 1000); 
+
+  if (settings.networkMode === 'localhost') {
+    serverAddress = 'http://localhost:3000';
+    console.log('[AGENT] Режим: localhost');
+    notifyWindows();
+  } else {
+    console.log('[AGENT] Режим: LAN Discovery');
+    setTimeout(discoverServer, 1000);
+    // Fallback на localhost через 10 секунд, если сервер не найден
+    setTimeout(() => {
+      if (!serverAddress) {
+        serverAddress = 'http://localhost:3000';
+        console.log('[AGENT] LAN Discovery не нашёл сервер, fallback на localhost');
+        notifyWindows();
+      }
+    }, 10000);
+  }
 });
+
+function notifyWindows() {
+  if (hiddenWindow && !hiddenWindow.isDestroyed()) {
+    hiddenWindow.webContents.send('server-address', serverAddress);
+  }
+  if (chatWindow && !chatWindow.isDestroyed()) {
+    chatWindow.webContents.send('server-address', serverAddress);
+  }
+}
 
 // НЕ закрывать приложение при закрытии всех окон — остаёмся в трее
 app.on('window-all-closed', () => {

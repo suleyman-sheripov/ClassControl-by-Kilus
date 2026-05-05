@@ -162,6 +162,20 @@
                 </div>
             </div>
         </div>
+
+        <!-- Модальное окно демонстрации экрана онлайн-ученика -->
+        <div id="student-share-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="student-share-title">Демонстрация ученика</h2>
+                    <button id="student-share-close" class="close-btn">&times;</button>
+                </div>
+                <div class="remote-viewer-wrapper">
+                    <video id="student-share-video" autoplay playsinline></video>
+                    <div id="student-share-status" class="share-status">Подключение...</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Зависимости -->
