@@ -89,7 +89,7 @@ function renderChatFile(msg) {
     senderSpan.className = 'sender';
     senderSpan.textContent = msg.sender + ':';
     div.appendChild(senderSpan);
-    div.appendChild(document.createTextNode(' 📎 '));
+    div.appendChild(document.createTextNode(' '));
     const link = document.createElement('a');
     link.href = `${window.location.origin}${msg.url}`;
     link.target = '_blank';

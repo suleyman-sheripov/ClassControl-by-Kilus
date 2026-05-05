@@ -437,7 +437,7 @@ function renderChatFile(msg) {
     senderSpan.className = 'sender';
     senderSpan.textContent = msg.sender + ':';
     div.appendChild(senderSpan);
-    div.appendChild(document.createTextNode(' 📎 '));
+    div.appendChild(document.createTextNode(' '));
     const link = document.createElement('a');
     link.href = `http://localhost:3000${msg.url}`;
     link.target = '_blank';
@@ -588,7 +588,7 @@ function stopRecording() {
         mediaRecorder.stream.getTracks().forEach(t => t.stop());
     }
     isRecording = false;
-    recordBtn.textContent = '🔴 Запись';
+    recordBtn.textContent = 'Запись';
     recordBtn.style.color = '';
     recordTimerEl.classList.add('hidden');
     clearInterval(recordTimer);
