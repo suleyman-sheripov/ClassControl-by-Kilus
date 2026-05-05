@@ -5,31 +5,42 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ClassControl — Учитель</title>
     <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div id="app-container">
-        <!-- Навигационная панель сверху (Тулбар) -->
+    <div id="app-container" class="app">
+
+        <!-- ===== HEADER ===== -->
         <header class="main-header">
             <div class="logo">
-                <span class="icon">CC</span>
-                <span class="text">ClassControl</span>
+                <div class="logo__icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                </div>
+                <span class="logo__text">ClassControl</span>
             </div>
-            
+
             <div class="header-center">
-                <div class="tabs">
+                <nav class="tabs">
                     <button id="tab-monitoring" class="tab-btn active">
-                        Мониторинг ПК
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                        <span>Мониторинг</span>
                     </button>
                     <button id="tab-whiteboard" class="tab-btn">
-                        Онлайн-доска
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                        <span>Доска</span>
                     </button>
-                </div>
+                </nav>
             </div>
 
             <div class="header-right">
-                <div id="record-timer" class="record-timer hidden">00:00</div>
-                <button id="recordBtn" class="btn btn-ghost">Запись</button>
+                <div id="record-timer" class="rec-badge hidden">
+                    <span class="rec-badge__dot"></span>
+                    <span>00:00</span>
+                </div>
+                <button id="recordBtn" class="hdr-btn">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+                    <span>Запись</span>
+                </button>
                 <div class="user-profile">
                     <span id="teacher-name-display">Учитель</span>
                     <div class="status-indicator online"></div>
@@ -37,70 +48,75 @@
             </div>
         </header>
 
+        <!-- ===== CONTENT ===== -->
         <main class="content-layout">
-            <!-- Левая колонка: Участники и Чат -->
+
+            <!-- SIDEBAR LEFT -->
             <aside class="sidebar sidebar-left">
                 <section class="panel participants-panel">
                     <div class="panel-header">
-                        <h3>В классе (<span id="agents-count">0</span>)</h3>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                        <h3>В классе <span class="count-badge" id="agents-count">0</span></h3>
                     </div>
-                    <ul id="agents-list" class="item-list">
-                        <!-- Список агентов (ПК в классе) -->
-                    </ul>
+                    <ul id="agents-list" class="item-list"></ul>
                 </section>
 
                 <section class="panel online-panel">
                     <div class="panel-header">
-                        <h3>Онлайн (<span id="online-count">0</span>)</h3>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+                        <h3>Онлайн <span class="count-badge" id="online-count">0</span></h3>
                     </div>
-                    <ul id="online-users-list" class="item-list">
-                        <!-- Список онлайн-участников -->
-                    </ul>
+                    <ul id="online-users-list" class="item-list"></ul>
                 </section>
 
                 <section class="panel chat-panel">
                     <div class="panel-header">
-                        <h3>Общий чат</h3>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                        <h3>Чат</h3>
                     </div>
-                    <div id="chat-messages" class="chat-messages">
-                        <!-- Сообщения чата -->
-                    </div>
+                    <div id="chat-messages" class="chat-messages"></div>
                     <div class="chat-input-wrapper">
-                        <button id="chat-attach-btn" class="chat-action-btn" title="Прикрепить файл">+</button>
+                        <button id="chat-attach-btn" class="chat-action-btn" title="Прикрепить файл">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+                        </button>
                         <input type="file" id="chat-file-input" class="hidden">
                         <input type="text" id="chat-text-input" placeholder="Написать..." autocomplete="off">
-                        <button id="chat-send-btn" class="chat-send-btn">Отправить</button>
+                        <button id="chat-send-btn" class="chat-send-btn">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                        </button>
                     </div>
                 </section>
             </aside>
 
-            <!-- Центральная область: Сетка или Доска -->
+            <!-- CENTER -->
             <section class="main-viewport">
-                <!-- Мониторинг (Сетка ПК) -->
                 <div id="monitoring-grid" class="monitoring-grid">
-                    <!-- Сюда будут добавляться карточки ПК .pc-card -->
-                    <div class="grid-placeholder">Ожидание подключения компьютеров...</div>
+                    <div class="grid-placeholder">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                        <span>Ожидание подключения компьютеров...</span>
+                    </div>
                 </div>
 
-                <!-- Онлайн-доска (Скрыта по умолчанию) -->
                 <div id="whiteboard-container" class="whiteboard-container hidden">
                     <canvas id="whiteboard"></canvas>
                 </div>
             </section>
 
-            <!-- Правая колонка: Студия эфира и Инструменты -->
+            <!-- SIDEBAR RIGHT -->
             <aside class="sidebar sidebar-right">
                 <section class="panel studio-panel">
                     <div class="panel-header">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
                         <h3>Студия эфира</h3>
                     </div>
                     <div class="broadcast-preview">
                         <video id="preview-video" autoplay playsinline muted></video>
                         <div id="preview-placeholder" class="preview-placeholder">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
                             <span>Нет активного потока</span>
                         </div>
                     </div>
-                    
+
                     <div class="studio-controls">
                         <label class="control-label">Качество</label>
                         <select id="qualitySelect" class="styled-select">
@@ -122,20 +138,35 @@
                             <option value="60">60 FPS</option>
                         </select>
 
-                        <button id="btn-start-broadcast" class="btn btn-primary w-full mt-4">Начать эфир</button>
-                        <button id="btn-stop-broadcast" class="btn btn-danger w-full mt-4 hidden">Остановить эфир</button>
+                        <button id="btn-start-broadcast" class="btn btn-primary w-full mt-4">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            Начать эфир
+                        </button>
+                        <button id="btn-stop-broadcast" class="btn btn-danger w-full mt-4 hidden">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+                            Остановить эфир
+                        </button>
                     </div>
                 </section>
 
-                <!-- Инструменты доски (Показываются только на вкладке Доска) -->
                 <section id="whiteboard-tools-section" class="panel tools-panel hidden">
                     <div class="panel-header">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
                         <h3>Инструменты</h3>
                     </div>
                     <div class="tools-grid">
-                        <button id="tool-brush" class="tool-btn active" title="Кисть">Кисть</button>
-                        <button id="tool-eraser" class="tool-btn" title="Ластик">Ластик</button>
-                        <button id="clear-canvas-btn" class="tool-btn danger" title="Очистить">Очистить</button>
+                        <button id="tool-brush" class="tool-btn active" title="Кисть">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                            Кисть
+                        </button>
+                        <button id="tool-eraser" class="tool-btn" title="Ластик">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16l9.5-9.5a2.83 2.83 0 014 0l3 3a2.83 2.83 0 010 4L13 20"/></svg>
+                            Ластик
+                        </button>
+                        <button id="clear-canvas-btn" class="tool-btn danger" title="Очистить">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                            Очистить
+                        </button>
                     </div>
                     <div id="brush-color-row" class="tool-row">
                         <label>Цвет:</label>
@@ -149,12 +180,14 @@
             </aside>
         </main>
 
-        <!-- Модальное окно Удаленного управления -->
+        <!-- ===== MODALS ===== -->
         <div id="remote-modal" class="modal hidden">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2 id="remote-modal-title">Удаленное управление: ПК-01</h2>
-                    <button id="remote-modal-close" class="close-btn">&times;</button>
+                    <button id="remote-modal-close" class="close-btn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
                 </div>
                 <div class="remote-viewer-wrapper">
                     <video id="remote-video" autoplay playsinline></video>
@@ -163,12 +196,13 @@
             </div>
         </div>
 
-        <!-- Модальное окно демонстрации экрана онлайн-ученика -->
         <div id="student-share-modal" class="modal hidden">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2 id="student-share-title">Демонстрация ученика</h2>
-                    <button id="student-share-close" class="close-btn">&times;</button>
+                    <button id="student-share-close" class="close-btn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
                 </div>
                 <div class="remote-viewer-wrapper">
                     <video id="student-share-video" autoplay playsinline></video>
@@ -178,7 +212,6 @@
         </div>
     </div>
 
-    <!-- Зависимости -->
     <script src="http://localhost:3000/socket.io/socket.io.js"></script>
     <script src="script.js"></script>
 </body>

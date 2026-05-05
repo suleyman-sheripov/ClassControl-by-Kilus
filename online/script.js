@@ -22,6 +22,7 @@ document.getElementById('join-btn').addEventListener('click', () => {
     socket.emit('register-online-user', myName);
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('main-screen').classList.remove('hidden');
+    document.getElementById('user-name-display').textContent = myName;
     resizeCanvas();
 });
 
