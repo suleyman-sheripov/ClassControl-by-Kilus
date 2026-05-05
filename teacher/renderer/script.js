@@ -463,7 +463,11 @@ async function handleStudentShareOffer(source, sdp) {
 
 socket.on('ice-candidate', async ({ source, candidate }) => {
     if (peerConnections[source]) {
-        await peerConnections[source].addIceCandidate(candidate);
+        try {
+            await peerConnections[source].addIceCandidate(candidate);
+        } catch (err) {
+            console.error('[TEACHER] ICE error for broadcast:', err);
+        }
     }
     if (source === currentShareUserId && studentSharePC) {
         try {

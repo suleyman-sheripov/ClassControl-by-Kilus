@@ -173,11 +173,18 @@ socket.on('offer', async ({ source, sdp }) => {
 // WebRTC: handle ICE candidates from teacher
 socket.on('ice-candidate', async ({ source, candidate }) => {
     console.log('[ONLINE] Received ICE candidate from', source);
+    if (sharePC) {
+        try {
+            await sharePC.addIceCandidate(candidate);
+        } catch (err) {
+            console.error('[ONLINE] ICE error (sharePC):', err);
+        }
+    }
     if (teacherPC) {
         try {
             await teacherPC.addIceCandidate(candidate);
         } catch (err) {
-            console.error('[ONLINE] Error adding ICE candidate:', err);
+            console.error('[ONLINE] ICE error (teacherPC):', err);
         }
     }
 });
