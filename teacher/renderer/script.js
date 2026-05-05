@@ -136,27 +136,36 @@ tabWhiteboard.addEventListener('click', () => {
 // --- Секция 3: Онлайн-доска ---
 
 function setupCanvas() {
-    // Подгоняем размер холста под контейнер
     const rect = whiteboardContainer.getBoundingClientRect();
     if (rect.width === 0) return;
 
-    // Сохраняем текущее изображение
+    // Fixed 16:9 aspect ratio for consistent rendering across all clients
+    const ASPECT = 16 / 9;
+    let w = rect.width;
+    let h = w / ASPECT;
+    if (h > rect.height) {
+        h = rect.height;
+        w = h * ASPECT;
+    }
+    w = Math.floor(w);
+    h = Math.floor(h);
+
+    // Save current drawing
     const tempCanvas = document.createElement('canvas');
     const tempCtx = tempCanvas.getContext('2d');
     tempCanvas.width = canvas.width;
     tempCanvas.height = canvas.height;
     tempCtx.drawImage(canvas, 0, 0);
 
-    canvas.width = rect.width;
-    canvas.height = rect.height;
+    canvas.width = w;
+    canvas.height = h;
 
-    // Стили линий
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = document.getElementById('colorPicker').value;
     ctx.lineWidth = document.getElementById('lineWidth').value;
 
-    // Восстанавливаем изображение
+    // Restore drawing
     ctx.drawImage(tempCanvas, 0, 0, canvas.width, canvas.height);
 }
 

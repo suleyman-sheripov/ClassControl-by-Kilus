@@ -119,14 +119,19 @@ body {
     overflow: hidden;
 }
 
-#video-area video, #video-area canvas {
+#video-area video {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
     object-fit: contain;
-    pointer-events: none; /* The online user just views the canvas */
+    pointer-events: none;
+}
+
+#video-area canvas {
+    position: absolute;
+    pointer-events: none;
 }
 
 #waiting-msg {

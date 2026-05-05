@@ -5,7 +5,7 @@
   <style>
     * { margin: 0; } body { background: black; overflow: hidden; }
     video { width: 100vw; height: 100vh; object-fit: contain; }
-    canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; }
+    canvas { position: absolute; pointer-events: none; }
     #status { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #888; font-size: 1.2rem; font-family: sans-serif; }
     #close-btn { position: fixed; top: 12px; right: 12px; z-index: 100; background: rgba(0,0,0,0.6);
       color: #aaa; border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 6px 14px;
@@ -75,8 +75,20 @@
         const ctx = canvas.getContext('2d');
         
         function resizeCanvas() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+            // Fixed 16:9 aspect ratio to match teacher's canvas
+            const ASPECT = 16 / 9;
+            let w = window.innerWidth;
+            let h = w / ASPECT;
+            if (h > window.innerHeight) {
+                h = window.innerHeight;
+                w = h * ASPECT;
+            }
+            canvas.width = Math.floor(w);
+            canvas.height = Math.floor(h);
+            canvas.style.left = Math.floor((window.innerWidth - canvas.width) / 2) + 'px';
+            canvas.style.top = Math.floor((window.innerHeight - canvas.height) / 2) + 'px';
+            canvas.style.width = canvas.width + 'px';
+            canvas.style.height = canvas.height + 'px';
         }
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();

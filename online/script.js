@@ -176,8 +176,22 @@ const ctx = canvas.getContext('2d');
 function resizeCanvas() {
     const rect = document.getElementById('video-area').getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
-    canvas.width = rect.width;
-    canvas.height = rect.height;
+
+    // Fixed 16:9 aspect ratio to match teacher's canvas
+    const ASPECT = 16 / 9;
+    let w = rect.width;
+    let h = w / ASPECT;
+    if (h > rect.height) {
+        h = rect.height;
+        w = h * ASPECT;
+    }
+    canvas.width = Math.floor(w);
+    canvas.height = Math.floor(h);
+    // Center canvas within video-area
+    canvas.style.left = Math.floor((rect.width - canvas.width) / 2) + 'px';
+    canvas.style.top = Math.floor((rect.height - canvas.height) / 2) + 'px';
+    canvas.style.width = canvas.width + 'px';
+    canvas.style.height = canvas.height + 'px';
 }
 window.addEventListener('resize', resizeCanvas);
 
