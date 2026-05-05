@@ -1,6 +1,8 @@
 let socket = null;
 let screenshotInterval = null;
-let agentName = window.electronAPI.hostname || 'Ученик'; 
+let agentName = window.electronAPI.hostname || 'Ученик';
+let remotePC = null;
+const iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }; 
 
 // Ждём адрес сервера от main process
 window.electronAPI.onServerAddress((address) => {
@@ -28,16 +30,67 @@ function connectToServer(address) {
       stopScreenshots();
     });
 
-    // Удалённое управление
-    socket.on('request-screen-share', () => {
-      // Здесь WebRTC: захватить экран, отправить поток учителю
-      // startScreenShare();
-      console.log('[AGENT] Request screen share received');
+    // Удалённое управление — учитель запросил экран
+    socket.on('request-screen-share', async () => {
+      console.log('[AGENT] Запрос демонстрации экрана от учителя');
+      try {
+        const screenStream = await window.electronAPI.getScreenStream();
+        if (!screenStream) {
+          console.error('[AGENT] Не удалось захватить экран');
+          return;
+        }
+
+        if (remotePC) remotePC.close();
+        remotePC = new RTCPeerConnection(iceConfig);
+
+        screenStream.getTracks().forEach(track => remotePC.addTrack(track, screenStream));
+
+        remotePC.onicecandidate = (e) => {
+          if (e.candidate) {
+            socket.emit('ice-candidate', { target: 'teacher', candidate: e.candidate });
+          }
+        };
+
+        remotePC.onconnectionstatechange = () => {
+          console.log('[AGENT] Remote PC state:', remotePC.connectionState);
+          if (remotePC.connectionState === 'disconnected' || remotePC.connectionState === 'failed') {
+            screenStream.getTracks().forEach(t => t.stop());
+            remotePC.close();
+            remotePC = null;
+          }
+        };
+
+        const offer = await remotePC.createOffer();
+        await remotePC.setLocalDescription(offer);
+        socket.emit('offer', { target: 'teacher', sdp: remotePC.localDescription });
+      } catch (err) {
+        console.error('[AGENT] Ошибка захвата экрана:', err);
+      }
+    });
+
+    // WebRTC сигналинг
+    socket.on('answer', async ({ source, sdp }) => {
+      if (remotePC) {
+        try {
+          await remotePC.setRemoteDescription(new RTCSessionDescription(sdp));
+        } catch (err) {
+          console.error('[AGENT] Error setting answer:', err);
+        }
+      }
+    });
+
+    socket.on('ice-candidate', async ({ source, candidate }) => {
+      if (remotePC) {
+        try {
+          await remotePC.addIceCandidate(candidate);
+        } catch (err) {
+          console.error('[AGENT] ICE error:', err);
+        }
+      }
     });
 
     socket.on('control-command', ({ action, data }) => {
-      // Отправить команду в nut-js через IPC
-      // window.electronAPI.executeControl(action, data);
+      console.log('[AGENT] Control command:', action, data);
     });
 
     // Демонстрация учителя

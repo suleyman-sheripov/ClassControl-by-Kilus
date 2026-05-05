@@ -2,6 +2,7 @@ const socket = io();
 let myName = '';
 let shareStream = null;
 let shareTimerInterval = null;
+let sharePC = null; // WebRTC PeerConnection for sending screen share to teacher
 let teacherPC = null; // WebRTC PeerConnection for receiving teacher broadcast
 const iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -186,6 +187,59 @@ const canvas = document.getElementById('teacher-canvas');
 const ctx = canvas.getContext('2d');
 let savedWhiteboardImage = null;
 
+// Zoom & Pan
+let zoomLevel = 1;
+let panX = 0, panY = 0;
+let isPanning = false;
+let panStartX = 0, panStartY = 0;
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 5;
+const videoArea = document.getElementById('video-area');
+
+function applyTransform() {
+    const content = videoArea.querySelector('video');
+    const transforms = `scale(${zoomLevel}) translate(${panX}px, ${panY}px)`;
+    if (content) content.style.transform = transforms;
+    canvas.style.transform = transforms;
+}
+
+videoArea.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.15 : 0.15;
+    const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomLevel + delta));
+    if (newZoom === MIN_ZOOM) {
+        panX = 0;
+        panY = 0;
+    }
+    zoomLevel = newZoom;
+    applyTransform();
+}, { passive: false });
+
+videoArea.addEventListener('mousedown', (e) => {
+    if (zoomLevel <= 1) return;
+    isPanning = true;
+    panStartX = e.clientX - panX;
+    panStartY = e.clientY - panY;
+    videoArea.style.cursor = 'grabbing';
+});
+
+videoArea.addEventListener('mousemove', (e) => {
+    if (!isPanning) return;
+    panX = e.clientX - panStartX;
+    panY = e.clientY - panStartY;
+    applyTransform();
+});
+
+videoArea.addEventListener('mouseup', () => {
+    isPanning = false;
+    videoArea.style.cursor = zoomLevel > 1 ? 'grab' : 'default';
+});
+
+videoArea.addEventListener('mouseleave', () => {
+    isPanning = false;
+    videoArea.style.cursor = 'default';
+});
+
 function resizeCanvas() {
     const rect = document.getElementById('video-area').getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
@@ -272,14 +326,13 @@ document.getElementById('share-screen-btn').addEventListener('click', async () =
         return; 
     }
 
-    socket.emit('online-user-share-screen', { userId: socket.id });
+    socket.emit('online-user-share-screen');
 
-    // Show timer
     document.getElementById('share-screen-btn').classList.add('hidden');
     document.getElementById('stop-share-btn').classList.remove('hidden');
     document.getElementById('share-timer').classList.remove('hidden');
 
-    let remaining = 300; // 5 minutes
+    let remaining = 300;
     document.getElementById('share-timer').textContent = '05:00';
 
     shareTimerInterval = setInterval(() => {
@@ -295,6 +348,45 @@ document.getElementById('share-screen-btn').addEventListener('click', async () =
     };
 });
 
+// Учитель принял демонстрацию — создаём WebRTC и отправляем поток
+socket.on('share-accepted', async ({ teacherId }) => {
+    if (!shareStream) return;
+    console.log('[ONLINE] Учитель принял демонстрацию, создаём WebRTC...');
+
+    if (sharePC) sharePC.close();
+    sharePC = new RTCPeerConnection(iceConfig);
+
+    shareStream.getTracks().forEach(track => sharePC.addTrack(track, shareStream));
+
+    sharePC.onicecandidate = (e) => {
+        if (e.candidate) {
+            socket.emit('ice-candidate', { target: teacherId, candidate: e.candidate });
+        }
+    };
+
+    sharePC.onconnectionstatechange = () => {
+        console.log('[ONLINE] Share connection:', sharePC.connectionState);
+        if (sharePC.connectionState === 'failed' || sharePC.connectionState === 'disconnected') {
+            stopSharing();
+        }
+    };
+
+    const offer = await sharePC.createOffer();
+    await sharePC.setLocalDescription(offer);
+    socket.emit('offer', { target: teacherId, sdp: sharePC.localDescription });
+});
+
+// Обработка answer от учителя для нашего share PC
+socket.on('answer', async ({ source, sdp }) => {
+    if (sharePC) {
+        try {
+            await sharePC.setRemoteDescription(new RTCSessionDescription(sdp));
+        } catch (err) {
+            console.error('[ONLINE] Error setting answer:', err);
+        }
+    }
+});
+
 document.getElementById('stop-share-btn').addEventListener('click', stopSharing);
 
 function stopSharing() {
@@ -306,8 +398,12 @@ function stopSharing() {
         shareStream.getTracks().forEach(t => t.stop());
         shareStream = null;
     }
+    if (sharePC) {
+        sharePC.close();
+        sharePC = null;
+    }
     
-    socket.emit('online-user-stop-share', { userId: socket.id });
+    socket.emit('online-user-stop-share');
 
     document.getElementById('share-screen-btn').classList.remove('hidden');
     document.getElementById('stop-share-btn').classList.add('hidden');

@@ -266,16 +266,24 @@ io.on('connection', (socket) => {
     });
 
     // WebRTC Сигналинг
+    function resolveTarget(target) {
+        if (target === 'teacher' && teacherSocket) return teacherSocket.id;
+        return target;
+    }
+
     socket.on('offer', (data) => {
-        io.to(data.target).emit('offer', { source: socket.id, sdp: data.sdp });
+        const targetId = resolveTarget(data.target);
+        if (targetId) io.to(targetId).emit('offer', { source: socket.id, sdp: data.sdp });
     });
 
     socket.on('answer', (data) => {
-        io.to(data.target).emit('answer', { source: socket.id, sdp: data.sdp });
+        const targetId = resolveTarget(data.target);
+        if (targetId) io.to(targetId).emit('answer', { source: socket.id, sdp: data.sdp });
     });
 
     socket.on('ice-candidate', (data) => {
-        io.to(data.target).emit('ice-candidate', { source: socket.id, candidate: data.candidate });
+        const targetId = resolveTarget(data.target);
+        if (targetId) io.to(targetId).emit('ice-candidate', { source: socket.id, candidate: data.candidate });
     });
 
     // Онлайн-доска — только учитель
@@ -337,7 +345,7 @@ io.on('connection', (socket) => {
     });
 
     // Демонстрация онлайн-участника (добровольная)
-    socket.on('online-user-share-screen', (data) => {
+    socket.on('online-user-share-screen', () => {
         if (teacherSocket) {
             teacherSocket.emit('online-user-sharing', { 
                 userId: socket.id, 
@@ -346,10 +354,16 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('online-user-stop-share', (data) => {
+    socket.on('online-user-stop-share', () => {
         if (teacherSocket) {
             teacherSocket.emit('online-user-stopped-sharing', { userId: socket.id });
         }
+    });
+
+    // Учитель принимает демонстрацию ученика: сообщаем ученику начать WebRTC
+    socket.on('teacher-accept-share', (data) => {
+        if (!socket.isTeacher) return;
+        io.to(data.userId).emit('share-accepted', { teacherId: socket.id });
     });
 
     socket.on('teacher-close-share', (data) => {

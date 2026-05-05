@@ -44,54 +44,72 @@ socket.on('auth-error', (msg) => {
 
 // --- Секция 1: Мониторинг ПК ---
 
-// Обновление списка агентов в сетке
+// Обновление списка агентов (дифференциальное — без мерцания)
 socket.on('agents-list', (agents) => {
     agentsCountSpan.textContent = agents.length;
     
-    // Очищаем текущую сетку и список слева
-    monitoringGrid.innerHTML = '';
-    agentsListUl.innerHTML = '';
+    const currentIds = new Set(agents.map(a => a.id));
+    const existingCards = monitoringGrid.querySelectorAll('.pc-card');
+    const existingIds = new Set();
 
-    if (agents.length === 0) {
+    // Удалить карточки отключённых агентов
+    existingCards.forEach(card => {
+        const id = card.getAttribute('data-agent-id');
+        if (!currentIds.has(id)) {
+            card.remove();
+        } else {
+            existingIds.add(id);
+        }
+    });
+
+    // Удалить placeholder если есть агенты
+    const placeholder = monitoringGrid.querySelector('.grid-placeholder');
+    if (agents.length > 0 && placeholder) placeholder.remove();
+    if (agents.length === 0 && !placeholder) {
         monitoringGrid.innerHTML = '<div class="grid-placeholder">Ожидание подключения компьютеров...</div>';
     }
 
+    // Добавить новые карточки (только для новых агентов)
     agents.forEach(agent => {
-        // Создаем карточку в сетке
-        const card = document.createElement('div');
-        card.className = 'pc-card';
-        card.setAttribute('data-agent-id', agent.id);
+        if (!existingIds.has(agent.id)) {
+            const card = document.createElement('div');
+            card.className = 'pc-card';
+            card.setAttribute('data-agent-id', agent.id);
 
-        const img = document.createElement('img');
-        img.className = 'screenshot';
-        img.id = `screen-${agent.id}`;
-        img.src = '';
-        img.alt = `Экран ${agent.name}`;
-        card.appendChild(img);
+            const img = document.createElement('img');
+            img.className = 'screenshot';
+            img.id = `screen-${agent.id}`;
+            img.src = '';
+            img.alt = `Экран ${agent.name}`;
+            card.appendChild(img);
 
-        const infoDiv = document.createElement('div');
-        infoDiv.className = 'pc-info';
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'pc-info';
 
-        const nameSpan = document.createElement('span');
-        nameSpan.className = 'pc-name';
-        nameSpan.textContent = agent.name;
-        infoDiv.appendChild(nameSpan);
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'pc-name';
+            nameSpan.textContent = agent.name;
+            infoDiv.appendChild(nameSpan);
 
-        const controlBtn = document.createElement('button');
-        controlBtn.className = 'btn btn-primary';
-        controlBtn.style.cssText = 'padding: 4px 8px; font-size: 0.7rem;';
-        controlBtn.textContent = '🖱️ Управление';
-        controlBtn.addEventListener('click', () => openRemoteControl(agent.id, agent.name));
-        infoDiv.appendChild(controlBtn);
+            const controlBtn = document.createElement('button');
+            controlBtn.className = 'btn btn-primary';
+            controlBtn.style.cssText = 'padding: 4px 8px; font-size: 0.7rem;';
+            controlBtn.textContent = 'Управление';
+            controlBtn.addEventListener('click', () => openRemoteControl(agent.id, agent.name));
+            infoDiv.appendChild(controlBtn);
 
-        card.appendChild(infoDiv);
-        monitoringGrid.appendChild(card);
+            card.appendChild(infoDiv);
+            monitoringGrid.appendChild(card);
+        }
+    });
 
-        // Добавляем в список слева
+    // Обновить список слева
+    agentsListUl.innerHTML = '';
+    agents.forEach(agent => {
         const li = document.createElement('li');
         li.className = 'item-list-entry';
         const liSpan = document.createElement('span');
-        liSpan.textContent = `🖥️ ${agent.name}`;
+        liSpan.textContent = agent.name;
         li.appendChild(liSpan);
         const dotSpan = document.createElement('span');
         dotSpan.className = 'status-dot';
@@ -270,19 +288,63 @@ socket.on('clear-canvas', () => {
 
 // --- Секция 4: Удаленное управление (Модалка) ---
 
+let remoteAgentPC = null;
+let currentRemoteAgentId = null;
+
 window.openRemoteControl = function(agentId, agentName) {
+    currentRemoteAgentId = agentId;
     document.getElementById('remote-modal').classList.remove('hidden');
     document.getElementById('remote-modal-title').innerText = 'Удаленное управление: ' + agentName;
+    document.getElementById('remote-video').srcObject = null;
     
-    // Запрос потока от агента
     socket.emit('request-agent-screen', agentId);
-    
-    // Здесь будет WebRTC сигналинг в task-05
 };
+
+// Получение offer (от агента или от онлайн-ученика)
+socket.on('offer', async ({ source, sdp }) => {
+    if (source === currentShareUserId) {
+        handleStudentShareOffer(source, sdp);
+        return;
+    }
+    if (source === currentRemoteAgentId || agents_contains(source)) {
+        console.log('[TEACHER] Получен offer от агента:', source);
+        if (remoteAgentPC) remoteAgentPC.close();
+        remoteAgentPC = new RTCPeerConnection(iceConfig);
+
+        remoteAgentPC.ontrack = (e) => {
+            console.log('[TEACHER] Получен видео-поток от агента');
+            document.getElementById('remote-video').srcObject = e.streams[0];
+        };
+
+        remoteAgentPC.onicecandidate = (e) => {
+            if (e.candidate) {
+                socket.emit('ice-candidate', { target: source, candidate: e.candidate });
+            }
+        };
+
+        remoteAgentPC.onconnectionstatechange = () => {
+            console.log('[TEACHER] Remote agent connection:', remoteAgentPC.connectionState);
+        };
+
+        await remoteAgentPC.setRemoteDescription(new RTCSessionDescription(sdp));
+        const answer = await remoteAgentPC.createAnswer();
+        await remoteAgentPC.setLocalDescription(answer);
+        socket.emit('answer', { target: source, sdp: remoteAgentPC.localDescription });
+    }
+});
+
+function agents_contains(id) {
+    return !!document.querySelector(`.pc-card[data-agent-id="${id}"]`);
+}
 
 document.getElementById('remote-modal-close').addEventListener('click', () => {
     document.getElementById('remote-modal').classList.add('hidden');
-    // Остановить поток, если есть
+    document.getElementById('remote-video').srcObject = null;
+    if (remoteAgentPC) {
+        remoteAgentPC.close();
+        remoteAgentPC = null;
+    }
+    currentRemoteAgentId = null;
 });
 
 // --- Секция 6: Демонстрация экрана (Учитель -> Все) ---
@@ -372,9 +434,50 @@ socket.on('answer', async ({ source, sdp }) => {
     }
 });
 
+async function handleStudentShareOffer(source, sdp) {
+    console.log('[TEACHER] Получен offer от ученика:', source);
+    if (studentSharePC) studentSharePC.close();
+    studentSharePC = new RTCPeerConnection(iceConfig);
+
+    studentSharePC.ontrack = (e) => {
+        console.log('[TEACHER] Получен поток от ученика');
+        document.getElementById('student-share-video').srcObject = e.streams[0];
+        document.getElementById('student-share-status').textContent = '';
+    };
+
+    studentSharePC.onicecandidate = (e) => {
+        if (e.candidate) {
+            socket.emit('ice-candidate', { target: source, candidate: e.candidate });
+        }
+    };
+
+    studentSharePC.onconnectionstatechange = () => {
+        console.log('[TEACHER] Student share connection:', studentSharePC.connectionState);
+    };
+
+    await studentSharePC.setRemoteDescription(new RTCSessionDescription(sdp));
+    const answer = await studentSharePC.createAnswer();
+    await studentSharePC.setLocalDescription(answer);
+    socket.emit('answer', { target: source, sdp: studentSharePC.localDescription });
+}
+
 socket.on('ice-candidate', async ({ source, candidate }) => {
     if (peerConnections[source]) {
         await peerConnections[source].addIceCandidate(candidate);
+    }
+    if (source === currentShareUserId && studentSharePC) {
+        try {
+            await studentSharePC.addIceCandidate(candidate);
+        } catch (err) {
+            console.error('[TEACHER] ICE error for student share:', err);
+        }
+    }
+    if (remoteAgentPC && source === currentRemoteAgentId) {
+        try {
+            await remoteAgentPC.addIceCandidate(candidate);
+        } catch (err) {
+            console.error('[TEACHER] ICE error for remote agent:', err);
+        }
     }
 });
 
@@ -476,10 +579,47 @@ socket.on('online-users-list', (users) => {
     });
 });
 
+// --- Просмотр демонстрации экрана онлайн-ученика ---
+let studentSharePC = null;
+let currentShareUserId = null;
+
 socket.on('online-user-sharing', ({ userId, name }) => {
-    console.log(`[TEACHER] ${name} (${userId}) начал демонстрацию экрана`);
-    // TODO: Добавить интерфейс просмотра демонстрации участника
+    console.log(`[TEACHER] ${name} (${userId}) хочет показать экран`);
+    showStudentShareModal(userId, name);
 });
+
+socket.on('online-user-stopped-sharing', ({ userId }) => {
+    console.log(`[TEACHER] Ученик ${userId} остановил демонстрацию`);
+    if (currentShareUserId === userId) {
+        closeStudentShareModal();
+    }
+});
+
+function showStudentShareModal(userId, name) {
+    currentShareUserId = userId;
+    const modal = document.getElementById('student-share-modal');
+    document.getElementById('student-share-title').textContent = `Демонстрация: ${name}`;
+    modal.classList.remove('hidden');
+    document.getElementById('student-share-status').textContent = 'Подключение...';
+    document.getElementById('student-share-video').srcObject = null;
+    socket.emit('teacher-accept-share', { userId });
+}
+
+function closeStudentShareModal() {
+    const modal = document.getElementById('student-share-modal');
+    modal.classList.add('hidden');
+    if (studentSharePC) {
+        studentSharePC.close();
+        studentSharePC = null;
+    }
+    if (currentShareUserId) {
+        socket.emit('teacher-close-share', { userId: currentShareUserId });
+        currentShareUserId = null;
+    }
+    document.getElementById('student-share-video').srcObject = null;
+}
+
+document.getElementById('student-share-close').addEventListener('click', closeStudentShareModal);
 
 // --- Секция 9: Запись экрана учителя ---
 
