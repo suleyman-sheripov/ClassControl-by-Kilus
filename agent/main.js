@@ -53,10 +53,10 @@ function applyAutoStart() {
 
 function buildTrayMenu() {
   const menuItems = [
-    { label: '💬 Открыть беседу', click: () => openChatWindow() },
+    { label: 'Открыть беседу', click: () => openChatWindow() },
     { type: 'separator' },
     {
-      label: '⚙️ Настройки',
+      label: 'Настройки',
       submenu: [
         {
           label: 'Показывать кнопку "Выход"',
@@ -94,7 +94,7 @@ function buildTrayMenu() {
   if (settings.showExitButton) {
     menuItems.push({ type: 'separator' });
     menuItems.push({
-      label: '❌ Выход',
+      label: 'Выход',
       click: () => { app.isQuitting = true; app.quit(); }
     });
   }

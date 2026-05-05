@@ -13,23 +13,28 @@
     .msg { margin-bottom: 10px; font-size: 0.9rem; }
     .msg .author { font-weight: 600; color: #6366f1; }
     .msg.file a { color: #10b981; text-decoration: underline; }
-    .input-area { display: flex; gap: 4px; padding: 8px; border-top: 1px solid rgba(255,255,255,0.08); }
+    .input-area { display: flex; gap: 8px; padding: 12px; border-top: 1px solid rgba(255,255,255,0.08); align-items: center; }
     #text-input { flex: 1; background: #252836; border: 1px solid rgba(255,255,255,0.08);
                   color: white; padding: 10px; border-radius: 6px; outline: none; }
     button { background: #6366f1; color: white; border: none; padding: 10px 14px;
-             border-radius: 6px; cursor: pointer; }
+             border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.8rem;
+             transition: all 0.2s; }
     button:hover { background: #818cf8; }
-    .attach-btn { background: #252836; }
+    .attach-btn { background: #252836; border: 1px solid rgba(255,255,255,0.08);
+                  color: #a1a1aa; width: 36px; height: 36px; padding: 0;
+                  display: flex; align-items: center; justify-content: center;
+                  font-size: 1.1rem; }
+    .attach-btn:hover { background: #6366f1; color: white; border-color: #6366f1; }
   </style>
 </head>
 <body>
-  <div class="header">💬 Чат класса</div>
+  <div class="header">Чат класса</div>
   <div id="messages"></div>
   <div class="input-area">
-    <button class="attach-btn" id="attachBtn">📎</button>
+    <button class="attach-btn" id="attachBtn" title="Прикрепить файл">+</button>
     <input type="file" id="fileInput" style="display:none">
     <input type="text" id="text-input" placeholder="Сообщение...">
-    <button id="sendBtn">→</button>
+    <button id="sendBtn">Отправить</button>
   </div>
 
   <script src="../node_modules/socket.io-client/dist/socket.io.js"></script>
@@ -83,7 +88,7 @@
       authorSpan.className = 'author';
       authorSpan.textContent = m.sender + ':';
       d.appendChild(authorSpan);
-      d.appendChild(document.createTextNode(' 📎 '));
+      d.appendChild(document.createTextNode(' '));
       const link = document.createElement('a');
       link.href = socket.io.uri + m.url;
       link.target = '_blank';
