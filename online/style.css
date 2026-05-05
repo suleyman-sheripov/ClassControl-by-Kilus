@@ -159,6 +159,8 @@ body {
     display: flex;
     flex-direction: column;
     border-left: 1px solid rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    min-height: 0;
 }
 
 #chat-panel h3 {
@@ -175,6 +177,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 10px;
+    min-height: 0;
 }
 
 .chat-msg {
@@ -198,6 +201,7 @@ body {
     padding: 12px;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     background: #13151c;
+    flex-shrink: 0;
 }
 
 #chat-input-area input[type="text"] {

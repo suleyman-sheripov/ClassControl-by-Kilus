@@ -175,6 +175,8 @@ body {
 /* Chat */
 .chat-panel {
   flex: 1;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .chat-messages {
@@ -184,6 +186,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
 }
 
 .chat-msg {
@@ -203,6 +206,7 @@ body {
   display: flex;
   gap: 8px;
   background: var(--bg-header);
+  flex-shrink: 0;
 }
 
 .chat-input-wrapper input {
