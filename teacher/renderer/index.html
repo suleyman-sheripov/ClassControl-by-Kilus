@@ -12,24 +12,24 @@
         <!-- Навигационная панель сверху (Тулбар) -->
         <header class="main-header">
             <div class="logo">
-                <span class="icon">🛡️</span>
+                <span class="icon">CC</span>
                 <span class="text">ClassControl</span>
             </div>
             
             <div class="header-center">
                 <div class="tabs">
                     <button id="tab-monitoring" class="tab-btn active">
-                        <span class="tab-icon">💻</span> Мониторинг ПК
+                        Мониторинг ПК
                     </button>
                     <button id="tab-whiteboard" class="tab-btn">
-                        <span class="tab-icon">🖍️</span> Онлайн-доска
+                        Онлайн-доска
                     </button>
                 </div>
             </div>
 
             <div class="header-right">
                 <div id="record-timer" class="record-timer hidden">00:00</div>
-                <button id="recordBtn" class="btn btn-ghost">🔴 Запись</button>
+                <button id="recordBtn" class="btn btn-ghost">Запись</button>
                 <div class="user-profile">
                     <span id="teacher-name-display">Учитель</span>
                     <div class="status-indicator online"></div>
@@ -42,7 +42,7 @@
             <aside class="sidebar sidebar-left">
                 <section class="panel participants-panel">
                     <div class="panel-header">
-                        <h3>👥 В классе (<span id="agents-count">0</span>)</h3>
+                        <h3>В классе (<span id="agents-count">0</span>)</h3>
                     </div>
                     <ul id="agents-list" class="item-list">
                         <!-- Список агентов (ПК в классе) -->
@@ -51,7 +51,7 @@
 
                 <section class="panel online-panel">
                     <div class="panel-header">
-                        <h3>🏠 Онлайн (<span id="online-count">0</span>)</h3>
+                        <h3>Онлайн (<span id="online-count">0</span>)</h3>
                     </div>
                     <ul id="online-users-list" class="item-list">
                         <!-- Список онлайн-участников -->
@@ -60,16 +60,16 @@
 
                 <section class="panel chat-panel">
                     <div class="panel-header">
-                        <h3>💬 Общий чат</h3>
+                        <h3>Общий чат</h3>
                     </div>
                     <div id="chat-messages" class="chat-messages">
                         <!-- Сообщения чата -->
                     </div>
                     <div class="chat-input-wrapper">
-                        <button id="chat-attach-btn" class="chat-action-btn">📎</button>
+                        <button id="chat-attach-btn" class="chat-action-btn" title="Прикрепить файл">+</button>
                         <input type="file" id="chat-file-input" class="hidden">
                         <input type="text" id="chat-text-input" placeholder="Написать..." autocomplete="off">
-                        <button id="chat-send-btn" class="chat-send-btn">→</button>
+                        <button id="chat-send-btn" class="chat-send-btn">Отправить</button>
                     </div>
                 </section>
             </aside>
@@ -92,7 +92,7 @@
             <aside class="sidebar sidebar-right">
                 <section class="panel studio-panel">
                     <div class="panel-header">
-                        <h3>🎥 Студия эфира</h3>
+                        <h3>Студия эфира</h3>
                     </div>
                     <div class="broadcast-preview">
                         <video id="preview-video" autoplay playsinline muted></video>
@@ -105,15 +105,22 @@
                         <label class="control-label">Качество</label>
                         <select id="qualitySelect" class="styled-select">
                             <option value="1920x1080">1080p (Full HD)</option>
-                            <option value="1280x720" selected>720p (HD)</option>
-                            <option value="854x480">480p (SD)</option>
+                            <option value="1280x720">720p (HD)</option>
+                            <option value="854x480" selected>480p (SD)</option>
+                            <option value="640x360">360p</option>
+                            <option value="426x240">240p</option>
+                            <option value="320x180">180p (min)</option>
                         </select>
 
                         <label class="control-label">Частота кадров</label>
-                        <div class="fps-toggle">
-                            <button id="fps30" class="fps-btn active">30 FPS</button>
-                            <button id="fps60" class="fps-btn">60 FPS</button>
-                        </div>
+                        <select id="fpsSelect" class="styled-select">
+                            <option value="5">5 FPS</option>
+                            <option value="10">10 FPS</option>
+                            <option value="15" selected>15 FPS</option>
+                            <option value="20">20 FPS</option>
+                            <option value="30">30 FPS</option>
+                            <option value="60">60 FPS</option>
+                        </select>
 
                         <button id="btn-start-broadcast" class="btn btn-primary w-full mt-4">Начать эфир</button>
                         <button id="btn-stop-broadcast" class="btn btn-danger w-full mt-4 hidden">Остановить эфир</button>
@@ -123,12 +130,12 @@
                 <!-- Инструменты доски (Показываются только на вкладке Доска) -->
                 <section id="whiteboard-tools-section" class="panel tools-panel hidden">
                     <div class="panel-header">
-                        <h3>🎨 Инструменты</h3>
+                        <h3>Инструменты</h3>
                     </div>
                     <div class="tools-grid">
-                        <button id="tool-brush" class="tool-btn active" title="Кисть">🖌️</button>
-                        <button id="tool-eraser" class="tool-btn" title="Ластик">🧽</button>
-                        <button id="clear-canvas-btn" class="tool-btn danger" title="Очистить">🗑️</button>
+                        <button id="tool-brush" class="tool-btn active" title="Кисть">Кисть</button>
+                        <button id="tool-eraser" class="tool-btn" title="Ластик">Ластик</button>
+                        <button id="clear-canvas-btn" class="tool-btn danger" title="Очистить">Очистить</button>
                     </div>
                     <div id="brush-color-row" class="tool-row">
                         <label>Цвет:</label>

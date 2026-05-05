@@ -136,27 +136,36 @@ tabWhiteboard.addEventListener('click', () => {
 // --- Секция 3: Онлайн-доска ---
 
 function setupCanvas() {
-    // Подгоняем размер холста под контейнер
     const rect = whiteboardContainer.getBoundingClientRect();
     if (rect.width === 0) return;
 
-    // Сохраняем текущее изображение
+    // Fixed 16:9 aspect ratio for consistent rendering across all clients
+    const ASPECT = 16 / 9;
+    let w = rect.width;
+    let h = w / ASPECT;
+    if (h > rect.height) {
+        h = rect.height;
+        w = h * ASPECT;
+    }
+    w = Math.floor(w);
+    h = Math.floor(h);
+
+    // Save current drawing
     const tempCanvas = document.createElement('canvas');
     const tempCtx = tempCanvas.getContext('2d');
     tempCanvas.width = canvas.width;
     tempCanvas.height = canvas.height;
     tempCtx.drawImage(canvas, 0, 0);
 
-    canvas.width = rect.width;
-    canvas.height = rect.height;
+    canvas.width = w;
+    canvas.height = h;
 
-    // Стили линий
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = document.getElementById('colorPicker').value;
     ctx.lineWidth = document.getElementById('lineWidth').value;
 
-    // Восстанавливаем изображение
+    // Restore drawing
     ctx.drawImage(tempCanvas, 0, 0, canvas.width, canvas.height);
 }
 
@@ -282,23 +291,10 @@ let localStream = null;
 let isBroadcasting = false;
 const peerConnections = {};
 const iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-let selectedFps = 30;
-
-document.getElementById('fps30').addEventListener('click', () => {
-    selectedFps = 30;
-    document.getElementById('fps30').classList.add('active');
-    document.getElementById('fps60').classList.remove('active');
-});
-
-document.getElementById('fps60').addEventListener('click', () => {
-    selectedFps = 60;
-    document.getElementById('fps60').classList.add('active');
-    document.getElementById('fps30').classList.remove('active');
-});
-
 document.getElementById('btn-start-broadcast').addEventListener('click', async () => {
     const quality = document.getElementById('qualitySelect').value;
     const [w, h] = quality.split('x').map(Number);
+    const selectedFps = parseInt(document.getElementById('fpsSelect').value, 10);
 
     try {
         localStream = await navigator.mediaDevices.getDisplayMedia({
@@ -450,7 +446,7 @@ function renderChatFile(msg) {
     senderSpan.className = 'sender';
     senderSpan.textContent = msg.sender + ':';
     div.appendChild(senderSpan);
-    div.appendChild(document.createTextNode(' 📎 '));
+    div.appendChild(document.createTextNode(' '));
     const link = document.createElement('a');
     link.href = `http://localhost:3000${msg.url}`;
     link.target = '_blank';
@@ -601,7 +597,7 @@ function stopRecording() {
         mediaRecorder.stream.getTracks().forEach(t => t.stop());
     }
     isRecording = false;
-    recordBtn.textContent = '🔴 Запись';
+    recordBtn.textContent = 'Запись';
     recordBtn.style.color = '';
     recordTimerEl.classList.add('hidden');
     clearInterval(recordTimer);

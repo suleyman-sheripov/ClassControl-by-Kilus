@@ -98,7 +98,7 @@ function renderChatFile(msg) {
     senderSpan.className = 'sender';
     senderSpan.textContent = msg.sender + ':';
     div.appendChild(senderSpan);
-    div.appendChild(document.createTextNode(' 📎 '));
+    div.appendChild(document.createTextNode(' '));
     const link = document.createElement('a');
     link.href = `${window.location.origin}${msg.url}`;
     link.target = '_blank';
@@ -184,12 +184,27 @@ socket.on('ice-candidate', async ({ source, candidate }) => {
 // --- ДОСКА ---
 const canvas = document.getElementById('teacher-canvas');
 const ctx = canvas.getContext('2d');
+let savedWhiteboardImage = null;
 
 function resizeCanvas() {
     const rect = document.getElementById('video-area').getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
-    canvas.width = rect.width;
-    canvas.height = rect.height;
+
+    // Fixed 16:9 aspect ratio to match teacher's canvas
+    const ASPECT = 16 / 9;
+    let w = rect.width;
+    let h = w / ASPECT;
+    if (h > rect.height) {
+        h = rect.height;
+        w = h * ASPECT;
+    }
+    canvas.width = Math.floor(w);
+    canvas.height = Math.floor(h);
+    // Center canvas within video-area
+    canvas.style.left = Math.floor((rect.width - canvas.width) / 2) + 'px';
+    canvas.style.top = Math.floor((rect.height - canvas.height) / 2) + 'px';
+    canvas.style.width = canvas.width + 'px';
+    canvas.style.height = canvas.height + 'px';
 }
 window.addEventListener('resize', resizeCanvas);
 
@@ -197,18 +212,25 @@ window.addEventListener('resize', resizeCanvas);
 socket.on('whiteboard-mode', (active) => {
     console.log('[ONLINE] Whiteboard mode:', active);
     if (active) {
-        // Show white canvas background for whiteboard
         document.getElementById('waiting-msg').classList.add('hidden');
         canvas.style.background = 'white';
         canvas.style.pointerEvents = 'none';
         resizeCanvas();
+        // Restore saved whiteboard drawing if available
+        if (savedWhiteboardImage) {
+            const img = new Image();
+            img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            img.src = savedWhiteboardImage;
+        }
     } else {
-        // Return to normal (video/waiting)
+        // Save whiteboard drawing before hiding
+        if (canvas.width > 0 && canvas.height > 0) {
+            savedWhiteboardImage = canvas.toDataURL();
+        }
         canvas.style.background = 'transparent';
         if (!document.getElementById('teacher-video').srcObject) {
             document.getElementById('waiting-msg').classList.remove('hidden');
         }
-        // Clear any whiteboard drawings
         ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
 });
@@ -238,6 +260,7 @@ socket.on('draw', (data) => {
 
 socket.on('clear-canvas', () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    savedWhiteboardImage = null;
 });
 
 // --- ПОКАЗ СВОЕГО ЭКРАНА (5 минут) ---
