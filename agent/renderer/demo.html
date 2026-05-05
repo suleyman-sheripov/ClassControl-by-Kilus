@@ -73,6 +73,7 @@
         // Whiteboard rendering over demo video
         const canvas = document.getElementById('demoCanvas');
         const ctx = canvas.getContext('2d');
+        let savedWhiteboardImage = null;
         
         function resizeCanvas() {
             // Fixed 16:9 aspect ratio to match teacher's canvas
@@ -98,7 +99,17 @@
             if (active) {
                 canvas.style.background = 'white';
                 document.getElementById('status').style.display = 'none';
+                // Restore saved whiteboard drawing if available
+                if (savedWhiteboardImage) {
+                    const img = new Image();
+                    img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    img.src = savedWhiteboardImage;
+                }
             } else {
+                // Save whiteboard drawing before hiding
+                if (canvas.width > 0 && canvas.height > 0) {
+                    savedWhiteboardImage = canvas.toDataURL();
+                }
                 canvas.style.background = 'transparent';
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
             }
@@ -129,6 +140,7 @@
 
         socket.on('clear-canvas', () => {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            savedWhiteboardImage = null;
         });
 
         socket.on('broadcast-stopped', () => {
