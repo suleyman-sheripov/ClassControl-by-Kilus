@@ -226,6 +226,7 @@ io.on('connection', (socket) => {
         }
         
         socket.emit('chat-history', chatHistory);
+        if (teacherName) socket.emit('teacher-name', teacherName);
         if (isBroadcasting) socket.emit('broadcast-started');
         if (canvasState) socket.emit('canvas-state', canvasState);
     });
