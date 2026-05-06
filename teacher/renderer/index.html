@@ -52,7 +52,7 @@
         <main class="content-layout">
 
             <!-- SIDEBAR LEFT -->
-            <aside class="sidebar sidebar-left">
+            <aside class="sidebar sidebar-left" id="panel-left">
                 <section class="panel participants-panel">
                     <div class="panel-header">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
@@ -88,6 +88,8 @@
                 </section>
             </aside>
 
+            <div class="resizer" id="resizer-left"></div>
+
             <!-- CENTER -->
             <section class="main-viewport">
                 <div id="monitoring-grid" class="monitoring-grid">
@@ -102,8 +104,10 @@
                 </div>
             </section>
 
+            <div class="resizer" id="resizer-right"></div>
+
             <!-- SIDEBAR RIGHT -->
-            <aside class="sidebar sidebar-right">
+            <aside class="sidebar sidebar-right" id="panel-right">
                 <section class="panel studio-panel">
                     <div class="panel-header">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>

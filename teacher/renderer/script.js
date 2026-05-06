@@ -576,33 +576,60 @@ function renderChatFile(msg) {
 
 // --- Секция 8: Онлайн-участники ---
 
+let currentOnlineUsers = [];
+const sharingUsers = new Set(); // Хранит ID учеников, которые сейчас транслируют
+
 socket.on('online-users-list', (users) => {
+    currentOnlineUsers = users;
     onlineCountSpan.textContent = users.length;
+    renderOnlineUsersList();
+});
+
+function renderOnlineUsersList() {
     onlineUsersListUl.innerHTML = '';
-    users.forEach(u => {
+    currentOnlineUsers.forEach(u => {
         const li = document.createElement('li');
         li.className = 'item-list-entry';
+        
         const uSpan = document.createElement('span');
-        uSpan.textContent = `👤 ${u.name}`;
+        uSpan.style.display = 'flex';
+        uSpan.style.alignItems = 'center';
+        uSpan.style.gap = '6px';
+        // Строгая SVG-иконка пользователя вместо эмодзи
+        uSpan.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> <span>${u.name}</span>`;
         li.appendChild(uSpan);
-        const uDot = document.createElement('span');
-        uDot.className = 'status-dot';
-        li.appendChild(uDot);
+        
+        if (sharingUsers.has(u.id)) {
+            const watchBtn = document.createElement('button');
+            watchBtn.className = 'btn btn-primary';
+            watchBtn.style.cssText = 'padding: 3px 8px; font-size: 0.65rem;';
+            watchBtn.textContent = 'Смотреть';
+            watchBtn.onclick = () => showStudentShareModal(u.id, u.name);
+            li.appendChild(watchBtn);
+        } else {
+            const uDot = document.createElement('span');
+            uDot.className = 'status-dot';
+            li.appendChild(uDot);
+        }
+        
         onlineUsersListUl.appendChild(li);
     });
-});
+}
 
 // --- Просмотр демонстрации экрана онлайн-ученика ---
 let studentSharePC = null;
 let currentShareUserId = null;
 
 socket.on('online-user-sharing', ({ userId, name }) => {
-    console.log(`[TEACHER] ${name} (${userId}) хочет показать экран`);
-    showStudentShareModal(userId, name);
+    console.log(`[TEACHER] ${name} (${userId}) запустил трансляцию`);
+    sharingUsers.add(userId);
+    renderOnlineUsersList(); // Перерисовываем список, чтобы появилась кнопка
 });
 
 socket.on('online-user-stopped-sharing', ({ userId }) => {
     console.log(`[TEACHER] Ученик ${userId} остановил демонстрацию`);
+    sharingUsers.delete(userId);
+    renderOnlineUsersList(); // Перерисовываем список, убираем кнопку
     if (currentShareUserId === userId) {
         closeStudentShareModal();
     }
@@ -726,8 +753,9 @@ async function startRecording() {
         isRecording = true;
 
         // UI
-        recordBtn.textContent = '⏹ Стоп';
-        recordBtn.style.color = '#ef4444';
+        // Геометрически правильный SVG-квадрат вместо эмодзи
+        recordBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg> <span>Стоп</span>`;
+        recordBtn.style.color = 'var(--c-red)';
         recordTimerEl.classList.remove('hidden');
         recordSeconds = 0;
         recordTimer = setInterval(() => {
@@ -750,8 +778,61 @@ function stopRecording() {
         mediaRecorder.stream.getTracks().forEach(t => t.stop());
     }
     isRecording = false;
-    recordBtn.textContent = 'Запись';
+    // Возвращаем оригинальный SVG-кружок при остановке записи
+    recordBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg> <span>Запись</span>`;
     recordBtn.style.color = '';
     recordTimerEl.classList.add('hidden');
     clearInterval(recordTimer);
 }
+
+// --- Секция 10: Изменение ширины панелей (Resizer) ---
+
+const resizerLeft = document.getElementById('resizer-left');
+const resizerRight = document.getElementById('resizer-right');
+const panelLeft = document.getElementById('panel-left');
+const panelRight = document.getElementById('panel-right');
+
+let isResizingLeft = false;
+let isResizingRight = false;
+
+if (resizerLeft && panelLeft) {
+    resizerLeft.addEventListener('mousedown', (e) => {
+        isResizingLeft = true;
+        document.body.style.cursor = 'col-resize';
+    });
+}
+
+if (resizerRight && panelRight) {
+    resizerRight.addEventListener('mousedown', (e) => {
+        isResizingRight = true;
+        document.body.style.cursor = 'col-resize';
+    });
+}
+
+document.addEventListener('mousemove', (e) => {
+    if (!isResizingLeft && !isResizingRight) return;
+    
+    if (isResizingLeft) {
+        let newWidth = e.clientX;
+        if (newWidth < 250) newWidth = 250; // Минимальная ширина левой панели
+        if (newWidth > 600) newWidth = 600; // Максимальная ширина левой панели
+        panelLeft.style.width = `${newWidth}px`;
+        panelLeft.style.flex = 'none';
+    }
+    
+    if (isResizingRight) {
+        let newWidth = window.innerWidth - e.clientX;
+        if (newWidth < 250) newWidth = 250; // Минимальная ширина правой панели
+        if (newWidth > 600) newWidth = 600; // Максимальная ширина правой панели
+        panelRight.style.width = `${newWidth}px`;
+        panelRight.style.flex = 'none';
+    }
+});
+
+document.addEventListener('mouseup', () => {
+    if (isResizingLeft || isResizingRight) {
+        isResizingLeft = false;
+        isResizingRight = false;
+        document.body.style.cursor = '';
+    }
+});
