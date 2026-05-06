@@ -276,8 +276,30 @@ body{
     background:var(--c-card);
     border-radius:var(--r);
     border:1px solid var(--c-border);
+    position:relative;
 }
-.chat-msg .sender{font-weight:600;color:var(--c-accent);margin-right:5px}
+.chat-msg .sender{font-weight:600;margin-right:5px}
+.chat-msg .sender-badge{
+    display:inline-block;width:8px;height:8px;
+    border-radius:50%;margin-right:4px;vertical-align:middle;
+}
+
+/* Teacher message */
+.chat-msg.chat-msg--teacher{
+    background:linear-gradient(135deg, rgba(108,92,231,.12), rgba(78,160,247,.08));
+    border-color:rgba(108,92,231,.25);
+    border-left:3px solid var(--c-accent);
+}
+.chat-msg--teacher .sender{color:var(--c-accent)}
+.chat-msg--teacher .sender::before{
+    content:'';display:inline-block;
+    width:6px;height:6px;border-radius:50%;
+    background:var(--c-accent);margin-right:5px;vertical-align:middle;
+}
+
+/* Student messages */
+.chat-msg--student .sender{font-weight:600}
+
 .chat-msg.file a{color:var(--c-green);text-decoration:none;font-weight:500}
 .chat-msg.file a:hover{text-decoration:underline}
 

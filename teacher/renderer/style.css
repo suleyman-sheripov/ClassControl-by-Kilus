@@ -133,8 +133,8 @@ body{
     border:1px solid var(--c-border);
     box-shadow:0 8px 24px rgba(0,0,0,.2);
 }
-.sidebar-left{}
-.sidebar-right{overflow-y:auto}
+.sidebar-left{overflow-y:auto}
+.sidebar-right{}
 
 .main-viewport{
     flex:1;background:var(--c-surface);
@@ -206,11 +206,25 @@ body{
 }
 .pc-name{font-weight:600;font-size:.82rem;color:var(--c-text)}
 
+/* ===== PARTICIPANTS COMBINED PANEL ===== */
+.participants-combined-panel{flex-shrink:0;max-height:40%}
+.participants-lists{padding:6px;overflow-y:auto}
+.participants-group+.participants-group{margin-top:6px;padding-top:6px;border-top:1px solid var(--c-border)}
+.participants-group__label{
+    display:flex;align-items:center;gap:5px;
+    font-size:.65rem;font-weight:600;text-transform:uppercase;
+    letter-spacing:.06em;color:var(--c-text3);
+    padding:4px 8px;
+}
+.participants-group__label svg{opacity:.5}
+.participants-separator{color:var(--c-text3);font-size:.65rem;margin:0 2px}
+.count-badge--online{background:rgba(46,216,164,.15);color:var(--c-green)}
+
 /* ===== SIDEBAR LISTS ===== */
-.item-list{list-style:none;padding:6px;overflow-y:auto;max-height:150px}
+.item-list{list-style:none;padding:2px 4px;overflow-y:auto;max-height:120px}
 .item-list li,.item-list-entry{
-    padding:8px 10px;border-radius:6px;
-    font-size:.8rem;
+    padding:6px 8px;border-radius:6px;
+    font-size:.78rem;
     display:flex;align-items:center;justify-content:space-between;gap:7px;
     transition:background .2s;cursor:default;
 }
@@ -229,10 +243,34 @@ body{
 
 .chat-msg{
     font-size:.82rem;line-height:1.5;
-    padding:7px 10px;border-radius:var(--r);
+    padding:8px 10px;border-radius:var(--r);
     background:var(--c-card);border:1px solid var(--c-border);
+    position:relative;
 }
-.chat-msg .sender{font-weight:600;color:var(--c-accent);margin-right:5px}
+.chat-msg .sender{font-weight:600;margin-right:5px}
+.chat-msg .sender-badge{
+    display:inline-block;width:8px;height:8px;
+    border-radius:50%;margin-right:4px;vertical-align:middle;
+    flex-shrink:0;
+}
+
+/* Teacher message — visually distinct */
+.chat-msg.chat-msg--teacher{
+    background:linear-gradient(135deg, rgba(37,99,235,.12), rgba(59,130,246,.08));
+    border-color:rgba(59,130,246,.25);
+    border-left:3px solid var(--c-accent);
+}
+.chat-msg--teacher .sender{
+    color:var(--c-accent);
+}
+.chat-msg--teacher .sender::before{
+    content:'';display:inline-block;
+    width:6px;height:6px;border-radius:50%;
+    background:var(--c-accent);margin-right:5px;vertical-align:middle;
+}
+
+/* Student messages — colored sender */
+.chat-msg--student .sender{font-weight:600}
 
 .chat-input-wrapper{
     padding:10px;border-top:1px solid var(--c-border);

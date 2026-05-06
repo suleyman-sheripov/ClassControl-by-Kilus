@@ -51,63 +51,8 @@
         <!-- ===== CONTENT ===== -->
         <main class="content-layout">
 
-            <!-- SIDEBAR LEFT -->
+            <!-- SIDEBAR LEFT: Студия эфира + Инструменты доски -->
             <aside class="sidebar sidebar-left" id="panel-left">
-                <section class="panel participants-panel">
-                    <div class="panel-header">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                        <h3>В классе <span class="count-badge" id="agents-count">0</span></h3>
-                    </div>
-                    <ul id="agents-list" class="item-list"></ul>
-                </section>
-
-                <section class="panel online-panel">
-                    <div class="panel-header">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-                        <h3>Онлайн <span class="count-badge" id="online-count">0</span></h3>
-                    </div>
-                    <ul id="online-users-list" class="item-list"></ul>
-                </section>
-
-                <section class="panel chat-panel">
-                    <div class="panel-header">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                        <h3>Чат</h3>
-                    </div>
-                    <div id="chat-messages" class="chat-messages"></div>
-                    <div class="chat-input-wrapper">
-                        <button id="chat-attach-btn" class="chat-action-btn" title="Прикрепить файл">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-                        </button>
-                        <input type="file" id="chat-file-input" class="hidden">
-                        <input type="text" id="chat-text-input" placeholder="Написать..." autocomplete="off">
-                        <button id="chat-send-btn" class="chat-send-btn">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
-                        </button>
-                    </div>
-                </section>
-            </aside>
-
-            <div class="resizer" id="resizer-left"></div>
-
-            <!-- CENTER -->
-            <section class="main-viewport">
-                <div id="monitoring-grid" class="monitoring-grid">
-                    <div class="grid-placeholder">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                        <span>Ожидание подключения компьютеров...</span>
-                    </div>
-                </div>
-
-                <div id="whiteboard-container" class="whiteboard-container hidden">
-                    <canvas id="whiteboard"></canvas>
-                </div>
-            </section>
-
-            <div class="resizer" id="resizer-right"></div>
-
-            <!-- SIDEBAR RIGHT -->
-            <aside class="sidebar sidebar-right" id="panel-right">
                 <section class="panel studio-panel">
                     <div class="panel-header">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
@@ -179,6 +124,74 @@
                     <div class="tool-row">
                         <label>Толщина:</label>
                         <input type="range" id="lineWidth" min="1" max="25" value="5">
+                    </div>
+                </section>
+            </aside>
+
+            <div class="resizer" id="resizer-left"></div>
+
+            <!-- CENTER -->
+            <section class="main-viewport">
+                <div id="monitoring-grid" class="monitoring-grid">
+                    <div class="grid-placeholder">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                        <span>Ожидание подключения компьютеров...</span>
+                    </div>
+                </div>
+
+                <div id="whiteboard-container" class="whiteboard-container hidden">
+                    <canvas id="whiteboard"></canvas>
+                </div>
+            </section>
+
+            <div class="resizer" id="resizer-right"></div>
+
+            <!-- SIDEBAR RIGHT: Участники + Чат -->
+            <aside class="sidebar sidebar-right" id="panel-right">
+                <!-- Подпанель: Списки участников (компактная) -->
+                <section class="panel participants-combined-panel">
+                    <div class="panel-header">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+                        <h3>Участники
+                            <span class="count-badge" id="agents-count">0</span>
+                            <span class="participants-separator">+</span>
+                            <span class="count-badge count-badge--online" id="online-count">0</span>
+                        </h3>
+                    </div>
+                    <div class="participants-lists">
+                        <div class="participants-group">
+                            <div class="participants-group__label">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                                В классе
+                            </div>
+                            <ul id="agents-list" class="item-list"></ul>
+                        </div>
+                        <div class="participants-group">
+                            <div class="participants-group__label">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+                                Онлайн
+                            </div>
+                            <ul id="online-users-list" class="item-list"></ul>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Подпанель: Чат (основная) -->
+                <section class="panel chat-panel">
+                    <div class="panel-header">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                        <h3>Чат</h3>
+                    </div>
+                    <div id="chat-messages" class="chat-messages"></div>
+                    <div class="chat-input-wrapper">
+                        <button id="chat-attach-btn" class="chat-action-btn" title="Прикрепить файл">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+                        </button>
+                        <input type="file" id="chat-file-input" class="hidden">
+                        <input type="text" id="chat-text-input" placeholder="Написать..." autocomplete="off">
+                        <button id="chat-send-btn" class="chat-send-btn">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                        </button>
                     </div>
                 </section>
             </aside>

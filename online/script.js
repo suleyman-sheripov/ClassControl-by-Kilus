@@ -80,12 +80,48 @@ socket.on('chat-history', (history) => {
     history.forEach(m => m.type === 'file' ? renderChatFile(m) : renderChatMessage(m));
 });
 
+// Палитра цветов для учеников
+const STUDENT_COLORS = [
+    '#f472b6', '#fb923c', '#facc15', '#4ade80',
+    '#2dd4bf', '#38bdf8', '#818cf8', '#c084fc',
+    '#e879f9', '#f87171', '#a3e635', '#22d3ee'
+];
+const studentColorMap = {};
+let knownTeacherName = 'Учитель';
+
+socket.on('teacher-name', (name) => { knownTeacherName = name; });
+
+function getStudentColor(name) {
+    if (studentColorMap[name]) return studentColorMap[name];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    const idx = Math.abs(hash) % STUDENT_COLORS.length;
+    studentColorMap[name] = STUDENT_COLORS[idx];
+    return STUDENT_COLORS[idx];
+}
+
+function isTeacherMsg(sender) {
+    return sender === knownTeacherName;
+}
+
 function renderChatMessage(msg) {
     const div = document.createElement('div');
-    div.className = 'chat-msg';
+    const teacher = isTeacherMsg(msg.sender);
+    div.className = 'chat-msg' + (teacher ? ' chat-msg--teacher' : ' chat-msg--student');
+
     const senderSpan = document.createElement('span');
     senderSpan.className = 'sender';
-    senderSpan.textContent = msg.sender + ':';
+
+    if (!teacher) {
+        const badge = document.createElement('span');
+        badge.className = 'sender-badge';
+        badge.style.background = getStudentColor(msg.sender);
+        senderSpan.appendChild(badge);
+    }
+
+    senderSpan.appendChild(document.createTextNode(msg.sender + ':'));
+    if (!teacher) senderSpan.style.color = getStudentColor(msg.sender);
+
     div.appendChild(senderSpan);
     div.appendChild(document.createTextNode(' ' + msg.text));
     chatMessages.appendChild(div);
@@ -94,11 +130,22 @@ function renderChatMessage(msg) {
 
 function renderChatFile(msg) {
     const div = document.createElement('div');
-    div.className = 'chat-msg file';
+    const teacher = isTeacherMsg(msg.sender);
+    div.className = 'chat-msg file' + (teacher ? ' chat-msg--teacher' : ' chat-msg--student');
     const sizeMB = (msg.size / 1024 / 1024).toFixed(1);
     const senderSpan = document.createElement('span');
     senderSpan.className = 'sender';
-    senderSpan.textContent = msg.sender + ':';
+
+    if (!teacher) {
+        const badge = document.createElement('span');
+        badge.className = 'sender-badge';
+        badge.style.background = getStudentColor(msg.sender);
+        senderSpan.appendChild(badge);
+    }
+
+    senderSpan.appendChild(document.createTextNode(msg.sender + ':'));
+    if (!teacher) senderSpan.style.color = getStudentColor(msg.sender);
+
     div.appendChild(senderSpan);
     div.appendChild(document.createTextNode(' '));
     const link = document.createElement('a');
