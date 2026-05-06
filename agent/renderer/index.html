@@ -1,6 +1,28 @@
 <!DOCTYPE html>
 <html><head><title>Agent Background</title></head>
 <body>
-<script src="../node_modules/socket.io-client/dist/socket.io.js"></script>
-<script src="background.js"></script>
+<script>
+  let isInitializing = false;
+  // Ждем получения адреса сервера от главного процесса
+  window.electronAPI.onServerAddress((address) => {
+    // Если скрипты уже загружаются или загружены, просто подключаемся к новому адресу
+    if (isInitializing) {
+      if (typeof connectToServer === 'function') connectToServer(address);
+      return;
+    }
+    isInitializing = true;
+    const ioScript = document.createElement('script');
+    ioScript.src = `${address}/socket.io/socket.io.js`;
+    ioScript.onload = () => {
+      const bgScript = document.createElement('script');
+      bgScript.src = 'background.js';
+      bgScript.onload = () => {
+        // Как только скрипт загружен, инициируем подключение
+        if (typeof connectToServer === 'function') connectToServer(address);
+      };
+      document.body.appendChild(bgScript);
+    };
+    document.head.appendChild(ioScript);
+  });
+</script>
 </body></html>

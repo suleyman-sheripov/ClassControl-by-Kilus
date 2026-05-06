@@ -157,7 +157,10 @@ function createHiddenWindow() {
   hiddenWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   
   // Отладка
-  hiddenWindow.webContents.on('console-message', (e, level, msg) => console.log('[HIDDEN LOG]', msg));
+  hiddenWindow.webContents.on('console-message', (event, ...args) => {
+    const msg = event.message || (typeof args[0] === 'object' ? args[0].message : args[1]);
+    console.log('[HIDDEN LOG]', msg);
+  });
 
   hiddenWindow.webContents.on('did-finish-load', () => {
     if (serverAddress) {
@@ -186,7 +189,10 @@ function openChatWindow() {
   chatWindow.setMenuBarVisibility(false);
   chatWindow.loadFile(path.join(__dirname, 'renderer', 'chat.html'));
   
-  chatWindow.webContents.on('console-message', (e, level, msg) => console.log('[CHAT LOG]', msg));
+  chatWindow.webContents.on('console-message', (event, ...args) => {
+    const msg = event.message || (typeof args[0] === 'object' ? args[0].message : args[1]);
+    console.log('[CHAT LOG]', msg);
+  });
   
   // Передать адрес сервера если он уже найден
   chatWindow.webContents.on('did-finish-load', () => {
