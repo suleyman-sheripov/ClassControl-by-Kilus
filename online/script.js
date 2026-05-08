@@ -351,7 +351,7 @@ socket.on('whiteboard-mode', (active) => {
     }
 });
 
-socket.on('draw', (data) => {
+function drawStroke(data) {
     const x0 = data.x0 * canvas.width;
     const y0 = data.y0 * canvas.height;
     const x1 = data.x1 * canvas.width;
@@ -370,13 +370,27 @@ socket.on('draw', (data) => {
     
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = data.width;
+    ctx.lineWidth = data.width * canvas.width;
     ctx.stroke();
+}
+
+socket.on('draw', drawStroke);
+
+socket.on('canvas-history', (history) => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    history.forEach(drawStroke);
 });
 
 socket.on('clear-canvas', () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     savedWhiteboardImage = null;
+});
+
+socket.on('whiteboard-transform', (data) => {
+    zoomLevel = data.zoom || 1;
+    panX = (data.panX || 0) * canvas.offsetWidth;
+    panY = (data.panY || 0) * canvas.offsetHeight;
+    applyTransform();
 });
 
 // --- ПОКАЗ СВОЕГО ЭКРАНА (5 минут) ---
