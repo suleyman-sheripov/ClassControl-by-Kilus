@@ -52,6 +52,7 @@ let agents = {};                // { socketId: { id, name, ip } }
 let onlineUsers = {};           // { socketId: { id, name } }
 let isBroadcasting = false;
 let canvasState = null;         // Последнее состояние доски (DataURL)
+let canvasHistory = [];         // История штрихов доски (для новых подключений)
 let chatHistory = [];           // Массив сообщений чата (макс 200)
 
 // --- Rate Limiting (в памяти, по socketId / IP) ---
@@ -229,6 +230,7 @@ io.on('connection', (socket) => {
         if (teacherName) socket.emit('teacher-name', teacherName);
         if (isBroadcasting) socket.emit('broadcast-started');
         if (canvasState) socket.emit('canvas-state', canvasState);
+        if (canvasHistory.length > 0) socket.emit('canvas-history', canvasHistory);
     });
 
     // Мониторинг: получение скриншота от агента
@@ -291,18 +293,26 @@ io.on('connection', (socket) => {
     socket.on('draw', (data) => {
         if (!socket.isTeacher) return;
         if (data.image) canvasState = data.image;
+        canvasHistory.push({ x0: data.x0, y0: data.y0, x1: data.x1, y1: data.y1, color: data.color, width: data.width, tool: data.tool });
+        if (canvasHistory.length > 10000) canvasHistory = canvasHistory.slice(-5000);
         socket.broadcast.emit('draw', data);
     });
 
     socket.on('clear-canvas', () => {
         if (!socket.isTeacher) return;
         canvasState = null;
+        canvasHistory = [];
         socket.broadcast.emit('clear-canvas');
     });
 
     socket.on('whiteboard-mode', (active) => {
         if (!socket.isTeacher) return;
         socket.broadcast.emit('whiteboard-mode', active);
+    });
+
+    socket.on('whiteboard-transform', (data) => {
+        if (!socket.isTeacher) return;
+        socket.broadcast.emit('whiteboard-transform', data);
     });
 
     // Чат (rate limit: 10 сообщений в 10 секунд на сокет)

@@ -154,37 +154,17 @@ tabWhiteboard.addEventListener('click', () => {
 // --- Секция 3: Онлайн-доска ---
 
 function setupCanvas() {
-    const rect = whiteboardContainer.getBoundingClientRect();
-    if (rect.width === 0) return;
-
-    // Fixed 16:9 aspect ratio for consistent rendering across all clients
-    const ASPECT = 16 / 9;
-    let w = rect.width;
-    let h = w / ASPECT;
-    if (h > rect.height) {
-        h = rect.height;
-        w = h * ASPECT;
+    if (canvas.width !== 3840) {
+        canvas.width = 3840;
+        canvas.height = 2160;
     }
-    w = Math.floor(w);
-    h = Math.floor(h);
-
-    // Save current drawing
-    const tempCanvas = document.createElement('canvas');
-    const tempCtx = tempCanvas.getContext('2d');
-    tempCanvas.width = canvas.width;
-    tempCanvas.height = canvas.height;
-    tempCtx.drawImage(canvas, 0, 0);
-
-    canvas.width = w;
-    canvas.height = h;
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = document.getElementById('colorPicker').value;
     ctx.lineWidth = document.getElementById('lineWidth').value;
 
-    // Restore drawing
-    ctx.drawImage(tempCanvas, 0, 0, canvas.width, canvas.height);
+    if (typeof applyTransform === 'function') applyTransform();
 }
 
 // Следим за изменением размера окна
@@ -194,64 +174,125 @@ window.addEventListener('resize', () => {
     }
 });
 
-function draw(e) {
-    if (!isDrawing) return;
+let zoomLevel = 1;
+let panX = 0, panY = 0;
+let isPanning = false;
 
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    ctx.beginPath();
-    ctx.moveTo(lastX, lastY);
-    ctx.lineTo(x, y);
-
-    if (currentTool === 'eraser') {
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.lineWidth = 20; // Ластик по умолчанию толще
-    } else {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.strokeStyle = document.getElementById('colorPicker').value;
-        ctx.lineWidth = document.getElementById('lineWidth').value;
-    }
-
-    ctx.stroke();
-
-    // Отправка на сервер
-    socket.emit('draw', {
-        x0: lastX / canvas.width,
-        y0: lastY / canvas.height,
-        x1: x / canvas.width,
-        y1: y / canvas.height,
-        color: ctx.strokeStyle,
-        width: ctx.lineWidth,
-        tool: currentTool
+function applyTransform() {
+    canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+    const zl = document.getElementById('zoom-level');
+    if (zl) zl.textContent = Math.round(zoomLevel * 100) + '%';
+    
+    socket.emit('whiteboard-transform', {
+        zoom: zoomLevel,
+        panX: panX / canvas.offsetWidth,
+        panY: panY / canvas.offsetHeight
     });
-
-    [lastX, lastY] = [x, y];
 }
 
-canvas.addEventListener('mousedown', (e) => {
-    isDrawing = true;
-    const rect = canvas.getBoundingClientRect();
-    [lastX, lastY] = [e.clientX - rect.left, e.clientY - rect.top];
+whiteboardContainer.addEventListener('mousedown', (e) => {
+    if (e.target !== canvas && e.target !== whiteboardContainer) return;
+    
+    // Средняя кнопка мыши (колесико) ИЛИ выбран инструмент "Рука"
+    if (currentTool === 'hand' || e.button === 1) {
+        isPanning = true;
+        whiteboardContainer.style.cursor = 'grabbing';
+    } else if (e.button === 0 && e.target === canvas) {
+        isDrawing = true;
+        const rect = canvas.getBoundingClientRect();
+        lastX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        lastY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+        const stroke = {
+            x0: lastX / canvas.width,
+            y0: lastY / canvas.height,
+            x1: (lastX + 1) / canvas.width,
+            y1: (lastY + 1) / canvas.height,
+            color: document.getElementById('colorPicker').value,
+            width: (currentTool === 'eraser' ? 60 : document.getElementById('lineWidth').value * 2) / canvas.width,
+            tool: currentTool
+        };
+        drawStroke(stroke);
+        socket.emit('draw', stroke);
+    }
 });
 
-canvas.addEventListener('mousemove', draw);
-canvas.addEventListener('mouseup', () => isDrawing = false);
-canvas.addEventListener('mouseout', () => isDrawing = false);
+window.addEventListener('mousemove', (e) => {
+    if (isPanning) {
+        panX += e.movementX;
+        panY += e.movementY;
+        applyTransform();
+    } else if (isDrawing) {
+        const rect = canvas.getBoundingClientRect();
+        // Математика автоматически учитывает зум и смещение!
+        const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+        // THROTTLE (Anti-lag) - Игнорируем микро-движения (меньше 3 вирт. пикселей)
+        const dx = x - lastX;
+        const dy = y - lastY;
+        if (dx * dx + dy * dy < 9) return;
+
+        const stroke = {
+            x0: lastX / canvas.width,
+            y0: lastY / canvas.height,
+            x1: x / canvas.width,
+            y1: y / canvas.height,
+            color: document.getElementById('colorPicker').value,
+            width: (currentTool === 'eraser' ? 60 : document.getElementById('lineWidth').value * 2) / canvas.width,
+            tool: currentTool
+        };
+        drawStroke(stroke);
+        socket.emit('draw', stroke);
+        [lastX, lastY] = [x, y];
+    }
+});
+
+window.addEventListener('mouseup', () => {
+    if (isPanning) {
+        isPanning = false;
+        whiteboardContainer.style.cursor = currentTool === 'hand' ? 'grab' : 'crosshair';
+    }
+    isDrawing = false;
+});
+
+// Зум и панорамирование колесиком мыши (как в Figma)
+whiteboardContainer.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (e.ctrlKey || currentTool === 'hand') {
+        const delta = e.deltaY < 0 ? 0.1 : -0.1;
+        zoomLevel = Math.max(0.5, Math.min(5, zoomLevel + delta));
+    } else {
+        panX -= e.deltaX;
+        panY -= e.deltaY;
+    }
+    applyTransform();
+}, { passive: false });
+
+// Кнопки интерфейса зума
+document.getElementById('zoom-in').addEventListener('click', () => { zoomLevel = Math.min(5, zoomLevel + 0.2); applyTransform(); });
+document.getElementById('zoom-out').addEventListener('click', () => { zoomLevel = Math.max(0.5, zoomLevel - 0.2); applyTransform(); });
+document.getElementById('zoom-reset').addEventListener('click', () => { zoomLevel = 1; panX = 0; panY = 0; applyTransform(); });
 
 // Инструменты доски
+function setActiveTool(btn) {
+    document.querySelectorAll('.tools-grid .tool-btn:not(.danger)').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    whiteboardContainer.style.cursor = currentTool === 'hand' ? 'grab' : 'crosshair';
+}
+
 document.getElementById('tool-brush').addEventListener('click', function() {
-    currentTool = 'brush';
-    this.classList.add('active');
-    document.getElementById('tool-eraser').classList.remove('active');
+    currentTool = 'brush'; setActiveTool(this);
     document.getElementById('brush-color-row').classList.remove('hidden');
 });
 
 document.getElementById('tool-eraser').addEventListener('click', function() {
-    currentTool = 'eraser';
-    this.classList.add('active');
-    document.getElementById('tool-brush').classList.remove('active');
+    currentTool = 'eraser'; setActiveTool(this);
+    document.getElementById('brush-color-row').classList.add('hidden');
+});
+
+document.getElementById('tool-hand').addEventListener('click', function() {
+    currentTool = 'hand'; setActiveTool(this);
     document.getElementById('brush-color-row').classList.add('hidden');
 });
 
@@ -260,8 +301,7 @@ document.getElementById('clear-canvas-btn').addEventListener('click', () => {
     socket.emit('clear-canvas');
 });
 
-// Слушаем события рисования от других (если учитель не один, или для синхронизации)
-socket.on('draw', (data) => {
+function drawStroke(data) {
     const x0 = data.x0 * canvas.width;
     const y0 = data.y0 * canvas.height;
     const x1 = data.x1 * canvas.width;
@@ -278,8 +318,17 @@ socket.on('draw', (data) => {
         ctx.strokeStyle = data.color;
     }
     
-    ctx.lineWidth = data.width;
+    ctx.lineWidth = data.width * canvas.width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     ctx.stroke();
+}
+
+socket.on('draw', drawStroke);
+
+socket.on('canvas-history', (history) => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    history.forEach(drawStroke);
 });
 
 socket.on('clear-canvas', () => {
@@ -568,6 +617,9 @@ function renderChatMessage(msg) {
     const teacher = isTeacher(msg.sender);
     div.className = 'chat-msg' + (teacher ? ' chat-msg--teacher' : ' chat-msg--student');
 
+    const contentWrapper = document.createElement('div');
+    contentWrapper.className = 'chat-msg-content';
+
     const senderSpan = document.createElement('span');
     senderSpan.className = 'sender';
 
@@ -581,9 +633,26 @@ function renderChatMessage(msg) {
     senderSpan.appendChild(document.createTextNode(msg.sender + ':'));
     if (!teacher) senderSpan.style.color = getStudentColor(msg.sender);
 
-    div.appendChild(senderSpan);
-    div.appendChild(document.createTextNode(' ' + msg.text));
+    contentWrapper.appendChild(senderSpan);
+    contentWrapper.appendChild(document.createTextNode(' ' + msg.text));
+    
+    div.appendChild(contentWrapper);
     chatMessages.appendChild(div);
+    
+    // Проверяем, если сообщение слишком длинное (больше 120px по высоте)
+    if (contentWrapper.scrollHeight > 120) {
+        contentWrapper.classList.add('collapsed');
+        
+        const readMoreBtn = document.createElement('button');
+        readMoreBtn.className = 'chat-read-more';
+        readMoreBtn.textContent = 'Читать далее...';
+        readMoreBtn.onclick = () => {
+            const isCollapsed = contentWrapper.classList.toggle('collapsed');
+            readMoreBtn.textContent = isCollapsed ? 'Читать далее...' : 'Скрыть';
+        };
+        div.appendChild(readMoreBtn);
+    }
+
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
