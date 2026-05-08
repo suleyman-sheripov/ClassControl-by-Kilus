@@ -256,7 +256,7 @@ const videoArea = document.getElementById('video-area');
 
 function applyTransform() {
     const content = videoArea.querySelector('video');
-    const transforms = `scale(${zoomLevel}) translate(${panX}px, ${panY}px)`;
+    const transforms = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
     if (content) {
         content.style.transform = transforms;
         content.style.transformOrigin = 'center center';
