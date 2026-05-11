@@ -132,20 +132,26 @@
     </button>
   </div>
 
-  <script src="../node_modules/socket.io-client/dist/socket.io.js"></script>
   <script>
     let socket = null;
+    let socketLoaded = false;
     const myName = window.electronAPI?.hostname || 'Ученик';
 
     window.electronAPI.onServerAddress((address) => {
-      if (socket) return;
-      socket = io(address);
-      socket.on('connect', () => {
-        socket.emit('request-chat-history');
-      });
-      socket.on('chat-message', renderMessage);
-      socket.on('chat-file', renderFile);
-      socket.on('chat-history', (h) => h.forEach(m => m.type==='file' ? renderFile(m) : renderMessage(m)));
+      if (socketLoaded) return;
+      socketLoaded = true;
+      const s = document.createElement('script');
+      s.src = address + '/socket.io/socket.io.js';
+      s.onload = () => {
+        socket = io(address);
+        socket.on('connect', () => {
+          socket.emit('request-chat-history');
+        });
+        socket.on('chat-message', renderMessage);
+        socket.on('chat-file', renderFile);
+        socket.on('chat-history', (h) => h.forEach(m => m.type==='file' ? renderFile(m) : renderMessage(m)));
+      };
+      document.head.appendChild(s);
     });
 
     document.getElementById('sendBtn').addEventListener('click', send);
@@ -185,8 +191,9 @@
     function renderFile(m) {
       const div = document.createElement('div');
       div.className = 'msg file';
-      const url = m.url || '#';
-      div.innerHTML = '<span class="author">' + escapeHtml(m.sender) + ':</span> <a href="' + escapeHtml(url) + '" download="' + escapeHtml(m.filename || m.fileName) + '">' + escapeHtml(m.filename || m.fileName) + '</a>';
+      const baseUrl = socket ? socket.io.uri : '';
+      const url = baseUrl + (m.url || '');
+      div.innerHTML = '<span class="author">' + escapeHtml(m.sender) + ':</span> <a href="' + escapeHtml(url) + '" download="' + escapeHtml(m.filename || m.fileName) + '" target="_blank">' + escapeHtml(m.filename || m.fileName) + '</a>';
       document.getElementById('messages').appendChild(div);
       div.scrollIntoView({ behavior: 'smooth' });
     }

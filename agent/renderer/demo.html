@@ -32,35 +32,44 @@
       const s = document.createElement('script');
       s.src = address + '/socket.io/socket.io.js';
       s.onload = () => {
+        if (socket) return;
         socket = io(address);
         console.log('[DEMO] Connected to', address);
         
-        socket.on('offer', async ({ source, sdp }) => {
+        socket.on('connect', () => {
+            socket.emit('register-demo-viewer', window.electronAPI?.hostname || 'Demo');
+        });
+        
+        socket.on('offer', async ({ source, sdp, connectionType }) => {
+            if (connectionType && connectionType !== 'broadcast') return;
             console.log('[DEMO] Received offer from', source);
-            
-            if (teacherPC) teacherPC.close();
-            teacherPC = new RTCPeerConnection(iceConfig);
-            
-            teacherPC.ontrack = (e) => { 
-                console.log('[DEMO] Got track:', e.track.kind);
-                document.getElementById('demoVideo').srcObject = e.streams[0];
-                document.getElementById('status').style.display = 'none';
-            };
-            teacherPC.onicecandidate = (e) => { 
-                if(e.candidate) socket.emit('ice-candidate',{target:source,candidate:e.candidate}); 
-            };
-            teacherPC.onconnectionstatechange = () => {
-                console.log('[DEMO] Connection:', teacherPC.connectionState);
-            };
-            
-            await teacherPC.setRemoteDescription(new RTCSessionDescription(sdp));
-            const answer = await teacherPC.createAnswer();
-            await teacherPC.setLocalDescription(answer);
-            socket.emit('answer', { target: source, sdp: teacherPC.localDescription });
+            try {
+                if (teacherPC) teacherPC.close();
+                teacherPC = new RTCPeerConnection(iceConfig);
+                
+                teacherPC.ontrack = (e) => { 
+                    console.log('[DEMO] Got track:', e.track.kind);
+                    document.getElementById('demoVideo').srcObject = e.streams[0];
+                    document.getElementById('status').style.display = 'none';
+                };
+                teacherPC.onicecandidate = (e) => { 
+                    if(e.candidate) socket.emit('ice-candidate',{target:source,candidate:e.candidate,connectionType:'broadcast'}); 
+                };
+                teacherPC.onconnectionstatechange = () => {
+                    console.log('[DEMO] Connection:', teacherPC.connectionState);
+                };
+                
+                await teacherPC.setRemoteDescription(new RTCSessionDescription(sdp));
+                const answer = await teacherPC.createAnswer();
+                await teacherPC.setLocalDescription(answer);
+                socket.emit('answer', { target: source, sdp: teacherPC.localDescription, connectionType: 'broadcast' });
+            } catch (err) {
+                console.error('[DEMO] WebRTC error:', err);
+            }
         });
 
         // Handle ICE candidates from teacher
-        socket.on('ice-candidate', async ({ source, candidate }) => {
+        socket.on('ice-candidate', async ({ source, candidate, connectionType }) => {
             if (teacherPC) {
                 try {
                     await teacherPC.addIceCandidate(candidate);
@@ -115,7 +124,7 @@
             }
         });
 
-        socket.on('draw', (data) => {
+        function drawStroke(data) {
             const x0 = data.x0 * canvas.width;
             const y0 = data.y0 * canvas.height;
             const x1 = data.x1 * canvas.width;
@@ -134,8 +143,20 @@
             
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
-            ctx.lineWidth = data.width;
+            ctx.lineWidth = data.width * canvas.width;
             ctx.stroke();
+        }
+
+        socket.on('draw', drawStroke);
+
+        socket.on('canvas-history', (history) => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            history.forEach(drawStroke);
+        });
+
+        socket.on('whiteboard-transform', (t) => {
+            canvas.style.transform = 'translate(' + t.panX + 'px, ' + t.panY + 'px) scale(' + t.scale + ')';
+            canvas.style.transformOrigin = 'center center';
         });
 
         socket.on('clear-canvas', () => {
