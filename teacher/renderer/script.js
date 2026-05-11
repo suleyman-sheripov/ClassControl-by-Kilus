@@ -1,12 +1,13 @@
 // --- Глобальные переменные и инициализация ---
+const SERVER_URL = 'http://localhost:3000';
+const teacherName = 'Учитель'; // В будущем можно брать из настроек
 let socket;
 try {
-    socket = io('http://localhost:3000');
+    socket = io(SERVER_URL);
 } catch (e) {
     console.warn('[TEACHER] Socket.io не загружен. Работаем в оффлайн-режиме.');
     socket = { on: () => {}, emit: () => {} }; // Заглушка
 }
-const teacherName = 'Учитель'; // В будущем можно брать из настроек
 
 // Элементы UI: Навигация
 const tabMonitoring = document.getElementById('tab-monitoring');
@@ -573,7 +574,7 @@ document.getElementById('chat-file-input').addEventListener('change', async (e) 
     formData.append('sender', teacherName);
     
     try {
-        await fetch('http://localhost:3000/upload', { 
+        await fetch(SERVER_URL + '/upload', { 
             method: 'POST', 
             body: formData 
         });
@@ -677,7 +678,7 @@ function renderChatFile(msg) {
     div.appendChild(senderSpan);
     div.appendChild(document.createTextNode(' '));
     const link = document.createElement('a');
-    link.href = `http://localhost:3000${msg.url}`;
+    link.href = `${SERVER_URL}${msg.url}`;
     link.target = '_blank';
     link.download = msg.filename;
     link.textContent = msg.filename;

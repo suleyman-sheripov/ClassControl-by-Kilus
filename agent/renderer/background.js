@@ -2,10 +2,13 @@ let socket = null;
 let screenshotInterval = null;
 let agentName = window.electronAPI.hostname || 'Ученик';
 let remotePC = null;
+let currentAddress = null;
 const iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }; 
 
 // Ждём адрес сервера от main process
 window.electronAPI.onServerAddress((address) => {
+  if (currentAddress === address && socket && socket.connected) return;
+  currentAddress = address;
   connectToServer(address);
 });
 

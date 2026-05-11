@@ -186,36 +186,40 @@ socket.on('teacher-disconnected', () => {
 });
 
 // WebRTC: receive offer from teacher, create answer
-socket.on('offer', async ({ source, sdp }) => {
+socket.on('offer', async ({ source, sdp, connectionType }) => {
+    if (connectionType && connectionType !== 'broadcast') return;
     console.log('[ONLINE] Received offer from', source);
     
-    // Close previous connection if any
-    if (teacherPC) {
-        teacherPC.close();
-    }
-    
-    teacherPC = new RTCPeerConnection(iceConfig);
-    
-    teacherPC.ontrack = (e) => {
-        console.log('[ONLINE] Got media track:', e.track.kind);
-        document.getElementById('teacher-video').srcObject = e.streams[0]; 
-        document.getElementById('waiting-msg').classList.add('hidden');
-    };
-    
-    teacherPC.onicecandidate = (e) => { 
-        if (e.candidate) {
-            socket.emit('ice-candidate', { target: source, candidate: e.candidate, connectionType: 'broadcast' }); 
+    try {
+        if (teacherPC) {
+            teacherPC.close();
         }
-    };
+        
+        teacherPC = new RTCPeerConnection(iceConfig);
+        
+        teacherPC.ontrack = (e) => {
+            console.log('[ONLINE] Got media track:', e.track.kind);
+            document.getElementById('teacher-video').srcObject = e.streams[0]; 
+            document.getElementById('waiting-msg').classList.add('hidden');
+        };
+        
+        teacherPC.onicecandidate = (e) => { 
+            if (e.candidate) {
+                socket.emit('ice-candidate', { target: source, candidate: e.candidate, connectionType: 'broadcast' }); 
+            }
+        };
 
-    teacherPC.onconnectionstatechange = () => {
-        console.log('[ONLINE] Connection state:', teacherPC.connectionState);
-    };
-    
-    await teacherPC.setRemoteDescription(new RTCSessionDescription(sdp));
-    const answer = await teacherPC.createAnswer();
-    await teacherPC.setLocalDescription(answer);
-    socket.emit('answer', { target: source, sdp: teacherPC.localDescription, connectionType: 'broadcast' });
+        teacherPC.onconnectionstatechange = () => {
+            console.log('[ONLINE] Connection state:', teacherPC.connectionState);
+        };
+        
+        await teacherPC.setRemoteDescription(new RTCSessionDescription(sdp));
+        const answer = await teacherPC.createAnswer();
+        await teacherPC.setLocalDescription(answer);
+        socket.emit('answer', { target: source, sdp: teacherPC.localDescription, connectionType: 'broadcast' });
+    } catch (err) {
+        console.error('[ONLINE] WebRTC error:', err);
+    }
 });
 
 // WebRTC: handle ICE candidates from teacher

@@ -10,7 +10,7 @@ const crypto = require('crypto');
 
 // --- Токен авторизации учителя ---
 const TEACHER_TOKEN = process.env.TEACHER_TOKEN || crypto.randomBytes(24).toString('hex');
-console.log(`[SERVER] Teacher auth token: ${TEACHER_TOKEN}`);
+if (process.env.NODE_ENV !== 'production') console.log(`[SERVER] Teacher auth token: ${TEACHER_TOKEN}`);
 module.exports = { TEACHER_TOKEN };
 
 const app = express();
@@ -51,7 +51,7 @@ let teacherName = '';
 let agents = {};                // { socketId: { id, name, ip } }
 let onlineUsers = {};           // { socketId: { id, name } }
 let isBroadcasting = false;
-let canvasState = null;         // Последнее состояние доски (DataURL)
+// canvasHistory хранит все штрихи; canvasState удалён как мёртвый код
 let canvasHistory = [];         // История штрихов доски (для новых подключений)
 let chatHistory = [];           // Массив сообщений чата (макс 200)
 
@@ -134,7 +134,7 @@ const upload = multer({
 app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-    res.setHeader('X-XSS-Protection', '1; mode=block');
+
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
     const origin = req.headers.origin;
@@ -201,6 +201,7 @@ io.on('connection', (socket) => {
         socket.emit('agents-list', Object.values(agents));
         socket.emit('online-users-list', Object.values(onlineUsers));
         socket.emit('chat-history', chatHistory);
+        if (isBroadcasting) socket.emit('broadcast-active');
     });
 
     // Регистрация локального агента (ПК в классе)
@@ -217,6 +218,17 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Регистрация demo-окна агента (viewer для трансляции)
+    socket.on('register-demo-viewer', (name) => {
+        socket.isDemoViewer = true;
+        socket.demoName = sanitize(name || 'Demo');
+        console.log(`[SERVER] Demo-viewer зарегистрирован: ${socket.demoName} (${socket.id})`);
+        if (isBroadcasting && teacherSocket) {
+            teacherSocket.emit('initiate-peer-connections', [{ id: socket.id }]);
+        }
+        if (canvasHistory.length > 0) socket.emit('canvas-history', canvasHistory);
+    });
+
     // Регистрация онлайн-участника (из дома)
     socket.on('register-online-user', (username) => {
         onlineUsers[socket.id] = { id: socket.id, name: sanitize(username) };
@@ -228,8 +240,12 @@ io.on('connection', (socket) => {
         
         socket.emit('chat-history', chatHistory);
         if (teacherName) socket.emit('teacher-name', teacherName);
-        if (isBroadcasting) socket.emit('broadcast-started');
-        if (canvasState) socket.emit('canvas-state', canvasState);
+        if (isBroadcasting) {
+            socket.emit('broadcast-started');
+            if (teacherSocket) {
+                teacherSocket.emit('initiate-peer-connections', [{ id: socket.id }]);
+            }
+        }
         if (canvasHistory.length > 0) socket.emit('canvas-history', canvasHistory);
     });
 
@@ -275,16 +291,19 @@ io.on('connection', (socket) => {
     }
 
     socket.on('offer', (data) => {
+        if (!rateLimit(`rtc:${socket.id}`, 30, 10000)) return;
         const targetId = resolveTarget(data.target);
         if (targetId) io.to(targetId).emit('offer', { source: socket.id, sdp: data.sdp, connectionType: data.connectionType });
     });
 
     socket.on('answer', (data) => {
+        if (!rateLimit(`rtc:${socket.id}`, 30, 10000)) return;
         const targetId = resolveTarget(data.target);
         if (targetId) io.to(targetId).emit('answer', { source: socket.id, sdp: data.sdp, connectionType: data.connectionType });
     });
 
     socket.on('ice-candidate', (data) => {
+        if (!rateLimit(`ice:${socket.id}`, 100, 10000)) return;
         const targetId = resolveTarget(data.target);
         if (targetId) io.to(targetId).emit('ice-candidate', { source: socket.id, candidate: data.candidate, connectionType: data.connectionType });
     });
@@ -292,7 +311,8 @@ io.on('connection', (socket) => {
     // Онлайн-доска — только учитель
     socket.on('draw', (data) => {
         if (!socket.isTeacher) return;
-        if (data.image) canvasState = data.image;
+        if (typeof data.x0 !== 'number' || typeof data.y0 !== 'number' ||
+            typeof data.x1 !== 'number' || typeof data.y1 !== 'number') return;
         canvasHistory.push({ x0: data.x0, y0: data.y0, x1: data.x1, y1: data.y1, color: data.color, width: data.width, tool: data.tool });
         if (canvasHistory.length > 10000) canvasHistory = canvasHistory.slice(-5000);
         socket.broadcast.emit('draw', data);
@@ -300,7 +320,6 @@ io.on('connection', (socket) => {
 
     socket.on('clear-canvas', () => {
         if (!socket.isTeacher) return;
-        canvasState = null;
         canvasHistory = [];
         socket.broadcast.emit('clear-canvas');
     });
@@ -400,6 +419,8 @@ io.on('connection', (socket) => {
             console.log(`[SERVER] Онлайн-пользователь отключился: ${onlineUsers[socket.id].name}`);
             delete onlineUsers[socket.id];
             if (teacherSocket) teacherSocket.emit('online-users-list', Object.values(onlineUsers));
+        } else if (socket.isDemoViewer) {
+            console.log(`[SERVER] Demo-viewer отключился: ${socket.demoName}`);
         }
     });
 });
@@ -443,6 +464,27 @@ try {
 } catch (err) {
     console.error(`[UDP] Не удалось запустить Discovery: ${err.message}`);
 }
+
+// --- Очистка старых uploaded файлов (>24 часа) ---
+const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
+setInterval(() => {
+    const uploadDir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadDir)) return;
+    try {
+        const files = fs.readdirSync(uploadDir);
+        const now = Date.now();
+        for (const file of files) {
+            const filePath = path.join(uploadDir, file);
+            const stat = fs.statSync(filePath);
+            if (now - stat.mtimeMs > UPLOAD_TTL_MS) {
+                fs.unlinkSync(filePath);
+                console.log(`[SERVER] Удалён старый файл: ${file}`);
+            }
+        }
+    } catch (err) {
+        console.error('[SERVER] Ошибка очистки uploads:', err.message);
+    }
+}, 60 * 60 * 1000);
 
 // --- Запуск Сервера ---
 server.on('error', (err) => {
