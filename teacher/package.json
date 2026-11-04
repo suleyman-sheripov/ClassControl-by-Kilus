@@ -7,7 +7,10 @@
   "scripts": {
     "start": "electron .",
     "prebuild": "node ../scripts/prepare-build.js",
-    "build": "electron-builder --win"
+    "build": "electron-builder",
+    "build:win": "npm run build -- --win",
+    "build:mac": "npm run build -- --mac",
+    "build:linux": "npm run build -- --linux"
   },
   "build": {
     "appId": "com.classcontrol.teacher",
@@ -70,7 +73,28 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "ClassControl"
-    }
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.education",
+      "icon": "assets/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Education",
+      "icon": "assets/icon.png"
+    },
+    "artifactName": "ClassControl-${version}-${os}-${arch}.${ext}"
   },
   "devDependencies": {
     "electron": "^45.2.0",

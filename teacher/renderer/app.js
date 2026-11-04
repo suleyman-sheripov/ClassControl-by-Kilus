@@ -614,6 +614,7 @@
         card.classList.add('is-new');
         card.style.setProperty('--i', Math.min(fresh++, 14));
         card.addEventListener('animationend', () => card.classList.remove('is-new'), { once: true });
+        cardObserver.observe(card);
         // Тот же компьютер вернулся — показываем его прошлый кадр, пока не придёт новый
         const last = S.lastShot && S.lastShot.get(a.host);
         if (last) { const img = card.querySelector('.pc__screen img'); img.src = last; img.classList.remove('hidden'); card.querySelector('.pc__screen .empty')?.remove(); }
@@ -652,7 +653,7 @@
     check.addEventListener('change', () => { toggleSelect(a.id, check.checked); });
     const card = el('article', { class: 'pc', 'data-id': a.id },
       el('div', { class: 'pc__screen', title: 'Открыть экран' },
-        el('img', { alt: '', draggable: 'false', class: 'hidden' }),
+        el('img', { alt: '', draggable: 'false', decoding: 'async', class: 'hidden' }),
         el('div', { class: 'empty' }, icon('monitor'), el('span', { class: 'empty__text', text: 'Жду изображение…' })),
         el('label', { class: 'check pc__check', onclick: (e) => e.stopPropagation() }, check, el('span', { class: 'check__box' }, icon('check', 'i-sm'))),
         el('div', { class: 'pc__hover' },
@@ -702,6 +703,24 @@
     a.idle = idle;
     const card = document.querySelector(`.pc[data-id="${CSS.escape(agentId)}"]`);
     if (!card) return;
+    // Карточка за краем прокрутки: кадр не декодируем, а откладываем до момента, когда её увидят
+    if (cardSeen.get(card) === false) {
+      pendingShot.set(card, { agentId, image, idle: a.idle });
+      return;
+    }
+    showShot(card, a, agentId, image, prevIdle, idle);
+  });
+  // Какие карточки сейчас на экране — большой класс не грузит видеокарту невидимыми кадрами
+  const cardSeen = new WeakMap();
+  const pendingShot = new WeakMap();
+  const cardObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      cardSeen.set(e.target, e.isIntersecting);
+      const p = e.isIntersecting && pendingShot.get(e.target);
+      if (p) { pendingShot.delete(e.target); const a = S.agents.get(p.agentId); if (a) showShot(e.target, a, p.agentId, p.image, p.idle, p.idle); }
+    }
+  }, { rootMargin: '200px' });
+  function showShot(card, a, agentId, image, prevIdle, idle) {
     const blob = new Blob([image], { type: 'image/jpeg' });
     const url = URL.createObjectURL(blob);
     const img = card.querySelector('.pc__screen img');
@@ -717,7 +736,7 @@
     img.classList.remove('hidden');
     card.querySelector('.pc__screen .empty')?.remove();
     if ((prevIdle >= 60) !== (idle >= 60) || Math.floor(prevIdle / 60) !== Math.floor(idle / 60)) updateCard(card, a);
-  });
+  }
 
   function toggleSelect(id, on) {
     if (on) S.selected.add(id); else S.selected.delete(id);

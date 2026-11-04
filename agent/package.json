@@ -7,7 +7,10 @@
   "scripts": {
     "start": "electron .",
     "config": "electron . --config",
-    "build": "electron-builder --win"
+    "build": "electron-builder",
+    "build:win": "npm run build -- --win",
+    "build:mac": "npm run build -- --mac",
+    "build:linux": "npm run build -- --linux"
   },
   "build": {
     "appId": "com.classcontrol.agent",
@@ -41,7 +44,31 @@
       "shortcutName": "ClassControl Agent",
       "include": "build/installer.nsh",
       "runAfterFinish": true
-    }
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.education",
+      "icon": "assets/icon.png",
+      "extendInfo": {
+        "NSScreenCaptureUsageDescription": "Учитель видит экран этого компьютера во время урока."
+      }
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Education",
+      "icon": "assets/icon.png"
+    },
+    "artifactName": "ClassControl-Agent-${version}-${os}-${arch}.${ext}"
   },
   "devDependencies": {
     "electron": "^45.2.0",

@@ -8,6 +8,9 @@ const {
   app, BrowserWindow, Tray, Menu, ipcMain, desktopCapturer, Notification,
   powerMonitor, screen, shell, session, nativeImage, dialog, nativeTheme
 } = require('electron');
+// Проба на одном компьютере с учителем (npm start -- --agent): окна агента — обычные окна,
+// иначе блокировка и эфир закрыли бы экран самого учителя
+const LOCAL_TEST = process.env.CLASSCONTROL_AGENT_LOCAL === '1';
 const themeBg = () => (nativeTheme.shouldUseDarkColors ? '#0b0d18' : '#eef0f7');
 const path = require('path');
 const fs = require('fs');
@@ -57,7 +60,7 @@ function hashPassword(pw, salt) {
   return crypto.scryptSync(String(pw), salt, 32).toString('hex');
 }
 function applyAutoStart() {
-  if (process.platform === 'linux') return;
+  if (process.platform === 'linux' || !app.isPackaged) return;   // из исходников автозапуск не ставим
   app.setLoginItemSettings({ openAtLogin: settings.autoStart, path: app.getPath('exe'), args: ['--hidden'] });
 }
 
@@ -128,14 +131,14 @@ function openChat() {
 
 function openDemo() {
   if (demoWindow && !demoWindow.isDestroyed()) return;
-  demoWindow = new BrowserWindow({
+  demoWindow = new BrowserWindow(LOCAL_TEST ? { width: 960, height: 600, title: 'Эфир учителя (проба)', backgroundColor: '#000000', webPreferences: webPrefs() } : {
     fullscreen: true, frame: false, alwaysOnTop: true, skipTaskbar: true,
     backgroundColor: '#000000', webPreferences: webPrefs()
   });
-  demoWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (!LOCAL_TEST) demoWindow.setAlwaysOnTop(true, 'screen-saver');
   demoWindow.loadFile(page('demo.html'));
   demoWindow.on('close', (e) => {
-    if (broadcastState.active && !broadcastState.allowExit && !app.isQuitting && !demoWindow.allowClose) e.preventDefault();
+    if (!LOCAL_TEST && broadcastState.active && !broadcastState.allowExit && !app.isQuitting && !demoWindow.allowClose) e.preventDefault();
   });
   demoWindow.on('closed', () => { demoWindow = null; });
 }
@@ -180,18 +183,18 @@ let lockText = '';
 function lockScreens(text) {
   lockText = text || 'Внимание на учителя';
   if (lockWindows.length) { lockWindows.forEach(w => !w.isDestroyed() && w.webContents.send('lock-text', lockText)); return; }
-  for (const d of screen.getAllDisplays()) {
-    const w = new BrowserWindow({
+  for (const d of (LOCAL_TEST ? [screen.getPrimaryDisplay()] : screen.getAllDisplays())) {
+    const w = new BrowserWindow(LOCAL_TEST ? { width: 960, height: 600, title: 'Блокировка (проба)' } : {
       x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
       frame: false, fullscreen: true, kiosk: true, alwaysOnTop: true, skipTaskbar: true,
       movable: false, resizable: false, minimizable: false, closable: false,
       backgroundColor: themeBg(), webPreferences: webPrefs()
     });
-    w.setAlwaysOnTop(true, 'screen-saver');
+    if (!LOCAL_TEST) w.setAlwaysOnTop(true, 'screen-saver');
     w.loadFile(page('lock.html'));
     w.webContents.on('did-finish-load', () => w.webContents.send('lock-text', lockText));
     w.on('close', (e) => { if (!w.allowClose && !app.isQuitting) e.preventDefault(); });
-    w.on('blur', () => { if (!w.isDestroyed()) { w.focus(); w.moveTop(); } });
+    if (!LOCAL_TEST) w.on('blur', () => { if (!w.isDestroyed()) { w.focus(); w.moveTop(); } });
     lockWindows.push(w);
   }
   reportStatus();

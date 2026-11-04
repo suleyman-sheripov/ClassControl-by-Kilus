@@ -11,6 +11,10 @@ const SERVER_PATH = path.join(RES, 'server', 'server.js');
 const ONLINE_DIR = path.join(RES, 'online');
 const SHARED_DIR = path.join(RES, 'shared');
 
+// Демо: виртуальный класс на одном компьютере. Отдельная папка данных — проба не трогает настоящий кабинет.
+const DEMO = process.env.CLASSCONTROL_DEMO === '1' || process.argv.includes('--demo');
+if (DEMO) app.setPath('userData', path.join(app.getPath('temp'), 'ClassControl-demo'));
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
@@ -50,6 +54,7 @@ let settings = { ...DEFAULTS };
 try {
   if (fs.existsSync(SETTINGS_PATH)) settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8')) };
 } catch (e) { /* остаются значения по умолчанию */ }
+if (DEMO && !settings.roomName) settings.roomName = 'Демо-кабинет';
 
 function saveSettings() {
   try { fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2)); } catch (e) {}
@@ -143,6 +148,13 @@ app.whenReady().then(async () => {
       roomName: settings.roomName,
       log: (...a) => console.log('[SERVER]', ...a)
     });
+    if (DEMO) {
+      // Виртуальный класс есть только в исходниках; в установленной программе демо просто не включится
+      try {
+        const { startVirtualClass } = require(path.join(__dirname, '..', 'scripts', 'virtual-class.js'));
+        startVirtualClass({ url: `http://127.0.0.1:${lessonServer.port}`, getCode: () => lessonServer.lessonCode, log: (...a) => console.log('[DEMO]', ...a) });
+      } catch (e) { console.warn('[DEMO] Виртуальный класс недоступен:', e.message); }
+    }
   } catch (err) {
     serverError = err.message;
     console.error('[TEACHER] Сервер не запустился:', err);
@@ -192,8 +204,14 @@ ipcMain.handle('save-settings', (e, patch) => {
 
 // ---------- Урок: начало, смена кода, конец ----------
 // Имя учителя — только на этот урок: учителя в кабинете меняются
+let demoPageOpened = false;
 ipcMain.handle('lesson-start', (e, { teacherName } = {}) => {
   if (lessonServer) lessonServer.setLesson({ teacherName: String(teacherName || '').trim() || 'Учитель' });
+  // Демо: сразу открываем страницу ученика в браузере — видно обе стороны урока
+  if (DEMO && lessonServer && !demoPageOpened && !process.env.CLASSCONTROL_DEMO_NO_BROWSER) {
+    demoPageOpened = true;
+    setTimeout(() => shell.openExternal(`http://localhost:${lessonServer.port}/?code=${lessonServer.lessonCode}`), 1200);
+  }
   return lessonServer ? lessonServer.lessonCode : null;
 });
 
@@ -457,14 +475,24 @@ async function ensureCloudflared() {
   if (found) return found;
   const asset = {
     win32: 'cloudflared-windows-amd64.exe',
-    linux: process.arch === 'arm64' ? 'cloudflared-linux-arm64' : 'cloudflared-linux-amd64'
+    linux: process.arch === 'arm64' ? 'cloudflared-linux-arm64' : 'cloudflared-linux-amd64',
+    darwin: process.arch === 'arm64' ? 'cloudflared-darwin-arm64.tgz' : 'cloudflared-darwin-amd64.tgz'
   }[process.platform];
   if (!asset) throw new Error('Скачайте cloudflared вручную и положите рядом с программой');
   const dir = path.join(app.getPath('userData'), 'bin');
   fs.mkdirSync(dir, { recursive: true });
   const dest = path.join(dir, cloudflaredName());
   setTunnel({ state: 'downloading', progress: 0, error: null });
-  await download(`https://github.com/cloudflare/cloudflared/releases/latest/download/${asset}`, dest);
+  const url = `https://github.com/cloudflare/cloudflared/releases/latest/download/${asset}`;
+  if (asset.endsWith('.tgz')) {
+    // На macOS cloudflared поставляется архивом — распаковываем системным tar
+    const tgz = dest + '.tgz';
+    await download(url, tgz);
+    await new Promise((res, rej) => require('child_process').execFile('tar', ['-xzf', tgz, '-C', dir], (err) => (err ? rej(err) : res())));
+    fs.rmSync(tgz, { force: true });
+  } else {
+    await download(url, dest);
+  }
   if (process.platform !== 'win32') fs.chmodSync(dest, 0o755);
   return dest;
 }
