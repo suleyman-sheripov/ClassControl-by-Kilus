@@ -1617,8 +1617,15 @@
       const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
       this.rec = new MediaRecorder(new MediaStream(tracks), { mimeType: mime, videoBitsPerSecond: { high: 5_000_000, normal: 3_000_000, eco: 1_200_000 }[settings.recQuality] || 3_000_000 });
       await api.recStart({ teacherName: S.teacherName && S.teacherName !== 'Учитель' ? S.teacherName : '' });
-      this.rec.ondataavailable = async (e) => { if (e.data.size) api.recChunk(await e.data.arrayBuffer()); };
+      // Куски отправляем строго по порядку; при остановке дожидаемся последнего — конец записи не теряется
+      let chain = Promise.resolve();
+      this.rec.ondataavailable = (e) => {
+        if (!e.data.size) return;
+        const data = e.data;
+        chain = chain.then(async () => api.recChunk(await data.arrayBuffer())).catch(() => {});
+      };
       this.rec.onstop = async () => {
+        await chain;
         const p = await api.recStop();
         if (p) toast('Запись урока сохранена', { kind: 'positive', gesture: 'thumb', action: { label: 'Показать', run: () => api.openPath(p) } });
       };
