@@ -199,8 +199,16 @@ function start(options = {}) {
         polls: [],                // { id, question, options, votes: { voterKey: index }, voters: { voterKey: name }, open, createdAt }
         collections: [],          // { id, title, open, createdAt, submissions: [{ key, name, role, filename, stored, size, ts }] }
         assignments: [],          // { id, filename, url, size, ts }
-        focus: { enabled: false, words: [] }
+        focus: { enabled: false, words: [] },
+        // Правила урока против спама: chat — all (пишут все) | slow (раз в SLOW_MS) | teacher (только учителю лично);
+        // files — можно ли ученикам присылать файлы в чат. Задаёт учитель, по умолчанию из его настроек.
+        rules: { chat: 'all', files: true },
+        // Настройки класса от учителя: как часто и насколько чётко ПК присылают экран, облегчённая графика на ПК
+        classPrefs: { interval: 1000, width: 640, lite: false },
+        muted: new Set(),         // кому учитель выключил чат до конца урока (ключи людей)
+        spam: new Map()           // ключ человека -> { text, textTs, chatTs, handTs }
     };
+    const SLOW_MS = 20000;
     const worksDir = path.join(dataDir, 'works');
     fs.mkdirSync(worksDir, { recursive: true });
 
@@ -376,6 +384,13 @@ function start(options = {}) {
                 fs.unlink(req.file.path, () => {});
                 return res.status(403).json({ error: 'Сначала подключитесь к уроку' });
             }
+            let to = cleanText(req.body.to, 64) || null;
+            if (who.role !== 'teacher') {
+                // Файлы — по тем же правилам, что и сообщения, плюс учитель может запретить их совсем
+                const deny = !state.rules.files ? 'Учитель выключил отправку файлов в чат.' : sock.data.chatGate(sock, to, null);
+                if (deny === 'to-teacher') to = 'teacher';
+                else if (deny) { fs.unlink(req.file.path, () => {}); return res.status(403).json({ error: deny }); }
+            }
             const ext = path.extname(req.file.filename).toLowerCase();
             fileMeta.set(req.file.filename, { original: req.file.originalname });
             if (req.body.assign === '1' && who.role === 'teacher') {
@@ -391,7 +406,7 @@ function start(options = {}) {
                 url: `/files/${req.file.filename}`,
                 size: req.file.size,
                 isImage: INLINE_IMAGE.has(ext)
-            }, cleanText(req.body.to, 64) || null);
+            }, to);
             res.json(msg);
         });
     });
@@ -485,8 +500,17 @@ function start(options = {}) {
         return [...state.knownAgents.values()].filter(a => !onlineHosts.has(a.host));
     }
 
+    // Учителю — со знаком «чат выключен», чтобы было видно, кому он запретил писать
+    function keyOfId(id) { const s = io.sockets.sockets.get(id); return s ? s.data.key : null; }
+    function flagged(list) { return list.map(x => (state.muted.has(keyOfId(x.id)) ? { ...x, muted: true } : x)); }
+    function spamOf(key) {
+        let v = state.spam.get(key);
+        if (!v) { v = { text: '', textTs: 0, chatTs: 0, handTs: 0 }; state.spam.set(key, v); }
+        return v;
+    }
+
     function pushRoster() {
-        toTeacher('roster', { agents: agentList(), online: onlineList(), offline: offlineAgents() });
+        toTeacher('roster', { agents: flagged(agentList()), online: flagged(onlineList()), offline: offlineAgents() });
         broadcastViewers();
         // Список учеников нужен вкладке «Задания»: кто ещё не ответил и не сдал
         if (state.polls.some(p => p.open) || state.collections.some(c => c.open)) toTeacher('activity', activity());
@@ -621,6 +645,11 @@ function start(options = {}) {
         return msg;
     }
 
+    // Подсказка одному человеку (почему сообщение не ушло) — в его чат, другим не видна
+    function notice(socket, text) {
+        socket.emit('chat-message', { id: 'n' + crypto.randomBytes(4).toString('hex'), ts: Date.now(), type: 'system', text, notice: true });
+    }
+
     function systemMessage(text) {
         const msg = { id: crypto.randomBytes(6).toString('hex'), ts: Date.now(), type: 'system', text };
         io.emit('chat-message', msg);
@@ -667,7 +696,7 @@ function start(options = {}) {
         a.student = name || null;
         a.hand = false;
         sk.data.key = name ? personKey(name) : 'pc:' + a.host;
-        sk.emit('seat-changed', { student: a.student, reason: reason || null, activity: studentActivity(sk) });
+        sk.emit('seat-changed', { student: a.student, reason: reason || null, muted: state.muted.has(sk.data.key), activity: studentActivity(sk) });
     }
 
 
@@ -736,8 +765,9 @@ function start(options = {}) {
                 uploadToken: socket.data.uploadToken,
                 lessonCode: state.lessonCode,
                 roomName: state.roomName,
-                agents: agentList(),
-                online: onlineList(),
+                agents: flagged(agentList()),
+                online: flagged(onlineList()),
+                rules: state.rules,
                 chat: state.chat,
                 board: boardState(),
                 broadcast: state.broadcast,
@@ -803,6 +833,9 @@ function start(options = {}) {
                 broadcast: state.broadcast,
                 monitoring: true,
                 focus: state.focus,
+                rules: state.rules,
+                prefs: state.classPrefs,
+                muted: state.muted.has(socket.data.key),
                 activity: studentActivity(socket)
             });
             pushRoster();
@@ -881,6 +914,8 @@ function start(options = {}) {
                 board: boardState(),
                 broadcast: state.broadcast,
                 shareLimitMs: SHARE_LIMIT_MS,
+                rules: state.rules,
+                muted: state.muted.has(key),
                 activity: studentActivity(socket)
             });
             pushRoster();
@@ -930,7 +965,17 @@ function start(options = {}) {
 
         socket.on('monitoring-active', (active) => {
             if (socket.data.role !== 'teacher') return;
-            for (const id of state.agents.keys()) io.to(id).emit('screenshot-rate', { active: Boolean(active) });
+            for (const id of state.agents.keys()) io.to(id).emit('screenshot-rate', { active: Boolean(active), interval: state.classPrefs.interval });
+        });
+
+        // Слабые ПК: учитель выбирает частоту и чёткость экранов и облегчённую графику для всего класса
+        socket.on('class-prefs', (data = {}) => {
+            if (socket.data.role !== 'teacher') return;
+            const p = state.classPrefs;
+            if ([500, 1000, 2000, 4000].includes(data.interval)) p.interval = data.interval;
+            if ([480, 640, 960].includes(data.width)) p.width = data.width;
+            if (data.lite !== undefined) p.lite = Boolean(data.lite);
+            for (const id of state.agents.keys()) io.to(id).emit('class-prefs', p);
         });
 
         // --- Управление ПК (только учитель) ---
@@ -1099,13 +1144,62 @@ function start(options = {}) {
         socket.on('chat-message', (data = {}) => {
             const who = identity(socket);
             if (!who) return;
-            if (!allow(`chat:${socket.id}`, 12, 10000)) {
-                socket.emit('chat-message', { id: 'rl' + Date.now(), ts: Date.now(), type: 'system', text: 'Слишком часто. Подождите пару секунд.' });
-                return;
-            }
-            const text = cleanText(data.text, 2000);
+            // Не больше 20 строк и не больше двух пустых строк подряд — «стена текста» тоже спам
+            const text = cleanText(data.text, 2000).replace(/\n{3,}/g, '\n\n').split('\n').slice(0, 20).join('\n').trim();
             if (!text) return;
-            pushChat(socket, { type: 'text', text }, data.to ? cleanText(data.to, 64) : null);
+            let to = data.to ? cleanText(data.to, 64) : null;
+            if (who.role !== 'teacher') {
+                const deny = chatGate(socket, to, text);
+                if (deny === 'to-teacher') to = 'teacher';
+                else if (deny) return notice(socket, deny);
+            }
+            pushChat(socket, { type: 'text', text }, to);
+        });
+
+        // Можно ли ученику написать сейчас. Ответ: null — можно, 'to-teacher' — только лично учителю, иначе — причина отказа.
+        function chatGate(sock, to, text) {
+            const key = sock.data.key || sock.id;
+            if (state.muted.has(key)) return 'Учитель выключил вам чат до конца урока.';
+            if (!allow(`chat:${key}`, 6, 10000) || !allow(`chatm:${key}`, 20, 60000)) return 'Слишком часто. Подождите немного.';
+            const sp = spamOf(key);
+            const now = Date.now();
+            if (text) {
+                const norm = text.toLowerCase().replace(/\s+/g, ' ');
+                if (norm === sp.text && now - sp.textTs < 60000) return 'Это сообщение уже отправлено.';
+                sp.text = norm; sp.textTs = now;
+            }
+            if (state.rules.chat === 'teacher' && !to) return 'to-teacher';
+            if (state.rules.chat === 'slow' && !to) {
+                const wait = SLOW_MS - (now - sp.chatTs);
+                if (wait > 0) return `Медленный режим: следующее сообщение через ${Math.ceil(wait / 1000)} с.`;
+                sp.chatTs = now;
+            }
+            return null;
+        }
+        socket.data.chatGate = chatGate;
+
+        // Учитель задаёт правила урока: всем видно системное сообщение, ученикам — новое поведение поля ввода
+        socket.on('lesson-rules', (data = {}) => {
+            if (socket.data.role !== 'teacher') return;
+            const chat = ['all', 'slow', 'teacher'].includes(data.chat) ? data.chat : state.rules.chat;
+            const files = data.files === undefined ? state.rules.files : Boolean(data.files);
+            const changed = chat !== state.rules.chat;
+            state.rules = { chat, files };
+            io.emit('lesson-rules', state.rules);
+            if (changed && !data.quiet) {
+                systemMessage({ all: 'Учитель разрешил писать в чат всем', slow: `Медленный режим: одно сообщение в ${SLOW_MS / 1000} секунд`, teacher: 'Сейчас писать можно только учителю — сообщения увидит только он' }[chat]);
+            }
+        });
+
+        // Выключить чат одному человеку до конца урока (переподключение не помогает: ключ — сам человек)
+        socket.on('mute-chat', (data = {}) => {
+            if (socket.data.role !== 'teacher') return;
+            const target = io.sockets.sockets.get(String(data.id || ''));
+            const key = target ? target.data.key : null;
+            if (!key) return;
+            if (data.on) state.muted.add(key); else state.muted.delete(key);
+            target.emit('chat-muted', { on: Boolean(data.on) });
+            pushRoster();
         });
 
         socket.on('request-chat-history', () => {
@@ -1117,9 +1211,16 @@ function start(options = {}) {
             const who = identity(socket);
             const item = state.online.get(socket.id) || state.agents.get(socket.id);
             if (!who || !item) return;
+            const key = socket.data.key || socket.id;
+            if (!allow(`hand:${key}`, 8, 60000)) return;
             item.hand = Boolean(up);
             pushRoster();
-            if (item.hand) toTeacher('hand-raised', { id: socket.id, name: who.name, inClass: socket.data.role === 'agent' });
+            // Руку подняли-опустили-подняли — учитель получает одно уведомление в 20 секунд, а не десять
+            const sp = spamOf(key);
+            if (item.hand && Date.now() - sp.handTs > 20000) {
+                sp.handTs = Date.now();
+                toTeacher('hand-raised', { id: socket.id, name: who.name, inClass: socket.data.role === 'agent' });
+            }
         });
         socket.on('lower-hand', (data = {}) => {
             if (socket.data.role !== 'teacher') return;
@@ -1143,6 +1244,10 @@ function start(options = {}) {
         socket.on('online-user-share-screen', () => {
             const user = state.online.get(socket.id);
             if (!user || user.sharing) return;
+            if (!allow(`share:${socket.data.key || socket.id}`, 3, 5 * 60000)) {
+                socket.emit('force-stop-sharing', { reason: 'often' });
+                return notice(socket, 'Показывать экран можно не чаще трёх раз за пять минут.');
+            }
             user.sharing = true;
             user.shareStartedAt = Date.now();
             clearShareTimer(socket.id);
@@ -1415,6 +1520,8 @@ function start(options = {}) {
         state.lessonId = crypto.randomBytes(6).toString('hex');
         state.lessonCode = makeLessonCode();
         state.banned.clear();
+        state.muted.clear();
+        state.spam.clear();
         state.strokes = [];
         rewriteStrokes();
         state.chat = [];

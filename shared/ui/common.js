@@ -119,7 +119,9 @@
     const kind = opts.kind || 'info';
     const iconName = opts.icon || { positive: 'check', warning: 'alert', live: 'live', accent: 'raise', info: 'info' }[kind] || 'info';
     // Особые моменты (рука поднята, урок начался) — с маскотом вместо значка
-    const mark = opts.finger && CC.finger ? CC.finger({ point: opts.finger, motion: opts.motion || 'none', size: 30 }) : CC.icon(iconName);
+    const mark = (opts.finger || opts.gesture) && CC.finger
+      ? CC.finger({ gesture: opts.gesture, point: opts.finger || 'up', motion: opts.motion || (opts.gesture === 'thumb' ? 'pop' : 'none'), size: 30 })
+      : CC.icon(iconName);
     const node = CC.el('div', { class: `toast toast--${kind}` }, mark, CC.el('span', { text }));
     if (opts.action) {
       node.appendChild(CC.el('button', {
@@ -220,10 +222,14 @@
     items.forEach((it) => {
       if (it === '-') { menu.appendChild(CC.el('div', { class: 'menu__sep' })); return; }
       if (!it) return;
+      const label = it.hint
+        ? CC.el('span', { class: 'menu__text' }, CC.el('span', { text: it.label }), CC.el('span', { class: 'menu__hint', text: it.hint }))
+        : CC.el('span', { text: it.label });
       menu.appendChild(CC.el('button', {
-        class: 'menu__item' + (it.danger ? ' menu__item--danger' : ''), role: 'menuitem', type: 'button',
+        class: 'menu__item' + (it.danger ? ' menu__item--danger' : '') + (it.hint ? ' menu__item--tall' : '') + (it.checked ? ' is-checked' : ''),
+        role: it.checked !== undefined ? 'menuitemcheckbox' : 'menuitem', 'aria-checked': it.checked !== undefined ? String(Boolean(it.checked)) : null, type: 'button',
         onclick: () => { CC.closeMenus(); it.run(); }
-      }, it.icon ? CC.icon(it.icon) : null, CC.el('span', { text: it.label })));
+      }, it.icon ? CC.icon(it.icon) : null, label));
     });
     document.body.appendChild(menu);
     const r = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y };
@@ -301,12 +307,14 @@
       this.input.style.height = 'auto';
       // Скрытое окно даёт высоту 0 — тогда оставляем естественную высоту в одну строку
       if (this.input.scrollHeight) this.input.style.height = Math.min(120, this.input.scrollHeight) + 'px';
-      this.sendBtn.disabled = !this.input.value.trim();
+      this.sendBtn.disabled = !this.input.value.trim() || (this.coolUntil > Date.now() && !this.to);
     }
     send() {
       const text = this.input.value.trim();
-      if (!text) return;
+      if (!text || (this.rules && this.rules.muted)) return;
+      if (this.coolUntil > Date.now() && !this.to) return;
       this.opts.onSend(text, this.to && this.to.id);
+      if (this.rules && this.rules.chat === 'slow' && !this.to) this.cooldown(20000);
       this.input.value = '';
       this.autosize();
     }
@@ -322,8 +330,49 @@
         this.input.focus();
       } else {
         this.toRow.classList.add('hidden');
-        this.input.placeholder = this.opts.placeholder || 'Сообщение для всех…';
+        this.input.placeholder = this.basePlaceholder();
       }
+    }
+    basePlaceholder() {
+      const r = this.rules || {};
+      if (r.muted) return 'Учитель выключил вам чат';
+      if (r.chat === 'teacher') return 'Сообщение учителю…';
+      return this.opts.placeholder || 'Сообщение для всех…';
+    }
+    /**
+     * Правила урока глазами ученика: { chat: all|slow|teacher, files, muted }.
+     * Поле ввода честно показывает, что сейчас можно, — чтобы не писать впустую.
+     */
+    setRules(rules) {
+      this.rules = { ...(this.rules || {}), ...rules };
+      const r = this.rules;
+      if (!this.ruleRow) {
+        this.ruleRow = CC.el('div', { class: 'composer__rule hidden' });
+        this.root.querySelector('.composer').prepend(this.ruleRow);
+      }
+      const note = r.muted ? ['mic-off', 'Учитель выключил вам чат до конца урока']
+        : r.chat === 'teacher' ? ['lock', 'Сейчас сообщения видит только учитель']
+        : r.chat === 'slow' ? ['clock', 'Медленный режим: одно сообщение в 20 секунд'] : null;
+      this.ruleRow.replaceChildren(...(note ? [CC.icon(note[0], 'i-sm'), CC.el('span', { text: note[1] })] : []));
+      this.ruleRow.classList.toggle('hidden', !note);
+      this.root.querySelector('.composer').classList.toggle('is-locked', Boolean(r.muted));
+      this.input.disabled = Boolean(r.muted);
+      if (this.attachBtn) this.attachBtn.classList.toggle('hidden', r.files === false || Boolean(r.muted));
+      if (!this.to) this.input.placeholder = this.basePlaceholder();
+      this.autosize();
+    }
+    // Медленный режим: кнопка «Отправить» сама считает секунды до следующего сообщения
+    cooldown(ms) {
+      this.coolUntil = Date.now() + ms;
+      clearInterval(this.coolTimer);
+      const tick = () => {
+        const left = Math.ceil((this.coolUntil - Date.now()) / 1000);
+        if (left <= 0) { clearInterval(this.coolTimer); this.sendBtn.removeAttribute('data-wait'); this.autosize(); return; }
+        this.sendBtn.setAttribute('data-wait', left);
+        this.sendBtn.disabled = true;
+      };
+      tick();
+      this.coolTimer = setInterval(tick, 500);
     }
     isMine(m) {
       return (this.opts.meKey && m.senderKey === this.opts.meKey) || (this.opts.meId && m.senderId === this.opts.meId);
@@ -685,6 +734,36 @@
       try { await sender.setParameters(p); } catch (e) {}
     }
   };
+
+  // ---------- Скользящая «капсула» у переключателей ----------
+  // Выбранный пункт подсвечивает одна капсула, которая переезжает к новому пункту с пружиной,
+  // а не мгновенно перескакивает. Двигается transform — без перерисовки соседей.
+  CC.glide = function (seg) {
+    if (!seg || seg.__glide || typeof ResizeObserver === 'undefined') return;
+    seg.__glide = true;
+    const g = document.createElement('span');
+    g.className = 'seg__glider';
+    g.setAttribute('aria-hidden', 'true');
+    seg.prepend(g);
+    seg.classList.add('has-glider');
+    let shown = false;
+    const place = (instant) => {
+      const a = seg.querySelector('.seg__btn[aria-selected="true"], .seg__btn.is-active');
+      if (!a || !a.offsetWidth) { g.style.opacity = '0'; shown = false; return; }
+      if (instant || !shown) g.style.transition = 'none';
+      g.style.opacity = '1';
+      g.style.width = a.offsetWidth + 'px';
+      g.style.height = a.offsetHeight + 'px';
+      g.style.transform = `translate(${a.offsetLeft}px, ${a.offsetTop}px)`;
+      if (instant || !shown) { void g.offsetWidth; g.style.transition = ''; }
+      shown = true;
+    };
+    new MutationObserver(() => place()).observe(seg, { subtree: true, attributes: true, attributeFilter: ['class', 'aria-selected'] });
+    new ResizeObserver(() => place(true)).observe(seg);
+    place(true);
+  };
+  function glideAll() { document.querySelectorAll('.seg').forEach(CC.glide); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', glideAll); else setTimeout(glideAll, 0);
 
   global.CC = CC;
 })(window);

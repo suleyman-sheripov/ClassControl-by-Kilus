@@ -8,7 +8,11 @@
   let shotInterval = 1000;
   let remote = null;          // { peer, stream }
   let info = null;
-  const state = { broadcast: { active: false, allowExit: false }, board: false };
+  const state = { broadcast: { active: false, allowExit: false }, board: false, rules: { chat: 'all', files: true, muted: false } };
+  function sendRules(r) {
+    state.rules = { ...state.rules, ...r };
+    api.chatEvent({ type: 'rules', rules: state.rules });
+  }
 
   api.onServerAddress((addr) => connect(addr));
   api.info().then((i) => { info = i; if (i.serverAddress) connect(i.serverAddress); });
@@ -46,6 +50,8 @@
       });
     });
     socket.on('agent-ready', (d) => {
+      if (d.prefs) applyPrefs(d.prefs);
+      sendRules({ ...(d.rules || {}), muted: Boolean(d.muted) });
       api.connectionState({ connected: true, socketId: socket.id, teacherName: d.teacherName, uploadToken: d.uploadToken, lessonId: d.lessonId });
       api.setRoster(d.roster || []);
       // Сервер мог не принять имя (этот человек уже сидит в другом месте) — место пустое
@@ -75,10 +81,13 @@
     });
 
     // Мониторинг
-    socket.on('screenshot-rate', ({ active }) => {
-      shotInterval = active ? 1000 : 5000;
+    socket.on('screenshot-rate', ({ active, interval }) => {
+      if (interval) prefs.interval = interval;
+      monitoringActive = active;
+      shotInterval = active ? prefs.interval : 5000;
       stopShots(); startShots();
     });
+    socket.on('class-prefs', applyPrefs);
 
     // Команды учителя
     socket.on('control', (cmd) => api.control(cmd));
@@ -111,7 +120,10 @@
         api.notify(msg.to ? `${msg.sender} — лично вам` : msg.sender, msg.type === 'file' ? 'Файл: ' + msg.filename : msg.text);
       }
     });
-    socket.on('chat-history', (list) => api.chatEvent({ type: 'history', list }));
+    socket.on('chat-history', (list) => { api.chatEvent({ type: 'history', list }); sendRules({}); });
+    // Правила чата от учителя (медленный режим, «только учителю», личный запрет) — окну беседы
+    socket.on('lesson-rules', (r) => sendRules(r));
+    socket.on('chat-muted', (d) => sendRules({ muted: d.on }));
 
     // Задания, опросы, сбор работ, «Фокус»
     socket.on('assignment', (item) => api.assignment({ ...item, url: address + item.url }));
@@ -121,6 +133,7 @@
     socket.on('collect-closed', (c) => api.task({ type: 'collect-closed', collection: c }));
     socket.on('focus', (f) => api.setFocus(f));
     socket.on('seat-changed', (d) => {
+      if (d && 'muted' in d) sendRules({ muted: d.muted });
       api.seatChanged(d);
       // Другой человек за ПК — его опрос и сбор работ (ответы прежнего ученика ушли вместе с ним)
       const act = d.activity || {};
@@ -154,13 +167,25 @@
   // Один постоянный захват экрана (1 кадр в секунду, 640×360) дешевле, чем каждую секунду
   // просить систему сделать снимок. Неизменившийся экран не отправляем — только «пульс» раз в 5 с.
   const cap = { track: null, grabber: null, canvas: document.createElement('canvas'), probe: document.createElement('canvas'), prev: null, lastSent: 0, failed: false };
+  // Настройки класса от учителя: частота и ширина снимков, облегчённая графика окон
+  const prefs = { interval: 1000, width: 640, lite: false };
+  let monitoringActive = true;
+  function applyPrefs(p) {
+    const widthChanged = p.width && p.width !== prefs.width;
+    Object.assign(prefs, p);
+    api.setPerf && api.setPerf(prefs.lite ? 'lite' : 'auto');
+    shotInterval = monitoringActive ? prefs.interval : 5000;
+    if (widthChanged && cap.track) { cap.track.stop(); cap.track = null; cap.grabber = null; }
+    if (shotTimer) { stopShots(); startShots(); }
+  }
   cap.canvas.width = 640; cap.canvas.height = 360;
   cap.probe.width = 32; cap.probe.height = 18;
 
   async function ensureCapture() {
     if (cap.grabber || cap.failed) return Boolean(cap.grabber);
     try {
-      const st = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: 640, max: 640 }, height: { ideal: 360, max: 360 }, frameRate: { ideal: 1, max: 2 } }, audio: false });
+      const w = prefs.width, h = Math.round(w * 9 / 16);
+      const st = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: w, max: w }, height: { ideal: h, max: h }, frameRate: { ideal: 1, max: 2 } }, audio: false });
       cap.track = st.getVideoTracks()[0];
       cap.grabber = new ImageCapture(cap.track);
       cap.track.onended = () => { cap.track = null; cap.grabber = null; };
@@ -189,7 +214,7 @@
       const isNew = changed(bmp);
       if (!isNew && now - cap.lastSent < 5000) { bmp.close(); return; }
       const ctx = cap.canvas.getContext('2d');
-      const scale = Math.min(640 / bmp.width, 360 / bmp.height, 1);
+      const scale = Math.min(prefs.width / bmp.width, (prefs.width * 9 / 16) / bmp.height, 1);
       const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
       if (cap.canvas.width !== w || cap.canvas.height !== h) { cap.canvas.width = w; cap.canvas.height = h; }
       ctx.drawImage(bmp, 0, 0, w, h);

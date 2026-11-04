@@ -110,6 +110,12 @@
   socket.on('moved', () => {
     leave('Урок продолжается на другом устройстве', 'Вы вошли под этим именем в другом месте, поэтому здесь урок закрыт.');
   });
+  // Правила чата от учителя (против спама) и личный запрет писать
+  socket.on('lesson-rules', (r) => chat.setRules(r));
+  socket.on('chat-muted', (d) => {
+    chat.setRules({ muted: d.on });
+    CC.toast(d.on ? 'Учитель выключил вам чат до конца урока' : 'Учитель снова разрешил вам писать', { kind: d.on ? 'warning' : 'positive', icon: d.on ? 'mic-off' : 'chat' });
+  });
   socket.on('hand-lowered', () => { me.hand = false; renderHand(); });
   // Учитель завершил урок: у следующего урока будет другая ссылка
   socket.on('lesson-ended', () => {
@@ -130,6 +136,7 @@
     Object.assign(lesson, { teacherName: w.teacherName, teacherOnline: w.teacherOnline, broadcasting: w.broadcast.active, board: w.board.active });
     chat.opts.meId = w.id;
     chat.setHistory(w.chat || []);
+    chat.setRules({ ...(w.rules || {}), muted: Boolean(w.muted) });
     board.setStrokes(w.board.strokes || []);
     board.setView(w.board.transform);
     $('#join').classList.add('hidden');
@@ -166,7 +173,7 @@
     $('#rejoin').classList.toggle('hidden', Boolean(final));
     // Указка смотрит на кнопку «Вернуться», если вернуться можно; после урока — просто парит
     const gf = $('#gone cc-finger');
-    if (gf) { gf.setAttribute('point', final ? 'up-right' : 'down'); gf.setAttribute('motion', final ? 'float' : 'nudge'); }
+    if (gf) { gf.setAttribute('gesture', final ? 'palm' : 'point'); gf.setAttribute('point', final ? 'up' : 'down'); gf.setAttribute('motion', final ? 'wave' : 'nudge'); }
     $('#gone-text').textContent = text;
     $('#gone').classList.remove('hidden');
   }
@@ -421,6 +428,7 @@
   });
   socket.on('force-stop-sharing', (d) => {
     stopShare(true);
+    if (d && d.reason === 'often') return;   // причина уже пришла в чат
     toast(d && d.reason === 'time' ? 'Пять минут показа закончились' : 'Учитель закрыл показ вашего экрана');
   });
 
@@ -476,7 +484,7 @@
     if (!submitWaiter) {
       // Кнопку уже «отпустили» — покажем результат сами
       submitWaiter = (r) => {
-        if (r.ok && tasks.collect) { tasks.collect.submitted = r.filename; renderTasks(); toast('Работа сдана', { kind: 'positive' }); }
+        if (r.ok && tasks.collect) { tasks.collect.submitted = r.filename; renderTasks(); toast('Работа сдана', { kind: 'positive', gesture: 'thumb' }); }
         else if (!r.ok && !r.canceled) toast(r.error || 'Не удалось сдать работу', { kind: 'warning' });
       };
     }
@@ -526,19 +534,16 @@
   });
 
   // ---------- Тема ----------
-  function renderThemeBtn() {
-    const light = document.documentElement.dataset.theme === 'light';
-    $('#theme-btn use').setAttribute('href', light ? '#i-moon' : '#i-sun');
-    $('#theme-btn').title = light ? 'Тёмная тема' : 'Светлая тема';
-  }
-  $('#theme-btn').addEventListener('click', () => {
-    const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-    if (window.CCTheme) CCTheme.set(next); else document.documentElement.dataset.theme = next;
-    setTimeout(renderThemeBtn, 0);
+  // Оформление и экономный режим (для слабых телефонов и компьютеров) — в одном меню
+  $('#theme-btn').addEventListener('click', (e) => {
+    const dark = document.documentElement.dataset.theme === 'dark';
+    const lite = Boolean(document.documentElement.dataset.perf);
+    CC.menu(e.currentTarget, [
+      { icon: dark ? 'sun' : 'moon', label: dark ? 'Светлая тема' : 'Тёмная тема', run: () => CCTheme.set(dark ? 'light' : 'dark') },
+      { icon: lite ? 'check' : 'zap', label: 'Экономный режим', hint: lite ? 'Включён: без размытия и анимаций' : 'Для слабого телефона или компьютера', checked: lite,
+        run: () => { CCPerf.set(lite ? 'full' : 'lite'); toast(lite ? 'Экономный режим выключен' : 'Экономный режим включён', { kind: 'positive', icon: 'zap' }); } }
+    ], { alignRight: true });
   });
-  // Тема системы сменилась сама — значок тоже
-  new MutationObserver(renderThemeBtn).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  renderThemeBtn();
 
   window.addEventListener('beforeunload', () => { if (shareStream) socket.emit('online-user-stop-share'); });
   renderJoinLesson();

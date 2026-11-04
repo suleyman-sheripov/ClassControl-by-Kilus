@@ -22,8 +22,8 @@
   };
   let uid = 0;
 
-  // Части руки — одним списком: из них и рисунок, и маска для бликов
-  const PARTS = [
+  // Части руки — одним списком: из них и рисунок, и маска для бликов. Первая часть — без тени (она сзади).
+  const POINT = [
     '<rect x="16" y="34" width="50" height="64" rx="24"/>',                                   // тыльная сторона
     '<rect x="40" y="84" width="27" height="14" rx="7" data-s/>',                              // мизинец
     '<rect x="40" y="71" width="33" height="16" rx="8" data-s/>',                              // безымянный
@@ -31,10 +31,33 @@
     '<rect x="34" y="36" width="76" height="21" rx="10.5" data-s/>',                           // указательный
     '<rect x="22" y="58" width="40" height="15" rx="7.5" transform="rotate(14 42 65)" data-s/>' // большой
   ];
+  // Открытая ладонь: «поднять руку», «привет», «до встречи»
+  const PALM = [
+    '<rect x="27" y="48" width="64" height="58" rx="28" data-b/>',
+    '<rect x="31" y="21" width="17" height="52" rx="8.5" transform="rotate(-7 40 66)" data-s/>',
+    '<rect x="48" y="12" width="18" height="60" rx="9" data-s/>',
+    '<rect x="66" y="16" width="17" height="56" rx="8.5" transform="rotate(6 74 66)" data-s/>',
+    '<rect x="82" y="30" width="15" height="44" rx="7.5" transform="rotate(13 89 70)" data-s/>',
+    '<rect x="6" y="61" width="38" height="18" rx="9" transform="rotate(-38 30 72)" data-s/>'
+  ];
+  // Большой палец вверх: «готово», «сдано», «сохранено»
+  const THUMB = [
+    '<rect x="26" y="48" width="52" height="56" rx="24" data-b/>',
+    '<rect x="50" y="90" width="30" height="13" rx="6.5" data-s/>',
+    '<rect x="50" y="77" width="36" height="15" rx="7.5" data-s/>',
+    '<rect x="50" y="63" width="38" height="16" rx="8" data-s/>',
+    '<rect x="48" y="49" width="38" height="16" rx="8" data-s/>',
+    '<rect x="32" y="12" width="21" height="50" rx="10.5" transform="rotate(-6 42 40)" data-s/>'
+  ];
+  const GESTURES = { point: POINT, palm: PALM, thumb: THUMB };
 
-  function svg(id) {
-    const fill = PARTS.map(p => p.replace(' data-s/>', ` fill="url(#${id}b)" filter="url(#${id}d)"/>`).replace('rx="24"/>', `rx="24" fill="url(#${id}b)"/>`)).join('');
-    const clip = PARTS.map(p => p.replace(' data-s/>', '/>')).join('');
+  function svg(id, gesture) {
+    const parts = GESTURES[gesture] || POINT;
+    const fill = parts.map(p => p.replace(' data-s/>', ` fill="url(#${id}b)" filter="url(#${id}d)"/>`).replace(' data-b/>', ` fill="url(#${id}b)"/>`).replace('rx="24"/>', `rx="24" fill="url(#${id}b)"/>`)).join('');
+    const clip = parts.map(p => p.replace(' data-s/>', '/>').replace(' data-b/>', '/>')).join('');
+    const shine = gesture === 'palm' ? '<rect x="52.5" y="17" width="5" height="30" rx="2.25" fill="#fff" opacity=".7" filter="url(#' + id + 'g)"/>'
+      : gesture === 'thumb' ? '<rect x="37" y="17" width="5" height="32" rx="2.5" fill="#fff" opacity=".7" filter="url(#' + id + 'g)"/>'
+      : `<rect x="54" y="39.5" width="46" height="4.6" rx="2.3" fill="#fff" opacity=".72" filter="url(#${id}g)"/><rect x="22" y="44" width="4" height="22" rx="2" fill="#fff" opacity=".45" filter="url(#${id}g)"/>`;
     return `
 <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
   <defs>
@@ -56,22 +79,28 @@
   <g class="finger__float"><g class="finger__aim"><g class="finger__move">
     ${fill}
     <g clip-path="url(#${id}c)"><rect width="120" height="120" fill="url(#${id}s)"/><rect width="120" height="120" fill="url(#${id}l)"/></g>
-    <rect x="54" y="39.5" width="46" height="4.6" rx="2.3" fill="#fff" opacity=".72" filter="url(#${id}g)"/>
-    <rect x="22" y="44" width="4" height="22" rx="2" fill="#fff" opacity=".45" filter="url(#${id}g)"/>
+    ${shine}
   </g></g></g>
 </svg>`;
   }
 
   class Finger extends HTMLElement {
-    static get observedAttributes() { return ['point', 'size']; }
-    connectedCallback() {
-      if (!this.firstElementChild) this.innerHTML = svg('ccf' + (++uid));
+    static get observedAttributes() { return ['point', 'size', 'gesture']; }
+    connectedCallback() { this.draw(); }
+    draw() {
+      const g = this.getAttribute('gesture') || 'point';
+      if (this.drawn === g) return;
+      this.drawn = g;
+      this.innerHTML = svg('ccf' + (++uid), g);
       this.setAttribute('aria-hidden', 'true');
       this.sync();
     }
-    attributeChangedCallback() { if (this.isConnected) this.sync(); }
+    attributeChangedCallback(name) { if (!this.isConnected) return; if (name === 'gesture') this.draw(); else this.sync(); }
     sync() {
-      const [turn, flip] = AIM[this.getAttribute('point')] || AIM.right;
+      // Ладонь и большой палец нарисованы стоя — их можно только отразить, а не наклонять
+      const p = this.getAttribute('point');
+      const upright = (this.getAttribute('gesture') || 'point') !== 'point';
+      const [turn, flip] = upright ? [0, p && p.includes('left') ? -1 : 1] : (AIM[p] || AIM.right);
       this.style.setProperty('--finger-turn', turn + 'deg');
       this.style.setProperty('--finger-flip', flip);
       const size = parseFloat(this.getAttribute('size'));
@@ -84,6 +113,7 @@
   window.CC = window.CC || {};
   window.CC.finger = (opts = {}) => {
     const f = document.createElement('cc-finger');
+    if (opts.gesture) f.setAttribute('gesture', opts.gesture);
     f.setAttribute('point', opts.point || 'right');
     if (opts.motion) f.setAttribute('motion', opts.motion);
     if (opts.size) f.setAttribute('size', opts.size);

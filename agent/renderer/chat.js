@@ -46,6 +46,7 @@
   api.onChatEvent((ev) => {
     if (ev.type === 'history') chat.setHistory(ev.list);
     if (ev.type === 'message') chat.add(ev.msg);
+    if (ev.type === 'rules') chat.setRules(ev.rules);
   });
   if (info.connected) api.chatRequestHistory();
   else chat.setHistory([]);

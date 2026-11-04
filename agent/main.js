@@ -618,6 +618,16 @@ ipcMain.on('notify', (e, { title, body }) => {
 });
 // Чат идёт через подключение фонового окна: от имени этого компьютера
 ipcMain.on('chat-send', (e, msg) => { if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('chat-send', msg); });
+// Облегчённая графика по решению учителя — во всех окнах агента (и в тех, что откроются позже)
+let perfMode = null;
+function applyPerf(win) {
+  if (win && !win.isDestroyed()) win.webContents.executeJavaScript(`window.CCPerf && CCPerf.force(${JSON.stringify(perfMode)})`).catch(() => {});
+}
+app.on('browser-window-created', (e, win) => win.webContents.on('did-finish-load', () => applyPerf(win)));
+ipcMain.on('set-perf', (e, mode) => {
+  perfMode = mode === 'lite' ? 'lite' : null;
+  BrowserWindow.getAllWindows().forEach(applyPerf);
+});
 ipcMain.on('chat-event', (e, ev) => { if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('chat-event', ev); });
 ipcMain.on('chat-request-history', () => { if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('chat-request-history'); });
 ipcMain.on('message-close', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });

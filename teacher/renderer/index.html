@@ -54,6 +54,7 @@
         <button class="icon-btn" id="toggle-right" type="button" title="Участники и чат" aria-label="Участники и чат">
           <svg class="i"><use href="#i-sidebar-right"/></svg><span class="count count--accent toggle-badge hidden" id="right-badge">0</span>
         </button>
+        <button class="icon-btn" id="settings-btn" type="button" title="Настройки" aria-label="Настройки"><svg class="i"><use href="#i-settings"/></svg></button>
         <button class="icon-btn" id="menu-btn" type="button" title="Урок и настройки" aria-label="Урок и настройки"><svg class="i"><use href="#i-more"/></svg></button>
       </div>
     </header>
@@ -255,6 +256,7 @@
           <div class="panel__head">
             <h2 class="panel__title">Чат</h2>
             <span class="panel__meta" id="chat-meta"></span>
+            <span class="panel__actions"><button class="btn btn--sm btn--ghost chat-rules" id="chat-rules" type="button" title="Правила чата: медленный режим, только учителю, файлы"><svg class="i i-sm"><use href="#i-shield"/></svg><span>Правила</span></button></span>
           </div>
           <div class="chat" id="chat">
             <div class="chat__list" aria-live="polite"></div>

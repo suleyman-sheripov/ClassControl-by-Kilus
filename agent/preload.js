@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('agentAPI', {
   raiseHand: (up) => ipcRenderer.send('socket-emit-out', { event: 'raise-hand', data: up }),
   onHand: on('hand-state'),
   handLowered: () => ipcRenderer.send('hand-lowered'),
+  setPerf: (mode) => ipcRenderer.send('set-perf', mode),
   helloSkip: () => ipcRenderer.send('hello-skip'),
   openHello: () => ipcRenderer.send('open-hello'),
   assignment: (item) => ipcRenderer.send('assignment', item),

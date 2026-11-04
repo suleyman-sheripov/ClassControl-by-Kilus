@@ -65,6 +65,9 @@
 
   socket.on('teacher-ready', (st) => {
     S.connected = true;
+    // Правила чата по умолчанию — из настроек учителя; на уроке их можно менять кнопкой у чата
+    socket.emit('lesson-rules', { chat: settings.chatMode || 'all', files: settings.studentFiles !== false, quiet: true });
+    sendClassPrefs();
     setServerStatus('ok', `Сервер урока работает, порт ${boot.port}`);
     S.lessonStartedAt = st.lessonStartedAt;
     S.links = st.links || [];
@@ -118,7 +121,7 @@
     const r = await api.lessonEnd({ save: choice === 'save', boardPng: choice === 'save' && board.strokes.length ? board.toPNG() : null });
     if (!r || !r.ok) return;   // отказались выбирать папку — урок продолжается
     board.clear();
-    if (r.dir) toast('Материалы урока сохранены', { kind: 'positive', action: { label: 'Открыть', run: () => api.openFolder(r.dir) } });
+    if (r.dir) toast('Материалы урока сохранены', { kind: 'positive', gesture: 'thumb', action: { label: 'Открыть', run: () => api.openFolder(r.dir) } });
     startLesson();
   }
 
@@ -157,37 +160,142 @@
     }
     const r = await api.previousLesson({ action: choice === 'save' ? 'save' : 'drop', boardPng: choice === 'save' && p.strokes && p.strokes.length ? CC.Board.toPNG(p.strokes) : null });
     if (r && r.canceled) return askPrevious(p);
-    if (r && r.dir) toast('Материалы прошлого урока сохранены', { kind: 'positive', action: { label: 'Открыть', run: () => api.openFolder(r.dir) } });
+    if (r && r.dir) toast('Материалы прошлого урока сохранены', { kind: 'positive', gesture: 'thumb', action: { label: 'Открыть', run: () => api.openFolder(r.dir) } });
     startLesson();
   }
 
   // Настройки кабинета (не учителя): название кабинета, папки по умолчанию для сохранения
-  async function openSettings() {
-    const room = el('input', { class: 'input', value: settings.roomName || '' });
-    const recDir = el('input', { class: 'input', value: settings.recordDir || '', readonly: true });
-    const repDir = el('input', { class: 'input', value: settings.reportDir || '', readonly: true });
-    const folder = (input) => el('div', { class: 'folder-field' }, input,
-      el('button', { class: 'btn', type: 'button', text: 'Выбрать', onclick: async () => { const p = await api.pickFolder(input.value); if (p) input.value = p; } }));
-    const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
-      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Кабинет' }), room),
-      el('p', { class: 'onboard__why', text: 'Компьютеры класса подключаются только к учителю своего кабинета.' }),
-      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Куда предлагать сохранять записи' }), folder(recDir)),
-      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Куда предлагать сохранять материалы урока' }), folder(repDir)));
-    const saved = await CC.dialog({
-      title: 'Настройки кабинета', body, wide: true,
-      actions: [{ label: 'Отмена', value: null }, { label: 'Сохранить', kind: 'primary', primary: true, value: () => true }]
+  // ---------- Настройки: применяются сразу и сохраняются сами ----------
+  function segCtl(options, value, onChange) {
+    const wrap = el('div', { class: 'seg seg--full', role: 'radiogroup' });
+    options.forEach(([v, label]) => {
+      const on = String(v) === String(value);
+      const b = el('button', { class: 'seg__btn' + (on ? ' is-active' : ''), type: 'button', role: 'radio', 'aria-checked': String(on), text: label });
+      b.addEventListener('click', () => {
+        wrap.querySelectorAll('.seg__btn').forEach(x => { x.classList.toggle('is-active', x === b); x.setAttribute('aria-checked', String(x === b)); });
+        onChange(v);
+      });
+      wrap.appendChild(b);
     });
-    if (!saved) return;
-    settings = await api.saveSettings({ roomName: room.value.trim() || settings.roomName, recordDir: recDir.value, reportDir: repDir.value }) || settings;
-    $('#room-name').textContent = settings.roomName;
-    toast('Настройки сохранены', { kind: 'positive' });
+    requestAnimationFrame(() => CC.glide(wrap));
+    return wrap;
+  }
+  function switchCtl(label, hint, checked, onChange, disabled) {
+    const input = el('input', { type: 'checkbox' });
+    input.checked = Boolean(checked);
+    input.disabled = Boolean(disabled);
+    input.addEventListener('change', () => onChange(input.checked));
+    return el('label', { class: 'switch set-switch' }, el('span', { class: 'switch__text' }, el('span', { class: 'switch__label', text: label }), hint ? el('span', { class: 'switch__hint', text: hint }) : null), input, el('span', { class: 'switch__track' }));
+  }
+  const setRow = (label, hint, control) => el('div', { class: 'set-row' },
+    el('div', { class: 'set-row__text' }, el('span', { class: 'set-row__label', text: label }), hint ? el('span', { class: 'set-row__hint', text: hint }) : null), control);
+
+  // Настройки класса уходят на ПК учеников: частота и чёткость экранов, облегчённая графика
+  function sendClassPrefs() {
+    socket.emit('class-prefs', { interval: settings.monInterval || 1000, width: settings.monWidth || 640, lite: Boolean(settings.classLite) });
+  }
+  function applyStudio() {
+    $('#quality').value = settings.quality || '1280x720';
+    $('#fps').value = String(settings.fps || 15);
+    $('#opt-mic').checked = Boolean(settings.shareMic);
+    $('#opt-exit').checked = Boolean(settings.allowExit);
+    if (!$('#opt-audio').disabled) $('#opt-audio').checked = settings.shareAudio !== false;
+    renderStudioSummary();
+  }
+
+  async function openSettings(start) {
+    let savedMark;
+    const save = async (patch) => {
+      settings = (await api.saveSettings(patch)) || { ...settings, ...patch };
+      savedMark.classList.remove('is-flash'); void savedMark.offsetWidth; savedMark.classList.add('is-flash');
+    };
+    const folder = (key) => {
+      const input = el('input', { class: 'input', value: settings[key] || '', readonly: true });
+      return el('div', { class: 'folder-field' }, input,
+        el('button', { class: 'btn', type: 'button', text: 'Выбрать', onclick: async () => { const p = await api.pickFolder(input.value); if (p) { input.value = p; save({ [key]: p }); } } }));
+    };
+    const cores = navigator.hardwareConcurrency || '?';
+    const sections = [
+      { id: 'room', icon: 'home', title: 'Кабинет', build: () => {
+        const room = el('input', { class: 'input input--lg', value: settings.roomName || '', maxlength: 60 });
+        room.addEventListener('change', () => { const v = room.value.trim(); if (v) { save({ roomName: v }); $('#room-name').textContent = v; } });
+        return [
+          setRow('Название кабинета', 'Компьютеры класса подключаются только к учителю своего кабинета, даже если в школе несколько учителей.', room),
+          setRow('Компьютеры кабинета', 'Закреплённые ПК не уйдут к соседнему учителю.', el('button', { class: 'btn', type: 'button', onclick: bindRoom }, icon('lock', 'i-sm'), 'Закрепить ПК за этим кабинетом'))
+        ];
+      } },
+      { id: 'stream', icon: 'cast', title: 'Эфир', build: () => [
+        setRow('Качество', 'Слабая сеть или старые ПК — 720p или 480p.', segCtl([['1920x1080', '1080p'], ['1280x720', '720p'], ['854x480', '480p'], ['640x360', '360p']], settings.quality, (v) => { save({ quality: v }).then(applyStudio); })),
+        setRow('Кадров в секунду', 'Для текста и презентаций хватает 10–15, для видео — 30.', segCtl([[5, '5'], [10, '10'], [15, '15'], [30, '30'], [60, '60']], settings.fps, (v) => { save({ fps: v }).then(applyStudio); })),
+        switchCtl('Звук компьютера', boot.platform === 'win32' || !boot.platform ? 'Ученики слышат видео и музыку с вашего ПК' : 'Доступно только в Windows', settings.shareAudio, (v) => save({ shareAudio: v }).then(applyStudio), boot.platform && boot.platform !== 'win32'),
+        switchCtl('Мой микрофон', 'Слышат только ученики из дома — в кабинете не будет эха', settings.shareMic, (v) => save({ shareMic: v }).then(applyStudio)),
+        switchCtl('Ученики могут закрыть эфир', 'Окно эфира на ПК можно свернуть клавишей Esc', settings.allowExit, (v) => save({ allowExit: v }).then(applyStudio))
+      ] },
+      { id: 'monitor', icon: 'grid', title: 'Мониторинг', build: () => [
+        setRow('Обновление экранов', 'Реже — меньше нагрузка на сеть и на компьютеры учеников.', segCtl([[500, '0,5 с'], [1000, '1 с'], [2000, '2 с'], [4000, '4 с']], settings.monInterval, (v) => save({ monInterval: v }).then(sendClassPrefs))),
+        setRow('Чёткость экранов', 'Экономно — для старых ПК и медленной сети.', segCtl([[480, 'Экономно'], [640, 'Обычно'], [960, 'Чётко']], settings.monWidth, (v) => save({ monWidth: v }).then(sendClassPrefs))),
+        el('p', { class: 'set-note' }, icon('info', 'i-sm'), el('span', { text: 'Пока открыта доска или задания, компьютеры присылают экран раз в 5 секунд, а неизменившийся экран не присылают вовсе.' }))
+      ] },
+      { id: 'perf', icon: 'gauge', title: 'Производительность', build: () => {
+        const effective = el('span', { class: 'set-row__hint' });
+        const showEffective = () => { effective.textContent = `Сейчас: ${({ full: 'полная', lite: 'облегчённая', min: 'минимальная' })[CCPerf.effective()]}. Ядер у этого компьютера: ${cores}.`; };
+        const graphics = segCtl([['auto', 'Авто'], ['full', 'Полная'], ['lite', 'Облегчённая'], ['min', 'Минимальная']], settings.perf || 'auto', (v) => { CCPerf.set(v); save({ perf: v }); showEffective(); });
+        showEffective();
+        const weak = async () => {
+          await save({ perf: 'lite', quality: '1280x720', fps: 10, monInterval: 2000, monWidth: 480, classLite: true });
+          CCPerf.set('lite'); applyStudio(); sendClassPrefs();
+          toast('Включён режим для слабых компьютеров', { kind: 'positive', gesture: 'thumb' });
+          show('perf');
+        };
+        const normal = async () => {
+          await save({ perf: 'auto', quality: '1280x720', fps: 15, monInterval: 1000, monWidth: 640, classLite: false });
+          CCPerf.set('auto'); applyStudio(); sendClassPrefs();
+          toast('Обычные настройки вернулись', { kind: 'positive' });
+          show('perf');
+        };
+        return [
+          el('div', { class: 'set-presets' },
+            el('button', { class: 'set-preset', type: 'button', onclick: weak }, el('span', { class: 'tile tile--mint' }, icon('zap')), el('span', { class: 'set-preset__title', text: 'Слабые компьютеры' }), el('span', { class: 'set-preset__text', text: 'Одним нажатием: облегчённая графика везде, эфир 720p × 10, экраны раз в 2 с.' })),
+            el('button', { class: 'set-preset', type: 'button', onclick: normal }, el('span', { class: 'tile tile--lilac' }, icon('sparkle')), el('span', { class: 'set-preset__title', text: 'Обычный режим' }), el('span', { class: 'set-preset__text', text: 'Вся красота и плавность — для современных ПК.' }))),
+          setRow('Графика на этом компьютере', null, el('div', { class: 'set-stack' }, graphics, effective)),
+          switchCtl('Облегчённая графика на компьютерах учеников', 'Без размытия и анимаций в окнах агента — меньше нагрузки на старые ПК', settings.classLite, (v) => save({ classLite: v }).then(sendClassPrefs))
+        ];
+      } },
+      { id: 'students', icon: 'shield', title: 'Ученики и чат', build: () => [
+        setRow('Чат на уроке', 'Действует сразу и для следующих уроков. На уроке режим можно сменить кнопкой «Правила» у чата.',
+          segCtl([['all', 'Пишут все'], ['slow', 'Медленно'], ['teacher', 'Только учителю']], settings.chatMode || 'all', (v) => { save({ chatMode: v }); socket.emit('lesson-rules', { chat: v, files: S.rules.files }); })),
+        switchCtl('Ученики могут присылать файлы в чат', 'Сдача работ работает всегда — это отдельная кнопка', settings.studentFiles !== false, (v) => { save({ studentFiles: v }); socket.emit('lesson-rules', { chat: S.rules.chat, files: v }); }),
+        el('p', { class: 'set-note' }, icon('shield', 'i-sm'), el('span', { text: 'Защита от спама работает всегда: одинаковые сообщения и поток сообщений не проходят, поднятая-опущенная рука присылает одно уведомление, показ экрана — не чаще трёх раз за 5 минут. Тому, кто мешает, можно выключить чат до конца урока в списке участников.' }))
+      ] },
+      { id: 'save', icon: 'film', title: 'Запись и файлы', build: () => [
+        setRow('Качество записи урока', 'Экономное — файл в 2–3 раза меньше.', segCtl([['high', 'Высокое'], ['normal', 'Обычное'], ['eco', 'Экономное']], settings.recQuality || 'normal', (v) => save({ recQuality: v }))),
+        setRow('Куда предлагать сохранять записи', null, folder('recordDir')),
+        setRow('Куда предлагать сохранять материалы урока', null, folder('reportDir'))
+      ] },
+      { id: 'look', icon: 'palette', title: 'Оформление', build: () => [
+        setRow('Тема', '«Как в системе» — днём светлая, вечером тёмная, если так настроена Windows.', segCtl([['auto', 'Как в системе'], ['light', 'Светлая'], ['dark', 'Тёмная']], settings.theme || 'auto', (v) => { applyTheme(v); save({ theme: v }); }))
+      ] }
+    ];
+    const nav = el('nav', { class: 'settings__nav', role: 'tablist' });
+    const pane = el('div', { class: 'settings__pane' });
+    const show = (id) => {
+      const sec = sections.find(x => x.id === id) || sections[0];
+      nav.querySelectorAll('.settings__tab').forEach(b => b.setAttribute('aria-selected', String(b.dataset.id === sec.id)));
+      pane.replaceChildren(el('h3', { class: 'settings__title', text: sec.title }), ...sec.build());
+      pane.classList.remove('is-in'); void pane.offsetWidth; pane.classList.add('is-in');
+    };
+    sections.forEach(sec => nav.appendChild(el('button', { class: 'settings__tab', type: 'button', role: 'tab', 'data-id': sec.id, onclick: () => show(sec.id) }, icon(sec.icon), el('span', { text: sec.title }))));
+    savedMark = el('span', { class: 'settings__saved' }, icon('check', 'i-sm'), 'Сохраняется само');
+    const body = el('div', { class: 'settings' }, nav, pane);
+    show(start || 'room');
+    await CC.dialog({ title: 'Настройки', sub: null, body, wide: true, actions: [{ label: 'Готово', kind: 'primary', primary: true, value: true }], onOpen: (d) => { d.classList.add('dialog--settings'); d.querySelector('.dialog__head > div').appendChild(savedMark); } });
   }
 
   // ---------- Переключение режимов ----------
   function setTab(tab) {
     if (tab === S.tab) return;
     // Смена режима — мягким переходом (View Transitions), если система не просит меньше движения
-    if (document.startViewTransition && S.tab && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (document.startViewTransition && S.tab && !document.documentElement.dataset.perf && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
       document.startViewTransition(() => applyTab(tab));
     } else applyTab(tab);
   }
@@ -393,12 +501,16 @@
         el('div', { class: 'row__main' },
           el('span', { class: 'row__title', text: a.student || 'Не представился' }),
           el('span', { class: 'row__sub' }, a.hand ? handMark() : el('span', { class: 'dot ' + (a.locked ? 'dot--warning' : a.idle >= 180 ? '' : 'dot--positive') }),
-            a.hand ? `${a.name}, поднял руку` : `${a.name}, ${a.locked ? 'заблокирован' : CC.idleText(a.idle || 0)}`)),
+            a.hand ? `${a.name}, поднял руку` : `${a.name}, ${a.locked ? 'заблокирован' : CC.idleText(a.idle || 0)}`),
+            a.muted ? mutedMark() : null),
         el('div', { class: 'row__actions' },
           el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Подключиться', 'aria-label': 'Подключиться', onclick: () => openViewer(a.id) }, icon('pointer', 'i-sm')),
           a.hand ? el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Опустить руку', 'aria-label': 'Опустить руку', onclick: () => socket.emit('lower-hand', { id: a.id }) }, icon('check', 'i-sm')) : null,
-          el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Кто сидит за этим ПК', 'aria-label': 'Кто сидит', onclick: () => assignSeat(a.id) }, icon('user', 'i-sm')),
-          el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Написать лично', 'aria-label': 'Написать лично', onclick: () => chat.setRecipient({ id: a.id, name: a.student || a.name }) }, icon('chat', 'i-sm'))))));
+          el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Ещё', 'aria-label': 'Ещё', onclick: (e) => CC.menu(e.currentTarget, [
+            { icon: 'chat', label: 'Написать лично', run: () => chat.setRecipient({ id: a.id, name: a.student || a.name }) },
+            { icon: 'user', label: a.student ? 'Пересадить' : 'Кто сидит за этим ПК', run: () => assignSeat(a.id) },
+            muteItem(a.id, a.muted)
+          ], { alignRight: true }) }, icon('more', 'i-sm'))))));
       return;
     }
 
@@ -414,6 +526,7 @@
         : u.voice ? [icon('mic', 'i-sm'), 'говорит']
         : u.sharing ? [icon('share', 'i-sm'), 'показывает экран']
         : [u.remote ? 'из дома' : 'в сети школы'];
+      if (u.muted) sub.push(mutedMark());
       const voiceBtn = el('button', {
         class: 'icon-btn icon-btn--sm' + (u.voice ? ' is-on' : ''), type: 'button',
         title: u.voice ? 'Выключить микрофон ученика' : 'Дать слово', 'aria-label': 'Микрофон',
@@ -425,6 +538,7 @@
         el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Ещё', 'aria-label': 'Ещё', onclick: (e) => CC.menu(e.currentTarget, [
           { icon: 'chat', label: 'Написать лично', run: () => chat.setRecipient({ id: u.id, name: u.name }) },
           u.hand ? { icon: 'raise', label: 'Опустить руку', run: () => socket.emit('teacher-voice', { userId: u.id, on: false }) } : null,
+          muteItem(u.id, u.muted),
           '-',
           { icon: 'door', label: 'Отключить', run: async () => { if (await CC.confirm(`Отключить ${u.name}?`, 'Ученик сможет зайти снова по ссылке — например, если зашёл не туда.', 'Отключить')) socket.emit('teacher-kick', { userId: u.id }); } },
           { icon: 'lock', label: 'Не пускать до конца урока', danger: true, run: async () => { if (await CC.confirm(`Не пускать ${u.name} до конца урока?`, 'Под этим именем на урок не зайти до «Завершить урок». Блокировка снимается с новым уроком.', 'Не пускать', 'danger')) socket.emit('teacher-kick', { userId: u.id, ban: true }); } }
@@ -438,13 +552,21 @@
 
   socket.on('hand-raised', ({ id, name, inClass }) => {
     // В классе слово даёт сам учитель вслух; ученику из дома нужен микрофон
-    toast(`${name} поднял руку`, { kind: 'accent', finger: 'up', motion: 'raise', duration: 7000, action: inClass
+    toast(`${name} поднял руку`, { kind: 'accent', gesture: 'palm', motion: 'raise', duration: 7000, group: 'hand-' + id, action: inClass
       ? { label: 'Опустить руку', run: () => socket.emit('lower-hand', { id }) }
       : { label: 'Дать слово', run: () => socket.emit('teacher-voice', { userId: id, on: true }) } });
   });
 
+  // Выключить чат одному ученику до конца урока — для того, кто мешает, без отключения от урока
+  function muteItem(id, muted) {
+    return muted
+      ? { icon: 'chat', label: 'Разрешить писать в чат', run: () => socket.emit('mute-chat', { id, on: false }) }
+      : { icon: 'mute', label: 'Выключить чат до конца урока', run: () => { socket.emit('mute-chat', { id, on: true }); toast('Ученик больше не может писать в чат', { icon: 'mute' }); } };
+  }
+  function mutedMark() { return el('span', { class: 'badge badge--warning person__muted', title: 'Чат выключен до конца урока' }, icon('mute', 'i-sm'), 'тихо'); }
+
   // Поднятая рука — маленькая «указка» вверх: тот же знак, что у ученика на кнопке
-  function handMark() { return CC.finger ? CC.finger({ point: 'up', size: 18, class: 'person__hand' }) : icon('raise', 'i-sm person__hand'); }
+  function handMark() { return CC.finger ? CC.finger({ gesture: 'palm', point: 'up', size: 18, class: 'person__hand' }) : icon('raise', 'i-sm person__hand'); }
 
   function updateRightBadge() {
     const hands = [...S.online.values(), ...S.agents.values()].filter(u => u.hand).length;
@@ -483,12 +605,15 @@
     $('#pc-empty').classList.toggle('hidden', S.agents.size > 0 || (S.offline && S.offline.size > 0));
     const keep = new Set([...list.map(a => a.id), ...off.map(a => 'off:' + a.host)]);
     $$('.pc', grid).forEach(card => { if (!keep.has(card.dataset.id)) card.remove(); });
-    let i = 0;
+    let i = 0, fresh = 0;
     list.forEach((a) => {
       let card = grid.querySelector(`.pc[data-id="${CSS.escape(a.id)}"]`);
       if (!card) {
         card = buildCard(a);
-        if (S.ready) card.classList.add('is-new');
+        // Карточки появляются волной — каждая чуть позже соседки
+        card.classList.add('is-new');
+        card.style.setProperty('--i', Math.min(fresh++, 14));
+        card.addEventListener('animationend', () => card.classList.remove('is-new'), { once: true });
         // Тот же компьютер вернулся — показываем его прошлый кадр, пока не придёт новый
         const last = S.lastShot && S.lastShot.get(a.host);
         if (last) { const img = card.querySelector('.pc__screen img'); img.src = last; img.classList.remove('hidden'); card.querySelector('.pc__screen .empty')?.remove(); }
@@ -1395,6 +1520,30 @@
   socket.on('clear-canvas', () => board.clear());
 
   // ---------- Чат ----------
+  // ---------- Правила чата: против спама ----------
+  const RULES = {
+    all: { icon: 'chat', label: 'Пишут все', hint: 'Обычный чат урока' },
+    slow: { icon: 'clock', label: 'Медленный режим', hint: 'Каждый ученик — не чаще раза в 20 секунд' },
+    teacher: { icon: 'lock', label: 'Только учителю', hint: 'Ученики пишут лично вам, одноклассники не видят' }
+  };
+  S.rules = { chat: 'all', files: true };
+  function renderRules() {
+    const r = RULES[S.rules.chat] || RULES.all;
+    const b = $('#chat-rules');
+    b.querySelector('use').setAttribute('href', '#i-' + (S.rules.chat === 'all' ? 'shield' : r.icon));
+    b.querySelector('span').textContent = S.rules.chat === 'all' ? 'Правила' : r.label;
+    b.classList.toggle('is-on', S.rules.chat !== 'all' || !S.rules.files);
+  }
+  socket.on('lesson-rules', (r) => { S.rules = r; renderRules(); });
+  $('#chat-rules').addEventListener('click', (e) => {
+    const set = (patch) => socket.emit('lesson-rules', { ...S.rules, ...patch });
+    CC.menu(e.currentTarget, [
+      ...Object.entries(RULES).map(([k, r]) => ({ icon: S.rules.chat === k ? 'check' : r.icon, label: r.label, hint: r.hint, checked: S.rules.chat === k, run: () => set({ chat: k }) })),
+      '-',
+      { icon: S.rules.files ? 'check' : 'clip', label: 'Ученики могут присылать файлы', checked: S.rules.files, run: () => set({ files: !S.rules.files }) }
+    ], { alignRight: true });
+  });
+
   const chat = new CC.Chat($('#chat'), {
     meId: null,
     canWhisper: true,
@@ -1444,12 +1593,12 @@
       this.timer = setInterval(draw, 1000 / 30);
       const tracks = [...this.canvas.captureStream(30).getVideoTracks(), ...Mixer.toRecord.stream.getAudioTracks()];
       const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
-      this.rec = new MediaRecorder(new MediaStream(tracks), { mimeType: mime, videoBitsPerSecond: 3_000_000 });
+      this.rec = new MediaRecorder(new MediaStream(tracks), { mimeType: mime, videoBitsPerSecond: { high: 5_000_000, normal: 3_000_000, eco: 1_200_000 }[settings.recQuality] || 3_000_000 });
       await api.recStart({ teacherName: S.teacherName && S.teacherName !== 'Учитель' ? S.teacherName : '' });
       this.rec.ondataavailable = async (e) => { if (e.data.size) api.recChunk(await e.data.arrayBuffer()); };
       this.rec.onstop = async () => {
         const p = await api.recStop();
-        if (p) toast('Запись урока сохранена', { kind: 'positive', action: { label: 'Показать', run: () => api.openPath(p) } });
+        if (p) toast('Запись урока сохранена', { kind: 'positive', gesture: 'thumb', action: { label: 'Показать', run: () => api.openPath(p) } });
       };
       this.rec.start(2000);
       this.active = true;
@@ -1497,8 +1646,18 @@
   S.openLists = new Set();
   socket.on('activity', applyActivity);
 
+  // Весь класс ответил или сдал работу — маленький праздник для учителя (один раз на задание)
+  const cheered = new Set();
+  function cheer(a) {
+    const n = (a.students || []).length;
+    if (!n) return;
+    for (const c of a.collections) if (c.open && c.submissions.length >= n && !cheered.has(c.id)) { cheered.add(c.id); toast(`Все сдали работу «${c.title}»`, { kind: 'positive', gesture: 'thumb', duration: 6000 }); }
+    for (const p of a.polls) if (p.open && p.total >= n && !cheered.has(p.id)) { cheered.add(p.id); toast('Ответил весь класс', { kind: 'positive', gesture: 'thumb', duration: 6000 }); }
+  }
+
   function applyActivity(a) {
     if (!a) return;
+    if (S.activity) cheer(a);
     S.activity = a;
     renderTasks();
     renderFocusBtn();
@@ -1737,6 +1896,8 @@
     else document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light';
   }
   applyTheme(settings.theme || 'auto');
+  if (window.CCPerf && CCPerf.get() !== (settings.perf || 'auto')) CCPerf.set(settings.perf || 'auto');
+  $('#settings-btn').addEventListener('click', () => openSettings());
   function themeItem() {
     const dark = document.documentElement.dataset.theme === 'dark';
     const next = dark ? 'light' : 'dark';

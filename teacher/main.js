@@ -33,7 +33,18 @@ const DEFAULTS = {
   allowExit: false,
   shareAudio: true,
   shareMic: false,
-  theme: 'auto'
+  theme: 'auto',
+  // Графика этого компьютера: auto — облегчённая на слабом железе
+  perf: 'auto',
+  // Класс: как часто и насколько чётко ПК присылают экраны, облегчённая графика на ПК учеников
+  monInterval: 1000,
+  monWidth: 640,
+  classLite: false,
+  // Запись урока: high | normal | eco
+  recQuality: 'normal',
+  // Правила чата по умолчанию (против спама): all | slow | teacher; файлы от учеников
+  chatMode: 'all',
+  studentFiles: true
 };
 let settings = { ...DEFAULTS };
 try {

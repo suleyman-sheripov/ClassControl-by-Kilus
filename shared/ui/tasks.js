@@ -83,7 +83,7 @@
       btn.replaceChildren(el('span', { class: 'spinner' }), 'Отправляю…');
       const r = await handlers.onSubmit(c.id);
       btn.disabled = false;
-      if (r && r.ok) { c.submitted = r.filename; render(); CC.toast('Работа сдана', { kind: 'positive' }); }
+      if (r && r.ok) { c.submitted = r.filename; render(); CC.toast('Работа сдана', { kind: 'positive', gesture: 'thumb' }); }
       else { btn.innerHTML = prev; if (r && !r.canceled) CC.toast(r.error || 'Не удалось сдать работу', { kind: 'warning' }); }
     });
     render();

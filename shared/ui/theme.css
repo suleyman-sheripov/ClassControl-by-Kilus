@@ -384,6 +384,19 @@ cc-finger[motion="raise"] .finger__float { animation: finger-raise 1.6s var(--ea
   40% { transform: translateY(-3px); }
 }
 
+/* Машет ладонью: качается от запястья, как «привет» */
+cc-finger[motion="wave"] .finger__move { transform-origin: 60px 100px; animation: finger-wave 2.6s var(--ease-in-out) infinite; }
+@keyframes finger-wave {
+  0%, 60%, 100% { transform: rotate(0); }
+  12% { transform: rotate(-12deg); }
+  24% { transform: rotate(10deg); }
+  36% { transform: rotate(-8deg); }
+  48% { transform: rotate(4deg); }
+}
+/* Большой палец: короткий «одобрительный» прыжок с пружиной, один раз */
+cc-finger[motion="pop"] .finger__move { transform-origin: 60px 100px; animation: finger-pop .9s var(--spring-bouncy) both; }
+@keyframes finger-pop { 0% { transform: scale(.4) rotate(-20deg); } 100% { transform: none; } }
+
 /* Подложка героя: маскот над мягким цветным свечением */
 .hero {
   position: relative; display: grid; place-items: center;
@@ -434,6 +447,14 @@ cc-finger[motion="raise"] .finger__float { animation: finger-raise 1.6s var(--ea
   box-shadow: var(--shadow-press);
 }
 .btn--primary:hover { background: var(--grad-primary); filter: brightness(1.07) saturate(1.05); }
+/* Блик пробегает по главной кнопке при наведении — один раз, только transform */
+.btn--primary, .composer__send { position: relative; overflow: hidden; }
+.btn--primary::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, .32) 48%, transparent 66%);
+  transform: translateX(-110%);
+}
+.btn--primary:hover::after { transform: translateX(110%); transition: transform .9s var(--ease); }
 .btn--primary:active { filter: brightness(.96); }
 
 .btn--ghost { background: transparent; box-shadow: none; color: var(--muted); }
@@ -485,6 +506,16 @@ cc-finger[motion="raise"] .finger__float { animation: finger-raise 1.6s var(--ea
   box-shadow: 0 1px 2px rgba(25, 28, 72, .1), 0 3px 10px -4px rgba(25, 28, 72, .18);
 }
 :root[data-theme="dark"] .seg__btn[aria-selected="true"], :root[data-theme="dark"] .seg__btn.is-active { background: rgba(255, 255, 255, .11); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
+.seg { position: relative; isolation: isolate; }
+.seg__glider {
+  position: absolute; top: 0; left: 0; z-index: -1; pointer-events: none; border-radius: 10px;
+  background: var(--raised);
+  box-shadow: 0 1px 2px rgba(25, 28, 72, .1), 0 3px 10px -4px rgba(25, 28, 72, .18);
+  transition: transform .5s var(--spring), width .5s var(--spring), opacity .2s;
+}
+:root[data-theme="dark"] .seg__glider { background: rgba(255, 255, 255, .11); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06); }
+.seg.has-glider .seg__btn[aria-selected="true"], .seg.has-glider .seg__btn.is-active { background: transparent; box-shadow: none; }
+.seg--compact .seg__glider { border-radius: 8px; }
 .seg__count { color: var(--faint); font-variant-numeric: tabular-nums; font-weight: 500; }
 .seg--full { display: flex; }
 .seg--full .seg__btn { flex: 1; justify-content: center; }
@@ -685,6 +716,12 @@ cc-finger[motion="raise"] .finger__float { animation: finger-raise 1.6s var(--ea
   background: transparent; color: var(--text); text-align: left; font-size: var(--fs-body);
 }
 .menu__item:hover { background: var(--accent-tint); }
+.menu__item--tall { height: auto; min-height: 44px; padding: 6px 10px; align-items: flex-start; }
+.menu__item--tall .i { margin-top: 2px; }
+.menu__text { display: flex; flex-direction: column; line-height: 1.35; }
+.menu__hint { font-size: var(--fs-xs); color: var(--faint); }
+.menu__item.is-checked { color: var(--accent-text); }
+.menu__item.is-checked .i { color: var(--accent-text); }
 .menu__item .i { color: var(--muted); }
 .menu__item--danger { color: var(--negative); }
 .menu__item--danger .i { color: var(--negative); }
@@ -804,6 +841,15 @@ cc-finger[motion="raise"] .finger__float { animation: finger-raise 1.6s var(--ea
   animation: toast-in var(--t-ui) var(--spring);
 }
 .composer { flex: none; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+.composer__rule {
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 10px;
+  background: var(--accent-tint); color: var(--accent-text); font-size: var(--fs-sm); font-weight: 550;
+  animation: toast-in var(--t-ui) var(--spring);
+}
+.composer.is-locked .composer__box { opacity: .6; }
+.composer__send[data-wait] { width: auto; min-width: var(--control-h-sm); padding: 0 8px; font-family: var(--mono); font-size: var(--fs-xs); }
+.composer__send[data-wait] .i { display: none; }
+.composer__send[data-wait]::after { content: attr(data-wait) 'с'; }
 .composer__to { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--info); padding: 0 6px; font-weight: 550; }
 .composer__box {
   display: flex; align-items: flex-end; gap: 4px; padding: 5px;
@@ -873,6 +919,26 @@ cc-finger[motion="raise"] .finger__float { animation: finger-raise 1.6s var(--ea
 ::view-transition-new(root) { animation: vt-in .38s var(--spring) both; }
 @keyframes vt-out { to { opacity: 0; } }
 @keyframes vt-in { from { opacity: 0; } }
+
+/* ================================================================
+   Облегчённая графика для слабых компьютеров (data-perf на <html>)
+   lite — без размытия стекла, без бесконечных анимаций, тени проще; интерфейс тот же.
+   min  — плюс никаких анимаций и переходов вообще.
+   ================================================================ */
+:root[data-perf] {
+  --glass: var(--surface-solid);
+  --glass-strong: var(--surface-solid);
+  --shadow-1: 0 1px 3px rgba(25, 28, 72, .1);
+  --shadow-2: 0 8px 24px -10px rgba(25, 28, 72, .35);
+}
+:root[data-perf][data-theme="dark"] { --shadow-1: 0 1px 3px rgba(0, 0, 0, .4); --shadow-2: 0 8px 24px -10px rgba(0, 0, 0, .7); }
+:root[data-perf] *, :root[data-perf] *::before, :root[data-perf] *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+:root[data-perf] .overlay { background: color-mix(in srgb, var(--ground) 70%, transparent); }
+:root[data-perf] .hero::before, :root[data-perf] .lock__hero::before { filter: none; opacity: .18; border-radius: 50%; }
+:root[data-perf] cc-finger .finger__float, :root[data-perf] cc-finger .finger__move, :root[data-perf] cc-finger .finger__shadow,
+:root[data-perf] .dot--pulse, :root[data-perf] .skeleton, :root[data-perf] .spinner ~ *, :root[data-perf] #rec-btn .i { animation: none !important; }
+:root[data-perf] cc-finger[motion="raise"] .finger__float { animation: finger-raise 1.6s var(--ease) 2 !important; }
+:root[data-perf="min"] *, :root[data-perf="min"] *::before, :root[data-perf="min"] *::after { animation: none !important; transition: none !important; }
 
 /* ---------- Уважение к настройке «уменьшить движение» ---------- */
 @media (prefers-reduced-motion: reduce) {
