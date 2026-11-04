@@ -1,5 +1,5 @@
 # Установщики для Windows, macOS и Linux — собираются на серверах GitHub.
-# Запуск: вкладка Actions → «Сборка установщиков» → Run workflow (или тег v*, например v2.1.0).
+# Запуск: вкладка Actions → «Сборка установщиков» → Run workflow, тег v* (например v2.1.0) или любой PR.
 # Готовые файлы появятся внизу страницы запуска в разделе Artifacts, а для тега — в Releases.
 name: Сборка установщиков
 
@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
   push:
     tags: ['v*']
+  # Для PR — чтобы установщики можно было скачать и проверить до слияния
+  pull_request:
+    paths-ignore: ['docs/**', '**/*.md']
 
 permissions:
   contents: write
