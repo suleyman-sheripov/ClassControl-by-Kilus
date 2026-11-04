@@ -45,6 +45,8 @@
     codeOk = r.ok;
     if (r.ok) {
       sessionStorage.setItem('cc-code', code);
+      const dl = $('#roster');
+      dl.replaceChildren(...(r.roster || []).map(n => CC.el('option', { value: n })));
       Object.assign(lesson, { teacherName: r.teacherName, roomName: r.roomName, teacherOnline: r.teacherOnline, broadcasting: r.broadcasting });
     } else {
       $('#code').value = code;
@@ -76,6 +78,7 @@
     me.name = name;
     localStorage.setItem('cc-name', name);
     $('#join-btn').disabled = true;
+    $('#taken').classList.add('hidden');
     socket.emit('register-online-user', { name, code, session });
     setTimeout(() => { $('#join-btn').disabled = false; }, 3000);
   });
@@ -85,8 +88,33 @@
     if (/код/i.test(m)) { codeOk = false; me.joined = false; renderJoinLesson(); $('#code').focus(); }
   });
 
+  // Этот человек уже на уроке в другом месте: он пересел или это тёзка?
+  socket.on('name-taken', ({ name, where }) => {
+    $('#join-btn').disabled = false;
+    $('#taken-text').textContent = where === 'дома'
+      ? `${name} уже на уроке с другого устройства. Это вы? Тогда там урок закроется, а продолжится здесь.`
+      : `${name} сейчас на уроке за компьютером «${where}» в классе. Это вы?`;
+    $('#taken').classList.remove('hidden');
+    $('#taken-yes').focus();
+  });
+  $('#taken-yes').addEventListener('click', () => {
+    $('#taken').classList.add('hidden');
+    socket.emit('register-online-user', { name: $('#name').value.trim(), code, session, confirm: true });
+  });
+  $('#taken-no').addEventListener('click', () => {
+    $('#taken').classList.add('hidden');
+    $('#join-error').textContent = 'Добавьте фамилию или первую букву фамилии, чтобы учитель вас различал.';
+    $('#name').focus();
+  });
+  // Этот же ученик продолжил урок в другом месте (пересел за компьютер класса или открыл на другом устройстве)
+  socket.on('moved', () => {
+    leave('Урок продолжается на другом устройстве', 'Вы вошли под этим именем в другом месте, поэтому здесь урок закрыт.');
+  });
+  socket.on('hand-lowered', () => { me.hand = false; renderHand(); });
+
   socket.on('welcome', (w) => {
     me.id = w.id;
+    chat.opts.meKey = w.key;
     me.name = w.name;
     me.joined = true;
     me.uploadToken = w.uploadToken;

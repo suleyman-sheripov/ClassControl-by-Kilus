@@ -37,7 +37,8 @@ const DEFAULTS = {
   allowExit: false,
   shareAudio: true,
   shareMic: false,
-  theme: 'dark'
+  theme: 'dark',
+  rosters: {}                 // кабинет -> список класса
 };
 let settings = { ...DEFAULTS };
 try {
@@ -135,6 +136,7 @@ app.whenReady().then(async () => {
       teacherName: settings.teacherName,
       roomName: settings.roomName,
       lessonCode: settings.lessonCode || undefined,
+      roster: (settings.rosters || {})[settings.roomName] || [],
       log: (...a) => console.log('[SERVER]', ...a)
     });
     // Код урока постоянный для этого учителя: ссылка и QR в кабинете работают каждый день
@@ -176,7 +178,7 @@ ipcMain.handle('save-settings', (e, patch) => {
   const allowed = Object.keys(DEFAULTS);
   for (const k of Object.keys(patch || {})) if (allowed.includes(k)) settings[k] = patch[k];
   saveSettings();
-  if (lessonServer) lessonServer.setLesson({ roomName: settings.roomName, teacherName: settings.teacherName, lessonCode: settings.lessonCode });
+  if (lessonServer) lessonServer.setLesson({ roomName: settings.roomName, teacherName: settings.teacherName, lessonCode: settings.lessonCode, roster: (settings.rosters || {})[settings.roomName] || [] });
   return settings;
 });
 
@@ -287,12 +289,30 @@ function writeReport(snap, boardPng) {
   const dir = path.join(settings.reportDir, `Урок ${stamp}`);
   fs.mkdirSync(dir, { recursive: true });
 
-  // Посещаемость (открывается в Excel)
-  const rows = [['Имя', 'Где', 'Подключился', 'Отключился', 'Минут на уроке']];
+  // Посещаемость по людям: где сидел (с пересадками), сколько был; кто из списка класса не пришёл
+  const rows = [['Ученик', 'Где', 'Пришёл', 'Ушёл', 'Минут на уроке']];
+  const people = new Map();
+  const anonymousSeats = new Set(), namedSeats = new Set();
   for (const a of snap.attendance) {
+    if (a.anonymous) { anonymousSeats.add(a.seat || a.name); continue; }
+    if (a.seat) namedSeats.add(a.seat);
+    const key = String(a.name).toLowerCase().replace(/ё/g, 'е');
+    const p = people.get(key) || { name: a.name, seats: [], from: a.joinedAt, to: 0, ms: 0 };
+    if (!p.seats.length || p.seats[p.seats.length - 1] !== (a.seat || (a.role === 'online' ? 'из дома' : ''))) p.seats.push(a.seat || (a.role === 'online' ? 'из дома' : ''));
     const end = a.leftAt || snap.endedAt;
-    rows.push([a.name, a.role === 'agent' ? 'Компьютер класса' : 'Онлайн', fmt(a.joinedAt), a.leftAt ? fmt(a.leftAt) : 'до конца урока', Math.round((end - a.joinedAt) / 60000)]);
+    p.from = Math.min(p.from, a.joinedAt);
+    p.to = Math.max(p.to, end);
+    p.ms += end - a.joinedAt;
+    people.set(key, p);
   }
+  [...people.values()].sort((x, y) => x.name.localeCompare(y.name, 'ru')).forEach(p => {
+    rows.push([p.name, p.seats.filter(Boolean).join(' → '), fmt(p.from), fmt(p.to), Math.round(p.ms / 60000)]);
+  });
+  for (const n of (snap.roster || [])) {
+    if (!people.has(String(n).toLowerCase().replace(/ё/g, 'е'))) rows.push([n, 'не был на уроке', '', '', 0]);
+  }
+  const silent = [...anonymousSeats].filter(seat => !namedSeats.has(seat));
+  if (silent.length) rows.push(['', 'Компьютеры, за которыми никто не представился: ' + silent.join(', '), '', '', '']);
   fs.writeFileSync(path.join(dir, 'Посещаемость.csv'), '﻿' + rows.map(r => r.map(csvCell).join(';')).join('\r\n'));
 
   // Чат

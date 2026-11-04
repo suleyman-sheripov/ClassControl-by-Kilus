@@ -453,3 +453,4 @@ input, textarea, .msg__body, .row__title { user-select: text; }
   #view-tasks .toolbar__right .btn span { display: none; }
   #view-tasks .toolbar__right .btn { width: var(--control-h-sm); padding: 0; }
 }
+.pc.is-hand .pc__foot { background: var(--accent-tint); }

@@ -117,6 +117,8 @@
     const room = el('input', { class: 'input', value: settings.roomName || '' });
     const recDir = el('input', { class: 'input', value: settings.recordDir || '', readonly: true });
     const repDir = el('input', { class: 'input', value: settings.reportDir || '', readonly: true });
+    const rosterInput = el('textarea', { class: 'textarea', rows: 5, placeholder: 'Иванов Иван\nПетрова Мария' });
+    rosterInput.value = ((settings.rosters || {})[settings.roomName] || []).join('\n');
     const folder = (input) => el('div', { class: 'folder-field' }, input,
       el('button', { class: 'btn', type: 'button', text: 'Выбрать', onclick: async () => { const p = await api.pickFolder(input.value); if (p) input.value = p; } }));
     const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
@@ -124,6 +126,8 @@
         el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Как вас видят ученики' }), name),
         el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Кабинет' }), room)),
       el('p', { class: 'onboard__why', text: 'Компьютеры класса подключаются только к учителю своего кабинета. Если у двух учителей одинаковые названия, ПК могут попасть не к тому учителю.' }),
+      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Список класса (по желанию, один ученик в строке)' }), rosterInput),
+      el('p', { class: 'onboard__why', text: 'Ученики выбирают себя из списка вместо того, чтобы печатать имя, а в отчёте видно, кто отсутствовал.' }),
       el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Записи уроков' }), folder(recDir)),
       el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Отчёты уроков' }), folder(repDir)));
     const saved = await CC.dialog({
@@ -134,7 +138,8 @@
     settings = await api.saveSettings({
       teacherName: name.value.trim() || 'Учитель',
       roomName: room.value.trim() || settings.roomName,
-      recordDir: recDir.value, reportDir: repDir.value
+      recordDir: recDir.value, reportDir: repDir.value,
+      rosters: { ...(settings.rosters || {}), [room.value.trim() || settings.roomName]: rosterInput.value.split('\n').map(x => x.trim()).filter(Boolean) }
     }) || settings;
     $('#room-name').textContent = settings.roomName;
     socket.emit('register-teacher', { token: boot.token, name: settings.teacherName });
@@ -319,13 +324,13 @@
   function renderPeople() {
     const list = $('#people-list');
     list.replaceChildren();
-    const hands = [...S.online.values()].filter(u => u.hand);
+    const hands = [...S.online.values(), ...S.agents.values()].filter(u => u.hand);
     $('#hands-badge').classList.toggle('hidden', !hands.length);
     $('#hands-count').textContent = hands.length;
     updateRightBadge();
 
     if (S.peopleTab === 'class') {
-      const agents = [...S.agents.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
+      const agents = [...S.agents.values()].sort((a, b) => (Boolean(b.hand) - Boolean(a.hand)) || a.name.localeCompare(b.name, 'ru', { numeric: true }));
       if (!agents.length) {
         list.appendChild(el('li', { class: 'empty' }, el('div', { class: 'empty__text', text: 'Пока ни один компьютер класса не подключён.' })));
         return;
@@ -333,12 +338,14 @@
       agents.forEach(a => list.appendChild(el('li', { class: 'row person' },
         el('span', { class: 'avatar', style: { '--av-bg': 'var(--active)', '--av-ink': 'var(--muted)' } }, icon('monitor', 'i-sm')),
         el('div', { class: 'row__main' },
-          el('span', { class: 'row__title', text: a.student ? `${a.student} (${a.name})` : a.name }),
-          el('span', { class: 'row__sub' }, el('span', { class: 'dot ' + (a.locked ? 'dot--warning' : a.idle >= 180 ? '' : 'dot--positive') }),
-            a.locked ? 'заблокирован' : CC.idleText(a.idle || 0))),
+          el('span', { class: 'row__title', text: a.student || 'Не представился' }),
+          el('span', { class: 'row__sub' }, a.hand ? icon('raise', 'i-sm person__hand') : el('span', { class: 'dot ' + (a.locked ? 'dot--warning' : a.idle >= 180 ? '' : 'dot--positive') }),
+            a.hand ? `${a.name}, поднял руку` : `${a.name}, ${a.locked ? 'заблокирован' : CC.idleText(a.idle || 0)}`)),
         el('div', { class: 'row__actions' },
           el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Подключиться', 'aria-label': 'Подключиться', onclick: () => openViewer(a.id) }, icon('pointer', 'i-sm')),
-          el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Написать лично', 'aria-label': 'Написать лично', onclick: () => chat.setRecipient({ id: a.id, name: a.name }) }, icon('chat', 'i-sm'))))));
+          a.hand ? el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Опустить руку', 'aria-label': 'Опустить руку', onclick: () => socket.emit('lower-hand', { id: a.id }) }, icon('check', 'i-sm')) : null,
+          el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Кто сидит за этим ПК', 'aria-label': 'Кто сидит', onclick: () => assignSeat(a.id) }, icon('user', 'i-sm')),
+          el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Написать лично', 'aria-label': 'Написать лично', onclick: () => chat.setRecipient({ id: a.id, name: a.student || a.name }) }, icon('chat', 'i-sm'))))));
       return;
     }
 
@@ -375,12 +382,15 @@
     });
   }
 
-  socket.on('hand-raised', ({ id, name }) => {
-    toast(`${name} поднял руку`, { kind: 'accent', icon: 'raise', action: { label: 'Дать слово', run: () => socket.emit('teacher-voice', { userId: id, on: true }) } });
+  socket.on('hand-raised', ({ id, name, inClass }) => {
+    // В классе слово даёт сам учитель вслух; ученику из дома нужен микрофон
+    toast(`${name} поднял руку`, { kind: 'accent', icon: 'raise', action: inClass
+      ? { label: 'Опустить руку', run: () => socket.emit('lower-hand', { id }) }
+      : { label: 'Дать слово', run: () => socket.emit('teacher-voice', { userId: id, on: true }) } });
   });
 
   function updateRightBadge() {
-    const hands = [...S.online.values()].filter(u => u.hand).length;
+    const hands = [...S.online.values(), ...S.agents.values()].filter(u => u.hand).length;
     const n = hands + (chat ? chat.unseen : 0);
     const b = $('#right-badge');
     b.textContent = n;
@@ -482,6 +492,7 @@
     const nameEl = card.querySelector('.pc__name');
     nameEl.replaceChildren(a.student || a.name);
     if (a.student) nameEl.appendChild(el('span', { class: 'pc__pc', text: a.name }));
+    card.classList.toggle('is-hand', Boolean(a.hand));
     nameEl.title = [a.student, a.name, a.host !== a.name ? a.host : null, a.ip].filter(Boolean).join(', ');
     const idle = a.idle || 0;
     card.querySelector('.pc__status .dot').className = 'dot ' + (a.locked ? 'dot--warning' : idle >= 180 ? '' : 'dot--positive');
@@ -604,6 +615,8 @@
     if (!a) return;
     CC.menu(anchor, [
       { icon: 'pointer', label: 'Подключиться к экрану', run: () => openViewer(id) },
+      { icon: 'user', label: a.student ? 'Пересадить: кто теперь за этим ПК' : 'Кто сидит за этим ПК', run: () => assignSeat(id) },
+      a.student ? { icon: 'x', label: 'Освободить место', run: () => socket.emit('seat-assign', { agentId: id, name: null }) } : null,
       { icon: 'list', label: 'Запущенные программы', run: () => openProcesses(id) },
       { icon: 'bell', label: 'Сообщение на экран', run: () => actMessage([id]) },
       { icon: 'chat', label: 'Написать в чат лично', run: () => chat.setRecipient({ id, name: a.name }) },
@@ -1744,6 +1757,22 @@
   $('#quality').addEventListener('change', renderStudioSummary);
   $('#fps').addEventListener('change', renderStudioSummary);
   renderStudioSummary();
+
+  // ---------- Кто сидит за ПК (учитель пересаживает) ----------
+  async function assignSeat(agentId) {
+    const a = S.agents.get(agentId);
+    if (!a) return;
+    const names = [...new Set([...((settings.rosters || {})[settings.roomName] || []), ...[...S.agents.values()].map(x => x.student).filter(Boolean), ...[...S.online.values()].map(u => u.name)])];
+    const input = el('input', { class: 'input input--lg', list: 'seat-names', placeholder: 'Имя ученика', value: a.student || '' });
+    const list = el('datalist', { id: 'seat-names' }, ...names.map(n => el('option', { value: n })));
+    const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Кто сейчас за ' + a.name }), input, list),
+      el('p', { class: 'onboard__why', text: 'Если этот ученик числится за другим ПК, то другое место освободится: ответы и работы ученика перейдут вместе с ним.' }));
+    const ok = await CC.dialog({ title: a.student ? 'Пересадить' : 'Кто сидит за ПК', body,
+      actions: [{ label: 'Отмена', value: null }, { label: 'Сохранить', kind: 'primary', primary: true, value: () => true }] });
+    if (!ok) return;
+    socket.emit('seat-assign', { agentId, name: input.value.trim() || null });
+  }
 
   // ---------- Клавиатура ----------
   document.addEventListener('keydown', (e) => {

@@ -47,6 +47,9 @@
     });
     socket.on('agent-ready', (d) => {
       api.connectionState({ connected: true, socketId: socket.id, teacherName: d.teacherName, uploadToken: d.uploadToken });
+      api.setRoster(d.roster || []);
+      // Сервер мог не принять имя (этот человек уже сидит в другом месте) — место пустое
+      if (!d.student) api.seatChanged({ student: null, quiet: true });
       api.teacherBack();
       state.broadcast = d.broadcast || { active: false };
       api.setFocus(d.focus || { enabled: false, words: [] });
@@ -117,6 +120,15 @@
     socket.on('collect-request', (collection) => api.task({ type: 'collect', collection }));
     socket.on('collect-closed', (c) => api.task({ type: 'collect-closed', collection: c }));
     socket.on('focus', (f) => api.setFocus(f));
+    socket.on('seat-changed', (d) => {
+      api.seatChanged(d);
+      // Другой человек за ПК — его опрос и сбор работ (ответы прежнего ученика ушли вместе с ним)
+      const act = d.activity || {};
+      api.task({ type: 'reset' });
+      if (act.poll) api.task({ type: 'poll', poll: act.poll });
+      if (act.collection) api.task({ type: 'collect', collection: act.collection });
+    });
+    socket.on('hand-lowered', () => api.handLowered());
     socket.on('clear-canvas', () => {});
   }
 
@@ -130,7 +142,11 @@
   api.onControlResult((r) => socket && socket.emit('agent-control-result', r));
   api.onAgentStatus((s) => socket && socket.emit('agent-status', s));
   // Окна агента (опрос, «Фокус») отправляют события через это подключение — от имени ПК
-  const ALLOWED = new Set(['poll-answer', 'focus-violation', 'agent-student']);
+  const ALLOWED = new Set(['poll-answer', 'focus-violation', 'raise-hand']);
+  api.onIntroduce(({ name, confirm }) => {
+    if (!socket || !socket.connected) return api.introduceResult({ ok: false });
+    socket.emit('agent-student', { student: name, confirm }, (r) => api.introduceResult(r));
+  });
   api.onSocketEmit(({ event, data }) => { if (ALLOWED.has(event) && socket && socket.connected) socket.emit(event, data); });
 
   // ---------- Скриншоты ----------

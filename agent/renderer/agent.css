@@ -66,3 +66,7 @@ body.transparent { background: transparent; }
 
 /* «Кто за компьютером?» */
 .hello__body { flex: 1; padding: 14px 16px; }
+
+.hello__taken { margin-top: 12px; padding: 12px; border-radius: var(--r-control); background: var(--accent-tint); }
+.hello__q { margin: 0 0 10px; font-size: var(--fs-body); line-height: 1.5; }
+.hello__actions { display: flex; gap: 8px; flex-wrap: wrap; }

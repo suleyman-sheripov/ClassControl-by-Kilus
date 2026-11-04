@@ -294,6 +294,9 @@
         this.input.placeholder = this.opts.placeholder || 'Сообщение для всех…';
       }
     }
+    isMine(m) {
+      return (this.opts.meKey && m.senderKey === this.opts.meKey) || (this.opts.meId && m.senderId === this.opts.meId);
+    }
     nearEnd() { return this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 60; }
     scrollToEnd(force) {
       if (force || this.nearEnd()) {
@@ -322,7 +325,7 @@
       const node = m.type === 'system' ? CC.el('div', { class: 'msg msg--system', text: m.text }) : this.renderMessage(m);
       this.list.appendChild(node);
       if (silent) return;
-      const mine = m.senderId === this.opts.meId;
+      const mine = this.isMine(m);
       if (stick || mine) this.scrollToEnd(true);
       else this.newBtn.classList.remove('hidden');
       const hidden = !document.hasFocus() || this.root.offsetParent === null;
@@ -330,19 +333,20 @@
     }
     renderMessage(m) {
       const isTeacher = m.role === 'teacher';
-      const cont = this.last && this.last.senderId === m.senderId && m.ts - this.last.ts < 3 * 60000 &&
+      const cont = this.last && (this.last.senderKey || this.last.senderId) === (m.senderKey || m.senderId) && m.ts - this.last.ts < 3 * 60000 &&
         (this.last.to || null) === (m.to || null) && this.last.type !== 'system';
       this.last = m;
       const nameNode = CC.el('span', { class: 'msg__name', text: m.sender });
       if (!isTeacher) nameNode.style.color = CC.tint(m.sender).ink;
-      if (this.opts.canWhisper && m.senderId !== this.opts.meId && !isTeacher) {
+      if (this.opts.canWhisper && !this.isMine(m) && !isTeacher) {
         nameNode.style.cursor = 'pointer';
         nameNode.title = 'Написать лично';
-        nameNode.addEventListener('click', () => this.setRecipient({ id: m.senderId, name: m.sender }));
+        // Пишем человеку, а не компьютеру: если он пересел, письмо найдёт его на новом месте
+        nameNode.addEventListener('click', () => this.setRecipient({ id: m.senderKey || m.senderId, name: m.sender }));
       }
       const body = CC.el('div', { class: 'msg__body' });
       if (m.to) {
-        const label = m.senderId === this.opts.meId ? 'лично для ' + (m.toName || 'учителя') : 'лично вам';
+        const label = this.isMine(m) ? 'лично для ' + (m.toName || 'учителя') : 'лично вам';
         body.appendChild(CC.el('div', { class: 'msg__private' }, CC.icon('lock', 'i-sm'), CC.el('span', { text: this.opts.teacherView && m.senderId !== this.opts.meId ? 'лично учителю' : label })));
       }
       if (m.type === 'file') body.appendChild(this.renderFile(m));

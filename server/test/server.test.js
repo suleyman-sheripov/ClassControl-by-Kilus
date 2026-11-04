@@ -83,11 +83,18 @@ test('имя в чате берётся с сервера, а не из сооб
     assert.equal(msg.text, 'привет <b>');
 });
 
-test('одинаковые имена получают номер', async () => {
+test('тёзка: сервер спрашивает «это вы пересели?», а не создаёт второго', async () => {
     const a = await online('Оля');
-    const b = await online('Оля');
-    assert.equal(a.w.name, 'Оля');
-    assert.equal(b.w.name, 'Оля 2');
+    const b = client();
+    await once(b, 'connect');
+    b.emit('register-online-user', { name: 'оля', code: srv.lessonCode });
+    const taken = await once(b, 'name-taken');
+    assert.equal(taken.name, 'Оля');
+    // «Это я, пересела» — прежнее подключение закрывается с пояснением
+    const moved = once(a.u, 'moved');
+    b.emit('register-online-user', { name: 'Оля', code: srv.lessonCode, confirm: true });
+    await once(b, 'welcome');
+    await moved;
 });
 
 test('личное сообщение видят только двое', async () => {
@@ -98,7 +105,7 @@ test('личное сообщение видят только двое', async (
     const silent = nothing(other, 'chat-message');
     t.emit('chat-message', { text: 'зайди после урока', to: w.id });
     const msg = await got;
-    assert.equal(msg.to, w.id);
+    assert.equal(msg.toKey, w.key);
     await silent;
 });
 

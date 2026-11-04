@@ -481,19 +481,50 @@ function openHello() {
   if (helloWindow && !helloWindow.isDestroyed()) { helloWindow.show(); helloWindow.focus(); return; }
   const { workArea } = screen.getPrimaryDisplay();
   helloWindow = new BrowserWindow({
-    width: 400, height: 270, x: Math.round(workArea.x + workArea.width / 2 - 200), y: Math.round(workArea.y + workArea.height / 3 - 135),
+    width: 420, height: 380, x: Math.round(workArea.x + workArea.width / 2 - 210), y: Math.round(workArea.y + workArea.height / 3 - 190),
     frame: false, resizable: false, alwaysOnTop: true, backgroundColor: '#131916', title: 'Кто за компьютером?', webPreferences: webPrefs()
   });
   helloWindow.loadFile(page('hello.html'));
   helloWindow.on('closed', () => { helloWindow = null; });
 }
-ipcMain.on('set-student', (e, name) => {
+// Ученик представляется: сервер может спросить «вы пересели с другого места?»
+ipcMain.on('set-student', (e, { name, confirm } = {}) => {
   const clean = String(name || '').trim().slice(0, 40);
-  studentName = clean || null;
-  if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('socket-emit', { event: 'agent-student', data: { student: studentName } });
-  if (helloWindow && !helloWindow.isDestroyed()) helloWindow.close();
-  sendAll('connection-state', { connected, teacherName, socketId: agentSocketId, student: studentName });
+  if (!clean) { if (helloWindow && !helloWindow.isDestroyed()) helloWindow.close(); return; }
+  if (!connected) {
+    // Связи нет — запомним, сервер узнает при подключении
+    studentName = clean;
+    if (helloWindow && !helloWindow.isDestroyed()) helloWindow.close();
+    return;
+  }
+  if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('introduce', { name: clean, confirm: Boolean(confirm) });
 });
+ipcMain.on('introduce-result', (e, r) => {
+  if (r && r.ok) {
+    studentName = r.student || null;
+    if (helloWindow && !helloWindow.isDestroyed()) helloWindow.close();
+    sendAll('connection-state', { connected, teacherName, socketId: agentSocketId, student: studentName });
+  } else if (r && r.taken && helloWindow && !helloWindow.isDestroyed()) {
+    helloWindow.webContents.send('hello-taken', { name: r.name, where: r.where });
+  }
+});
+// Место освободили (ученик пересел или учитель пересадил) — новый человек за ПК представится
+ipcMain.on('seat-changed', (e, d) => {
+  if (d.quiet && !studentName) return;
+  studentName = d.student || null;
+  sendAll('connection-state', { connected, teacherName, socketId: agentSocketId, student: studentName });
+  if (!studentName) { studentAsked = true; openHello(); }
+  else if (helloWindow && !helloWindow.isDestroyed()) helloWindow.close();
+});
+let classRoster = [];
+ipcMain.on('roster', (e, list) => { classRoster = Array.isArray(list) ? list : []; });
+ipcMain.handle('get-roster', () => classRoster);
+// Окна агента (беседа) отправляют события через подключение фонового окна
+ipcMain.on('socket-emit-out', (e, msg) => {
+  if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('socket-emit', msg);
+  if (msg.event === 'raise-hand') sendAll('hand-state', Boolean(msg.data));
+});
+ipcMain.on('hand-lowered', () => sendAll('hand-state', false));
 ipcMain.on('hello-skip', () => { if (helloWindow && !helloWindow.isDestroyed()) helloWindow.close(); });
 ipcMain.on('open-hello', openHello);
 
@@ -642,6 +673,7 @@ function updateTray() {
   tray.setContextMenu(Menu.buildFromTemplate(items));
 }
 ipcMain.on('task', (e, t) => {
+  if (t.type === 'reset') { currentTasks = { poll: null, collect: null }; if (taskWindow && !taskWindow.isDestroyed()) taskWindow.close(); }
   if (t.type === 'poll') { currentTasks.poll = { ...t.poll, open: true }; openTaskWindow(); }
   if (t.type === 'poll-closed') {
     if (currentTasks.poll && currentTasks.poll.id === t.poll.id) {

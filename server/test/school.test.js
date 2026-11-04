@@ -157,7 +157,7 @@ test('имя ученика за компьютером класса идёт в
     a.emit('chat-message', { text: 'готово' });
     assert.equal((await got).sender, 'Иван Петров (ПК-07)');
     const snap = srv.getLessonSnapshot();
-    assert.ok(snap.attendance.some(x => x.name === 'Иван Петров (ПК-07)'));
+    assert.ok(snap.attendance.some(x => x.name === 'Иван Петров' && x.seat === 'ПК-07'));
 });
 
 test('доска переживает перезапуск, а вчерашний урок уходит в отчёт', async () => {
@@ -192,4 +192,90 @@ test('доска переживает перезапуск, а вчерашни�
     assert.ok(prev && prev.chat.some(m => m.text === 'было на уроке'), 'прошлый урок доступен для отчёта');
     assert.equal(prev.strokes.length, 50);
     await s3.close();
+});
+
+test('ученика пересадили: ответы, работы и личные сообщения идут за ним, а не остаются у ПК', async () => {
+    const srv = await server({ port: 3920, roster: ['Иван Петров', 'Мария Козлова'] });
+    const t = await teacher(srv, 'Учитель');
+    let activity = t.ready.activity, roster = null;
+    t.on('activity', a => { activity = a; });
+    t.on('roster', r => { roster = r; });
+    const pc = async (host) => {
+        const a = client(srv);
+        await once(a, 'connect');
+        a.emit('register-agent', { hostname: host, name: host });
+        a.ready = await once(a, 'agent-ready');
+        return a;
+    };
+    const pc7 = await pc('ПК-07');
+    const pc12 = await pc('ПК-12');
+    assert.deepEqual(pc7.ready.roster, ['Иван Петров', 'Мария Козлова'], 'агент получил список класса');
+
+    // Иван представился на ПК-07 (с опечаткой в регистре — подхватится имя из списка класса)
+    const r1 = await new Promise(r => pc7.emit('agent-student', { student: 'иван петров' }, r));
+    assert.equal(r1.student, 'Иван Петров');
+    t.emit('poll-start', { question: '2+2?', options: ['3', '4'] });
+    const poll = await once(pc7, 'poll');
+    pc7.emit('poll-answer', { id: poll.id, option: 1 });
+    await until(() => activity.polls[0] && activity.polls[0].total === 1);
+    t.emit('chat-message', { text: 'Иван, зайди после урока', to: pc7.id });
+    await once(pc7, 'chat-message');
+
+    // Учитель отсаживает: Иван садится за ПК-12 и представляется там
+    const r2 = await new Promise(r => pc12.emit('agent-student', { student: 'Иван Петров' }, r));
+    assert.equal(r2.ok, false);
+    assert.equal(r2.where, 'ПК-07', 'система спрашивает: вы пересели с ПК-07?');
+    const freed = once(pc7, 'seat-changed');
+    const r3 = await new Promise(r => pc12.emit('agent-student', { student: 'Иван Петров', confirm: true }, r));
+    assert.equal(r3.ok, true);
+    assert.equal((await freed).student, null, 'ПК-07 освободился');
+    await until(() => roster && roster.agents.find(a => a.name === 'ПК-12').student === 'Иван Петров' && !roster.agents.find(a => a.name === 'ПК-07').student);
+
+    // Его ответ остался его ответом: переголосовал с ПК-12 — голос всё равно один
+    pc12.emit('poll-answer', { id: poll.id, option: 0 });
+    await until(() => activity.polls[0].counts[0] === 1);
+    assert.equal(activity.polls[0].total, 1);
+    // Личное сообщение видно Ивану на новом месте и не видно тому, кто сядет на ПК-07
+    const hist12 = await new Promise(r => { pc12.once('chat-history', r); pc12.emit('request-chat-history'); });
+    assert.ok(hist12.some(m => m.text === 'Иван, зайди после урока'));
+    const hist7 = await new Promise(r => { pc7.once('chat-history', r); pc7.emit('request-chat-history'); });
+    assert.ok(!hist7.some(m => m.text === 'Иван, зайди после урока'));
+    // Учитель пишет Ивану лично по его старому сообщению — письмо найдёт его на ПК-12
+    const got = once(pc12, 'chat-message');
+    t.emit('chat-message', { text: 'вижу, пересел', to: 'p:иван петров' });
+    assert.equal((await got).text, 'вижу, пересел');
+
+    // Учитель сам сажает Марию за ПК-07
+    const seated = once(pc7, 'seat-changed');
+    t.emit('seat-assign', { agentId: pc7.id, name: 'мария козлова' });
+    assert.equal((await seated).student, 'Мария Козлова');
+
+    // Посещаемость — по людям, с местами
+    const att = srv.getLessonSnapshot().attendance;
+    const ivan = att.filter(x => x.name === 'Иван Петров').map(x => x.seat);
+    assert.deepEqual(ivan, ['ПК-07', 'ПК-12']);
+
+    // Рука у ученика в классе
+    const hand = once(t, 'hand-raised');
+    pc12.emit('raise-hand', true);
+    const h = await hand;
+    assert.equal(h.inClass, true);
+});
+
+test('ученик пришёл из дома в класс посреди урока — это тот же человек', async () => {
+    const srv = await server({ port: 3921 });
+    const t = await teacher(srv, 'Учитель');
+    const home = client(srv);
+    await once(home, 'connect');
+    home.emit('register-online-user', { name: 'Саша Белов', code: srv.lessonCode });
+    await once(home, 'welcome');
+    const pc = client(srv);
+    await once(pc, 'connect');
+    pc.emit('register-agent', { hostname: 'ПК-03', name: 'ПК-03' });
+    await once(pc, 'agent-ready');
+    const r = await new Promise(res => pc.emit('agent-student', { student: 'Саша Белов' }, res));
+    assert.equal(r.where, 'дома');
+    const moved = once(home, 'moved');
+    await new Promise(res => pc.emit('agent-student', { student: 'Саша Белов', confirm: true }, res));
+    await moved;
 });

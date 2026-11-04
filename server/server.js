@@ -38,6 +38,8 @@ function makeLessonCode() {
 function normCode(c) { return String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); }
 function normRoom(r) { return String(r || '').trim().toLowerCase().replace(/\s+/g, ' '); }
 function round5(n) { return Math.round(n * 1e5) / 1e5; }
+/** Ключ человека: одно и то же имя — один и тот же ученик, где бы он ни сидел. */
+function personKey(name) { return 'p:' + String(name || '').trim().toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' '); }
 const MAX_STROKES = 60000;
 const MAX_CHAT = 500;
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
@@ -180,6 +182,7 @@ function start(options = {}) {
         teacherId: null,
         teacherName: options.teacherName || 'Учитель',
         roomName: cleanText(options.roomName, 60),
+        roster: Array.isArray(options.roster) ? options.roster.map(n => cleanText(n, 40)).filter(Boolean) : [],
         lessonCode: normCode(options.lessonCode) || makeLessonCode(),
         previousLesson: null,
         agents: new Map(),        // socketId -> { id, name, host, ip, idle, locked, since }
@@ -519,7 +522,8 @@ function start(options = {}) {
             collections: state.collections.map(c => ({ id: c.id, title: c.title, open: c.open, createdAt: c.createdAt, dir: path.join(worksDir, c.id), submissions: c.submissions.map(({ key, ...rest }) => rest) })),
             assignments: state.assignments,
             focus: state.focus,
-            students: [...agentList().map(a => ({ name: agentDisplayName(a), role: 'agent' })), ...onlineList().map(u => ({ name: u.name, role: 'online' }))]
+            students: [...agentList().map(a => ({ name: a.student || a.name, seat: a.name, anonymous: !a.student, role: 'agent' })), ...onlineList().map(u => ({ name: u.name, seat: 'из дома', role: 'online' }))],
+            roster: state.roster
         };
     }
 
@@ -610,15 +614,20 @@ function start(options = {}) {
         if (to) {
             // Личные сообщения: ученик — только учителю, учитель — любому
             if (who.role !== 'teacher') to = 'teacher';
-            const target = to === 'teacher' ? null : io.sockets.sockets.get(to);
-            if (to !== 'teacher' && !target) return null;
-            msg.to = to;
-            msg.toKey = to === 'teacher' ? 'teacher' : target.data.key;
-            msg.toName = to === 'teacher' ? state.teacherName : (identity(target) || {}).name || '';
+            let toKey = 'teacher', target = null;
+            if (to !== 'teacher') {
+                // Адресат — человек (его ключ) или подключение; пишем человеку, где бы он сейчас ни сидел
+                const direct = io.sockets.sockets.get(to);
+                toKey = direct ? direct.data.key : to;
+                if (!toKey || !/^(p|pc):/.test(toKey)) return null;
+                target = holderOf(toKey);
+            }
+            msg.to = toKey;
+            msg.toKey = toKey;
+            msg.toName = toKey === 'teacher' ? state.teacherName : (target ? (identity(target) || {}).name : (state.chat.find(m => m.senderKey === toKey) || {}).sender) || '';
             socket.emit('chat-message', msg);
-            if (to === 'teacher') toTeacher('chat-message', msg);
-            else target.emit('chat-message', msg);
-            if (who.role !== 'teacher' && to !== 'teacher') toTeacher('chat-message', msg);
+            if (toKey === 'teacher') toTeacher('chat-message', msg);
+            else if (target) target.emit('chat-message', msg);
         } else {
             io.emit('chat-message', msg);
         }
@@ -635,22 +644,70 @@ function start(options = {}) {
         persist();
     }
 
-    function attendanceJoin(name, role) {
-        const entry = { name, role, joinedAt: Date.now(), leftAt: null };
+    function attendanceJoin(name, role, seat, anonymous) {
+        const entry = { name, role, seat: seat || (role === 'online' ? 'из дома' : ''), anonymous: Boolean(anonymous), joinedAt: Date.now(), leftAt: null };
         state.attendance.push(entry);
         persist();
         return entry;
     }
 
-    function uniqueOnlineName(name, exceptSession) {
-        const taken = new Set(onlineList().filter(u => u.session !== exceptSession).map(u => u.name.toLowerCase()));
-        if (!taken.has(name.toLowerCase())) return name;
-        for (let i = 2; i < 100; i++) {
-            const candidate = `${name} ${i}`;
-            if (!taken.has(candidate.toLowerCase())) return candidate;
-        }
-        return name + ' ' + crypto.randomBytes(2).toString('hex');
+    function attendanceLeave(socket) {
+        const e = socket.data.attendance;
+        if (e && !e.leftAt) { e.leftAt = Date.now(); persist(); }
+        socket.data.attendance = null;
     }
+
+    // ---------- Человек и место ----------
+    // Место — компьютер класса или устройство ученика дома. Человек может пересесть,
+    // а его ответы, работы, личные сообщения и посещаемость идут за ним.
+    function canonicalName(name) {
+        const key = personKey(name);
+        const fromRoster = state.roster.find(n => personKey(n) === key);
+        return fromRoster || name;
+    }
+
+    /** Кто из подключённых сейчас «является» этим человеком. */
+    function holderOf(key, exceptId) {
+        for (const sk of io.sockets.sockets.values()) {
+            if (sk.id === exceptId || sk.data.replaced) continue;
+            if ((sk.data.role === 'agent' || sk.data.role === 'online') && sk.data.key === key) return sk;
+        }
+        return null;
+    }
+
+    function seatLabel(sk) {
+        if (sk.data.role === 'agent') { const a = state.agents.get(sk.id); return a ? a.name : 'компьютер класса'; }
+        return 'дома';
+    }
+
+    /** Человек ушёл с этого места (пересел): место освобождается. */
+    function vacate(sk, reason) {
+        if (sk.data.role === 'agent') {
+            setSeat(sk, null, reason);
+        } else if (sk.data.role === 'online') {
+            const u = state.online.get(sk.id);
+            attendanceLeave(sk);
+            state.online.delete(sk.id);
+            sk.data.replaced = true;
+            if (u && u.sharing) { clearShareTimer(sk.id); toTeacher('online-user-stopped-sharing', { userId: sk.id }); }
+            toTeacher('peer-gone', { id: sk.id });
+            sk.emit('moved', { reason });
+            setTimeout(() => sk.disconnect(true), 300);
+        }
+    }
+
+    /** Посадить человека (или никого) за компьютер класса. */
+    function setSeat(sk, name, reason) {
+        const a = state.agents.get(sk.id);
+        if (!a) return;
+        attendanceLeave(sk);
+        a.student = name || null;
+        a.hand = false;
+        sk.data.key = name ? personKey(name) : 'pc:' + a.host;
+        sk.data.attendance = attendanceJoin(name || a.name, 'agent', a.name, !name);
+        sk.emit('seat-changed', { student: a.student, reason: reason || null, activity: studentActivity(sk) });
+    }
+
 
     function boardState() {
         return {
@@ -698,7 +755,7 @@ function start(options = {}) {
             if (typeof reply !== 'function') return;
             if (!allow(`code:${socket.data.ip}`, 20, 60000)) return reply({ ok: false, error: 'Слишком много попыток. Подождите минуту.' });
             if (normCode(code) !== state.lessonCode) return reply({ ok: false, error: 'Неверный код урока' });
-            reply({ ok: true, ...lessonInfo() });
+            reply({ ok: true, ...lessonInfo(), roster: state.roster });
         });
 
         // --- Регистрация ---
@@ -754,11 +811,17 @@ function start(options = {}) {
                 }
             }
             socket.data.role = 'agent';
-            socket.data.key = 'pc:' + host;
+            let student = cleanText(payload.student, 40) ? canonicalName(cleanText(payload.student, 40)) : null;
+            if (student) {
+                // Агент помнит, кто за ним сидел. Если этот человек уже пересел за другое место — не отбираем
+                if (holderOf(personKey(student), socket.id)) student = null;
+            }
+            socket.data.key = student ? personKey(student) : 'pc:' + host;
             const agent = {
                 id: socket.id,
                 name: cleanText(payload.name, 40) || host,
-                student: cleanText(payload.student, 40) || null,
+                student,
+                hand: false,
                 room: room || null,
                 host,
                 ip: socket.data.ip,
@@ -769,10 +832,12 @@ function start(options = {}) {
             };
             state.agents.set(socket.id, agent);
             state.knownAgents.set(host, { host, name: agent.name, ip: agent.ip, lastSeen: Date.now() });
-            socket.data.attendance = attendanceJoin(agentDisplayName(agent), 'agent');
+            socket.data.attendance = attendanceJoin(student || agent.name, 'agent', agent.name, !student);
             socket.emit('agent-ready', {
                 uploadToken: socket.data.uploadToken,
                 roomName: state.roomName,
+                roster: state.roster,
+                student,
                 teacherName: state.teacherName,
                 broadcast: state.broadcast,
                 monitoring: true,
@@ -797,12 +862,13 @@ function start(options = {}) {
                 socket.emit('join-error', 'Неверный код урока. Проверьте ссылку от учителя.');
                 return;
             }
-            const raw = cleanText(payload.name, 40);
-            if (!raw) {
+            const raw0 = cleanText(payload.name, 40);
+            if (!raw0) {
                 socket.emit('join-error', 'Введите имя');
                 return;
             }
             if (socket.data.role === 'online') return;
+            const raw = canonicalName(raw0);
             // Переподключение после обрыва связи: тот же ученик, то же имя, те же ответы
             const session = /^[a-z0-9]{12,48}$/i.test(String(payload.session || '')) ? String(payload.session) : crypto.randomBytes(12).toString('hex');
             for (const [id, u] of state.online) {
@@ -814,12 +880,22 @@ function start(options = {}) {
                     toTeacher('peer-gone', { id });
                 }
             }
+            // Такой человек уже на уроке в другом месте: это он пересел или другой человек с тем же именем?
+            const key = personKey(raw);
+            const holder = holderOf(key, socket.id);
+            const heldName = holder ? ((state.online.get(holder.id) || {}).name || (state.agents.get(holder.id) || {}).student) : null;
+            if (holder && !payload.confirm) {
+                socket.emit('name-taken', { name: heldName || raw, where: seatLabel(holder) });
+                return;
+            }
+            if (holder) vacate(holder, 'moved');
+            const finalName = heldName || raw;
             socket.data.role = 'online';
-            socket.data.key = 'web:' + session;
+            socket.data.key = key;
             const user = {
                 id: socket.id,
                 session,
-                name: uniqueOnlineName(raw, session),
+                name: finalName,
                 hand: false,
                 voice: false,
                 sharing: false,
@@ -827,9 +903,10 @@ function start(options = {}) {
                 remote: socket.data.tunneled
             };
             state.online.set(socket.id, user);
-            socket.data.attendance = attendanceJoin(user.name, 'online');
+            socket.data.attendance = attendanceJoin(user.name, 'online', 'из дома');
             socket.emit('welcome', {
                 id: socket.id,
+                key,
                 session,
                 uploadToken: socket.data.uploadToken,
                 roomName: state.roomName,
@@ -1072,11 +1149,20 @@ function start(options = {}) {
 
         // --- Онлайн-участник: рука, голос, показ экрана ---
         socket.on('raise-hand', (up) => {
-            const user = state.online.get(socket.id);
-            if (!user) return;
-            user.hand = Boolean(up);
+            const who = identity(socket);
+            const item = state.online.get(socket.id) || state.agents.get(socket.id);
+            if (!who || !item) return;
+            item.hand = Boolean(up);
             pushRoster();
-            if (user.hand) toTeacher('hand-raised', { id: user.id, name: user.name });
+            if (item.hand) toTeacher('hand-raised', { id: socket.id, name: who.name, inClass: socket.data.role === 'agent' });
+        });
+        socket.on('lower-hand', (data = {}) => {
+            if (socket.data.role !== 'teacher') return;
+            const item = state.online.get(data.id) || state.agents.get(data.id);
+            if (!item) return;
+            item.hand = false;
+            io.to(data.id).emit('hand-lowered');
+            pushRoster();
         });
 
         socket.on('teacher-voice', (data = {}) => {
@@ -1248,21 +1334,34 @@ function start(options = {}) {
         });
 
         // Ученик представился на компьютере класса
-        socket.on('agent-student', (data = {}) => {
-            if (socket.data.role !== 'agent') return;
+        socket.on('agent-student', (data = {}, ack) => {
+            const reply = typeof ack === 'function' ? ack : () => {};
+            if (socket.data.role !== 'agent') return reply({ ok: false });
             const agent = state.agents.get(socket.id);
-            if (!agent) return;
-            agent.student = cleanText(data.student, 40) || null;
-            if (socket.data.attendance) {
-                // Новый человек за тем же ПК — новая строка посещаемости
-                const prev = socket.data.attendance;
-                if (prev.name !== agentDisplayName(agent)) {
-                    if (prev.name === agent.name && !prev.renamed) { prev.name = agentDisplayName(agent); prev.renamed = true; }
-                    else { prev.leftAt = Date.now(); socket.data.attendance = attendanceJoin(agentDisplayName(agent), 'agent'); }
-                }
-            }
+            if (!agent) return reply({ ok: false });
+            const name = cleanText(data.student, 40) ? canonicalName(cleanText(data.student, 40)) : null;
+            if (!name) { setSeat(socket, null); pushRoster(); return reply({ ok: true, student: null }); }
+            if (agent.student && personKey(agent.student) === personKey(name)) return reply({ ok: true, student: agent.student });
+            const holder = holderOf(personKey(name), socket.id);
+            if (holder && !data.confirm) return reply({ ok: false, taken: true, name, where: seatLabel(holder) });
+            if (holder) vacate(holder, 'moved');
+            setSeat(socket, name);
             pushRoster();
-            persist();
+            reply({ ok: true, student: name });
+        });
+
+        // Учитель сам пересаживает: «кто сидит за этим ПК» / «освободить место»
+        socket.on('seat-assign', (data = {}) => {
+            if (socket.data.role !== 'teacher') return;
+            const sk = io.sockets.sockets.get(String(data.agentId || ''));
+            if (!sk || sk.data.role !== 'agent') return;
+            const name = cleanText(data.name, 40) ? canonicalName(cleanText(data.name, 40)) : null;
+            if (name) {
+                const holder = holderOf(personKey(name), sk.id);
+                if (holder) vacate(holder, 'teacher');
+            }
+            setSeat(sk, name, 'teacher');
+            pushRoster();
         });
 
         // Закрепить подключённые ПК за кабинетом учителя (только те, что ещё ни за кем не закреплены)
@@ -1294,10 +1393,7 @@ function start(options = {}) {
 
         // --- Отключение ---
         socket.on('disconnect', () => {
-            if (socket.data.attendance) {
-                socket.data.attendance.leftAt = Date.now();
-                persist();
-            }
+            attendanceLeave(socket);
             clearShareTimer(socket.id);
             const role = socket.data.role;
             if (role === 'teacher' && state.teacherId === socket.id) {
@@ -1346,7 +1442,9 @@ function start(options = {}) {
         state.attendance = [];
         for (const s of io.sockets.sockets.values()) {
             const who = identity(s);
-            if (who && who.role !== 'teacher') s.data.attendance = attendanceJoin(who.name, who.role);
+            if (!who || who.role === 'teacher') continue;
+            const ag = state.agents.get(s.id);
+            s.data.attendance = ag ? attendanceJoin(ag.student || ag.name, 'agent', ag.name, !ag.student) : attendanceJoin(who.name, 'online', 'из дома');
         }
         io.emit('clear-canvas');
         io.emit('chat-history', []);
@@ -1362,6 +1460,7 @@ function start(options = {}) {
             lessonStartedAt: state.lessonStartedAt,
             endedAt: Date.now(),
             roomName: state.roomName,
+            roster: state.roster.slice(),
             chat: state.chat.slice(),
             attendance: state.attendance.map(a => ({ ...a })),
             polls: state.polls.map(p => pollView(p, true)),
@@ -1447,7 +1546,8 @@ function start(options = {}) {
                     getLessonSnapshot,
                     worksDir,
                     get lessonCode() { return state.lessonCode; },
-                    setLesson({ roomName, teacherName, lessonCode } = {}) {
+                    setLesson({ roomName, teacherName, lessonCode, roster } = {}) {
+                        if (Array.isArray(roster)) state.roster = roster.map(n => cleanText(n, 40)).filter(Boolean).slice(0, 200);
                         if (roomName !== undefined) state.roomName = cleanText(roomName, 60);
                         if (teacherName) state.teacherName = cleanText(teacherName, 40);
                         if (lessonCode) state.lessonCode = normCode(lessonCode);

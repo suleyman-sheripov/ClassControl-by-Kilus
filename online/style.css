@@ -23,6 +23,10 @@ body { overflow: hidden; }
 .join__lesson { margin: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--fs-body); }
 .join__hint { margin: 0; color: var(--faint); font-size: var(--fs-sm); line-height: 1.55; }
 
+.taken { padding: 12px; border-radius: var(--r-control); background: var(--accent-tint); }
+.taken__q { margin: 0 0 10px; font-size: var(--fs-body); line-height: 1.5; }
+.taken__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
 /* ---------- Урок ---------- */
 .lesson { height: 100%; display: grid; grid-template-rows: 52px 1fr; }
 .head {

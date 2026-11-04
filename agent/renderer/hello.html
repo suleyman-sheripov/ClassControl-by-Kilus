@@ -16,8 +16,16 @@
     <div class="hello__body">
       <label class="field">
         <span class="field__label">Как вас зовут? Учитель увидит имя рядом с этим компьютером</span>
-        <input class="input input--lg" id="name" maxlength="40" placeholder="Имя и фамилия" autocomplete="off" autofocus>
+        <input class="input input--lg" id="name" maxlength="40" placeholder="Имя и фамилия" autocomplete="off" list="roster" autofocus>
+        <datalist id="roster"></datalist>
       </label>
+      <div class="hello__taken hidden" id="taken">
+        <p class="hello__q" id="taken-text"></p>
+        <div class="hello__actions">
+          <button class="btn btn--primary" id="yes" type="button">Да, я пересел сюда</button>
+          <button class="btn" id="no" type="button">Нет, это другой человек</button>
+        </div>
+      </div>
     </div>
     <div class="note-win__foot">
       <button class="btn btn--ghost" id="skip" type="button" style="margin-right:8px">Пропустить</button>

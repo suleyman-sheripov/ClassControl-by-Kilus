@@ -22,11 +22,17 @@
   // «Это я»: ученик может представиться, и учитель увидит его имя у этого ПК
   const meBtn = CC.el('button', { class: 'icon-btn', type: 'button', title: 'Представиться', 'aria-label': 'Представиться' }, CC.icon('user'));
   meBtn.addEventListener('click', () => api.openHello());
-  document.querySelector('.chat-head').append(meBtn, toTeacher);
+  // Ученик в классе может поднять руку так же, как ученик из дома
+  let hand = false;
+  const handBtn = CC.el('button', { class: 'icon-btn', type: 'button', title: 'Поднять руку', 'aria-label': 'Поднять руку', 'aria-pressed': 'false' }, CC.icon('raise'));
+  const renderHand = () => { handBtn.classList.toggle('is-on', hand); handBtn.title = hand ? 'Опустить руку' : 'Поднять руку'; handBtn.setAttribute('aria-pressed', String(hand)); };
+  handBtn.addEventListener('click', () => { hand = !hand; api.raiseHand(hand); renderHand(); });
+  api.onHand((v) => { hand = v; renderHand(); });
+  document.querySelector('.chat-head').append(handBtn, meBtn, toTeacher);
 
   function render(s) {
     document.getElementById('dot').className = 'dot ' + (s.connected ? 'dot--positive' : 'dot--warning dot--pulse');
-    document.getElementById('status').textContent = s.connected ? `На связи · ${s.teacherName || 'учитель'}` : 'Ищу учителя в сети…';
+    document.getElementById('status').textContent = s.connected ? `${s.teacherName || 'Учитель'} на связи` + (s.student ? `, вы: ${s.student}` : '') : 'Ищу учителя в сети…';
     chat.input.disabled = !s.connected;
   }
   render(info);

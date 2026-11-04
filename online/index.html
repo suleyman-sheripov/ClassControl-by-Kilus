@@ -30,8 +30,16 @@
       </label>
       <label class="field">
         <span class="field__label">Как вас зовут</span>
-        <input class="input input--lg" id="name" name="name" maxlength="40" placeholder="Имя и фамилия" autocomplete="name" required>
+        <input class="input input--lg" id="name" name="name" maxlength="40" placeholder="Имя и фамилия" autocomplete="name" list="roster" required>
+        <datalist id="roster"></datalist>
       </label>
+      <div class="taken hidden" id="taken">
+        <p class="taken__q" id="taken-text"></p>
+        <div class="taken__actions">
+          <button class="btn btn--primary" id="taken-yes" type="button">Да, это я</button>
+          <button class="btn" id="taken-no" type="button">Нет, другой человек</button>
+        </div>
+      </div>
       <p class="error" id="join-error" role="alert"></p>
       <button class="btn btn--primary btn--lg btn--block" type="submit" id="join-btn">Войти на урок</button>
       <p class="join__hint">Учитель увидит ваше имя. Камера не нужна — микрофон включается, только когда учитель даст слово.</p>
