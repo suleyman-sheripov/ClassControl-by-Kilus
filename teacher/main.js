@@ -164,6 +164,8 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   app.isQuitting = true;
+  // Последние изменения урока — на диск сразу, а не через полторы секунды
+  try { if (lessonServer && lessonServer.flush) lessonServer.flush(); } catch (e) { /* не мешаем выходу */ }
   stopTunnel();
   closeRecording();
 });

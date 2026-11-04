@@ -17,15 +17,10 @@
   api.onServerAddress((addr) => connect(addr));
   api.info().then((i) => { info = i; if (i.serverAddress) connect(i.serverAddress); });
 
-  function loadClient(addr) {
-    return new Promise((resolve, reject) => {
-      if (window.io && window.__ioFrom === addr) return resolve();
-      const s = document.createElement('script');
-      s.src = addr + '/socket.io/socket.io.js';
-      s.onload = () => { window.__ioFrom = addr; resolve(); };
-      s.onerror = reject;
-      document.head.appendChild(s);
-    });
+  // Клиент Socket.IO лежит внутри программы (shared/ui/vendor): код с найденного в сети «учителя»
+  // не загружается и не выполняется — CSP окна тоже запрещает скрипты не из программы
+  function loadClient() {
+    return window.io ? Promise.resolve() : Promise.reject(new Error('socket.io client missing'));
   }
 
   async function connect(addr) {

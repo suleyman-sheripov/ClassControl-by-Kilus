@@ -271,6 +271,18 @@ function nutKey(code) {
 const BUTTONS = ['LEFT', 'MIDDLE', 'RIGHT'];
 let remoteActive = false;
 let inputChain = Promise.resolve();
+// Что сейчас зажато учителем: если связь оборвётся посреди нажатия, отпустим сами
+const heldKeys = new Set();
+const heldButtons = new Set();
+function releaseHeld() {
+  if (!nut || (!heldKeys.size && !heldButtons.size)) return;
+  const keys = [...heldKeys], buttons = [...heldButtons];
+  heldKeys.clear(); heldButtons.clear();
+  inputChain = inputChain.then(async () => {
+    for (const k of keys) { try { await nut.keyboard.releaseKey(k); } catch (e) { /* уже отпущена */ } }
+    for (const b of buttons) { try { await nut.mouse.releaseButton(b); } catch (e) { /* уже отпущена */ } }
+  });
+}
 
 function handleInput(d) {
   if (!remoteActive) return;
@@ -284,8 +296,8 @@ function handleInput(d) {
         const y = Math.round(Math.min(1, Math.max(0, d.y)) * (h - 1));
         await mouse.setPosition(new Point(x, y));
         const btn = Button[BUTTONS[d.button] || 'LEFT'];
-        if (d.type === 'down') await mouse.pressButton(btn);
-        if (d.type === 'up') await mouse.releaseButton(btn);
+        if (d.type === 'down') { heldButtons.add(btn); await mouse.pressButton(btn); }
+        if (d.type === 'up') { heldButtons.delete(btn); await mouse.releaseButton(btn); }
       } else if (d.type === 'wheel') {
         if (d.dy > 0) await mouse.scrollDown(d.dy * 3);
         if (d.dy < 0) await mouse.scrollUp(-d.dy * 3);
@@ -299,7 +311,7 @@ function handleInput(d) {
         }
         const k = nutKey(String(d.code || ''));
         if (k === undefined) return;
-        if (d.down) await keyboard.pressKey(k); else await keyboard.releaseKey(k);
+        if (d.down) { heldKeys.add(k); await keyboard.pressKey(k); } else { heldKeys.delete(k); await keyboard.releaseKey(k); }
       }
     } catch (err) {
       console.error('[AGENT] input', err.message);
@@ -603,7 +615,7 @@ ipcMain.on('connection-state', (e, s) => {
 ipcMain.on('control', (e, cmd) => handleControl(cmd));
 ipcMain.on('remote-session', (e, on) => {
   remoteActive = Boolean(on);
-  if (on) { loadNut(); showBanner('Учитель подключился к вашему экрану'); } else hideBanner();
+  if (on) { loadNut(); showBanner('Учитель подключился к вашему экрану'); } else { releaseHeld(); hideBanner(); }
 });
 ipcMain.on('broadcast', (e, st) => {
   broadcastState = { active: Boolean(st.active), allowExit: Boolean(st.allowExit) };
@@ -650,8 +662,26 @@ ipcMain.on('assignment', async (e, item) => {
     fs.mkdirSync(TASKS_DIR, { recursive: true });
     const res = await fetch(item.url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    // Не больше 50 МБ (как и на сервере урока): пишем частями во временный файл и обрываем, если больше
+    const LIMIT = 50 * 1024 * 1024;
+    if (Number(res.headers.get('content-length') || 0) > LIMIT) throw new Error('файл больше 50 МБ');
     const dest = uniquePath(TASKS_DIR, item.filename);
-    fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+    const part = dest + '.part';
+    const out = fs.createWriteStream(part);
+    let total = 0;
+    try {
+      for await (const chunk of res.body) {
+        total += chunk.length;
+        if (total > LIMIT) throw new Error('файл больше 50 МБ');
+        if (!out.write(chunk)) await new Promise(r => out.once('drain', r));
+      }
+      await new Promise((r, j) => out.end((err) => (err ? j(err) : r())));
+      fs.renameSync(part, dest);
+    } catch (err) {
+      out.destroy();
+      fs.rmSync(part, { force: true });
+      throw err;
+    }
     showMessage(`Новое задание: «${item.filename}». Файл лежит на рабочем столе в папке «Задания».`, dest);
   } catch (err) {
     console.error('[AGENT] Задание не скачалось:', err.message);

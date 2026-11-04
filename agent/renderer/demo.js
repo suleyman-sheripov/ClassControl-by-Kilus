@@ -23,11 +23,7 @@
 
   async function start(address) {
     if (!address || socket) return;
-    await new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = address + '/socket.io/socket.io.js'; s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
+    // Клиент Socket.IO — свой, из программы: с адреса учителя скрипты не загружаем
     socket = io(address, { transports: ['websocket'] });
     socket.on('connect', () => socket.emit('register-demo-viewer', { hostname: info.hostname }));
     socket.on('board-state', (b) => {

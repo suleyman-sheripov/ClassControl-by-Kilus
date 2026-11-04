@@ -460,8 +460,9 @@
   }
   CC.Chat = Chat;
 
+  // Возвращает true, только если сервер принял файл
   CC.uploadFile = async function (base, socketId, file, to, extra) {
-    if (file.size > 50 * 1024 * 1024) { CC.toast('Файл больше 50 МБ', { kind: 'warning' }); return; }
+    if (file.size > 50 * 1024 * 1024) { CC.toast('Файл больше 50 МБ', { kind: 'warning' }); return false; }
     const fd = new FormData();
     fd.append('socketId', socketId);
     if (to) fd.append('to', to);
@@ -473,9 +474,11 @@
       const data = await res.json().catch(() => ({}));
       stop();
       if (!res.ok) CC.toast(data.error || 'Не удалось отправить файл', { kind: 'warning' });
+      return res.ok;
     } catch (e) {
       stop();
       CC.toast('Нет связи с сервером урока', { kind: 'warning' });
+      return false;
     }
   };
 

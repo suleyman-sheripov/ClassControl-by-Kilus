@@ -248,8 +248,19 @@ function start(options = {}) {
     let saveTimer = null;
     function persist() {
         if (saveTimer) return;
-        saveTimer = setTimeout(() => {
-            saveTimer = null;
+        saveTimer = setTimeout(() => { saveTimer = null; writeState(false); }, 1500);
+    }
+    // Сохранить сразу и синхронно — при закрытии приложения, чтобы последние ответы и работы не потерялись
+    function flush() {
+        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+        writeState(true);
+        if (strokeTimer) { clearTimeout(strokeTimer); strokeTimer = null; }
+        if (strokeBuffer.length) {
+            try { fs.appendFileSync(strokesPath, strokeBuffer.join('\n') + '\n'); } catch (e) { /* диск недоступен */ }
+            strokeBuffer = [];
+        }
+    }
+    function writeState(sync) {
             const data = {
                 savedAt: Date.now(),
                 lessonStartedAt: state.lessonStartedAt,
@@ -265,10 +276,13 @@ function start(options = {}) {
                 focus: state.focus,
                 knownAgents: [...state.knownAgents.values()]
             };
+            if (sync) {
+                try { fs.writeFileSync(statePath, JSON.stringify(data)); } catch (err) { log('Ошибка сохранения урока:', err.message); }
+                return;
+            }
             fs.writeFile(statePath, JSON.stringify(data), (err) => {
                 if (err) log('Ошибка сохранения урока:', err.message);
             });
-        }, 1500);
     }
 
     // Штрихи доски пишем журналом: дописываем строки, а не пересохраняем весь урок
@@ -552,15 +566,34 @@ function start(options = {}) {
         return d;
     }
 
+    // Отвязать узел от прежнего родителя, сохранив его собственных «детей»
+    function relayUnlink(id) {
+        const node = state.relay.get(id);
+        if (!node || !node.parent || node.parent === 'teacher') return;
+        const p = state.relay.get(node.parent);
+        if (p) { p.children.delete(id); io.to(node.parent).emit('relay-child-gone', { id }); }
+    }
+    // Все, кто получает видео через этот узел: им нельзя стать его родителем — иначе получится кольцо
+    function relayDescendants(id) {
+        const out = new Set();
+        const stack = [id];
+        while (stack.length) {
+            const n = state.relay.get(stack.pop());
+            if (n) for (const c of n.children) if (!out.has(c)) { out.add(c); stack.push(c); }
+        }
+        return out;
+    }
+
     function relayAssign(id) {
         if (!state.broadcast.active || !state.demoViewers.has(id)) return;
-        relayDetach(id, false);
-        const direct = [...state.relay.values()].filter(n => n.parent === 'teacher').length;
+        relayUnlink(id);
+        const below = relayDescendants(id);
+        const direct = [...state.relay.entries()].filter(([nid, n]) => nid !== id && n.parent === 'teacher').length;
         let parent = 'teacher';
         if (direct >= (options.teacherFanout || TEACHER_FANOUT)) {
-            // Ищем ближайший к учителю компьютер со свободным местом
+            // Ищем ближайший к учителю компьютер со свободным местом (не из своей же ветки)
             const candidates = [...state.relay.entries()]
-                .filter(([nid, n]) => nid !== id && n.children.size < (options.relayFanout || RELAY_FANOUT))
+                .filter(([nid, n]) => nid !== id && !below.has(nid) && n.parent && n.children.size < (options.relayFanout || RELAY_FANOUT))
                 .sort((a, b) => relayDepth(a[0]) - relayDepth(b[0]) || (b[1].ready - a[1].ready) || a[1].children.size - b[1].children.size);
             if (candidates.length) parent = candidates[0][0];
         }
@@ -583,7 +616,7 @@ function start(options = {}) {
             if (p) { p.children.delete(id); io.to(node.parent).emit('relay-child-gone', { id }); }
         }
         state.relay.delete(id);
-        if (reassignChildren) for (const child of node.children) {
+        if (reassignChildren) for (const child of [...node.children]) {
             const c = state.relay.get(child);
             if (c) c.parent = null;
             relayAssign(child);
@@ -1319,9 +1352,9 @@ function start(options = {}) {
             const child = String(data.id || '');
             const node = state.relay.get(child);
             if (!node || node.parent !== socket.id) return;
-            relayDetach(child, false);
-            const n = { parent: 'teacher', children: new Set(), ready: false };
-            state.relay.set(child, n);
+            relayUnlink(child);
+            node.parent = 'teacher';     // его собственные «дети» остаются с ним
+            node.ready = false;
             toTeacher('peer-request', { ids: [child] });
         });
 
@@ -1670,6 +1703,7 @@ function start(options = {}) {
                         toTeacher('links', links());
                     },
                     getLessonSnapshot,
+                    flush,
                     worksDir,
                     get lessonCode() { return state.lessonCode; },
                     setLesson({ roomName, teacherName, lessonCode } = {}) {

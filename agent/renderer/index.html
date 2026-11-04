@@ -2,9 +2,11 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' http: https: ws: wss:; img-src 'self' data: blob:; media-src 'self' blob: mediastream:">
   <title>ClassControl Agent</title>
 </head>
 <body>
+  <script src="../../shared/ui/vendor/socket.io.min.js"></script>
   <script src="../../shared/ui/common.js"></script>
   <script src="background.js"></script>
 </body>

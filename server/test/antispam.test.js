@@ -151,3 +151,43 @@ test('файлы от учеников можно выключить; рука �
     await sleep(200);
     assert.equal(hands, 1, 'одно уведомление вместо пяти');
 });
+
+test('каскад: после пересадки узла его «дети» не теряются и кольца не бывает', async () => {
+    // Цепочка учитель → A → B → C (по одному «ребёнку» на узел)
+    const srv = await server({ port: 3954, teacherFanout: 1, relayFanout: 1 });
+    const t = await teacher(srv);
+    const viewers = [];
+    async function viewer(host) {
+        const d = client(srv);
+        await once(d, 'connect');
+        d.emit('register-demo-viewer', { hostname: host });
+        await once(d, 'board-state');
+        d.kids = [];
+        d.on('relay-child', c => d.kids.push(c.id));
+        d.on('relay-child-gone', c => { d.kids = d.kids.filter(x => x !== c.id); });
+        viewers.push(d);
+        return d;
+    }
+    const peers = [];
+    t.on('peer-request', r => peers.push(...r.ids));
+    const a = await viewer('A');
+    t.emit('start-broadcast', {});
+    await sleep(150);
+    const b = await viewer('B');
+    await sleep(150);
+    const c = await viewer('C');
+    await sleep(200);
+    assert.deepEqual([peers.includes(a.id), a.kids, b.kids], [true, [b.id], [c.id]], 'цепочка A → B → C');
+    // A выключили: B переходит к учителю, а C остаётся у B
+    peers.length = 0;
+    a.close();
+    await sleep(300);
+    assert.ok(peers.includes(b.id), 'B подключается к учителю');
+    assert.ok(!peers.includes(c.id), 'C не дёргают — он по-прежнему смотрит через B');
+    // Теперь выключили B — C не должен остаться без эфира
+    peers.length = 0;
+    b.close();
+    await sleep(300);
+    assert.ok(peers.includes(c.id), 'C переподключился к учителю');
+    t.emit('stop-broadcast');
+});

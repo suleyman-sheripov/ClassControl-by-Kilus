@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' http:; connect-src 'self' http: ws:; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'; font-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' http: ws:; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'; font-src 'self'">
   <title>Эфир учителя</title>
   <link rel="stylesheet" href="../../shared/ui/theme.css">
   <script src="../../shared/ui/theme-init.js"></script>
@@ -29,6 +29,7 @@
   <button class="btn exit hidden" id="exit" type="button"><svg class="i i-sm"><use href="#i-x"/></svg>Свернуть <span class="kbd">Esc</span></button>
   <button class="btn btn--primary unmute hidden" id="unmute" type="button"><svg class="i i-sm"><use href="#i-volume"/></svg>Включить звук</button>
   <script src="../../shared/ui/icons.js"></script>
+  <script src="../../shared/ui/vendor/socket.io.min.js"></script>
   <script src="../../shared/ui/common.js"></script>
   <script src="../../shared/ui/viewer.js"></script>
   <script src="demo.js"></script>

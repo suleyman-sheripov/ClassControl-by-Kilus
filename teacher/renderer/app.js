@@ -1261,6 +1261,9 @@
         $('#preview-video').srcObject = new MediaStream([track]);
         socket.emit('start-broadcast', { allowExit: $('#opt-exit').checked });
         api.keepAwake(true);
+        // Голос учителя ученикам из дома — как и при обычном эфире
+        if (Mixer.ctx.state === 'suspended') Mixer.ctx.resume();
+        await Mixer.updateMic();
       } else {
         this.ownTrack = this.stream ? this.stream.getVideoTracks()[0] : null;
         await this.replaceVideo(track);
@@ -1860,7 +1863,7 @@
     const f = e.target.files[0];
     e.target.value = '';
     if (!f) return;
-    await CC.uploadFile(BASE, socket.id, f, null, { assign: '1', token: S.uploadToken });
+    if (!(await CC.uploadFile(BASE, socket.id, f, null, { assign: '1', token: S.uploadToken }))) return;
     toast(`«${f.name}» отправлен на компьютеры класса`, { kind: 'positive', icon: 'download' });
   });
 
