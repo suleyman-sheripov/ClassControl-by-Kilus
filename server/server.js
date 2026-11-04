@@ -184,6 +184,8 @@ function start(options = {}) {
         roomName: cleanText(options.roomName, 60),
         roster: Array.isArray(options.roster) ? options.roster.map(n => cleanText(n, 40)).filter(Boolean) : [],
         lessonCode: normCode(options.lessonCode) || makeLessonCode(),
+        lessonId: crypto.randomBytes(6).toString('hex'),
+        banned: new Set(),        // кого учитель отключил до конца урока (ключи людей)
         previousLesson: null,
         agents: new Map(),        // socketId -> { id, name, host, ip, idle, locked, since }
         demoViewers: new Map(),   // socketId -> host
@@ -243,6 +245,8 @@ function start(options = {}) {
             if (Array.isArray(saved.chat)) state.chat = saved.chat.slice(-MAX_CHAT);
             if (Array.isArray(saved.attendance)) state.attendance = saved.attendance;
             if (saved.lessonStartedAt) state.lessonStartedAt = saved.lessonStartedAt;
+            if (saved.lessonId && !stale) state.lessonId = saved.lessonId;
+            if (Array.isArray(saved.banned) && !stale) state.banned = new Set(saved.banned);
             if (Array.isArray(saved.polls)) state.polls = saved.polls;
             if (Array.isArray(saved.collections)) state.collections = saved.collections;
             if (Array.isArray(saved.assignments)) state.assignments = saved.assignments;
@@ -260,6 +264,8 @@ function start(options = {}) {
             const data = {
                 savedAt: Date.now(),
                 lessonStartedAt: state.lessonStartedAt,
+                lessonId: state.lessonId,
+                banned: [...state.banned],
                 chat: state.chat,
                 attendance: state.attendance,
                 polls: state.polls,
@@ -465,18 +471,13 @@ function start(options = {}) {
         if (d.role === 'teacher') return { id: socket.id, name: state.teacherName, role: 'teacher', canChat: true };
         if (d.role === 'agent') {
             const a = state.agents.get(socket.id);
-            return a && { id: socket.id, name: agentDisplayName(a), role: 'agent', canChat: true };
+            return a && { id: socket.id, name: a.student || a.name, seat: a.name, anonymous: !a.student, role: 'agent', canChat: true };
         }
         if (d.role === 'online') {
             const u = state.online.get(socket.id);
-            return u && { id: socket.id, name: u.name, role: 'online', canChat: true };
+            return u && { id: socket.id, name: u.name, seat: 'дома', role: 'online', canChat: true };
         }
         return null;
-    }
-
-    /** Как ПК класса подписан для людей: «Иван Петров (ПК-07)» или просто «ПК-07». */
-    function agentDisplayName(a) {
-        return a.student ? `${a.student} (${a.name})` : a.name;
     }
 
     function teacherSocket() {
@@ -607,6 +608,7 @@ function start(options = {}) {
             senderId: socket.id,
             senderKey: socket.data.key,
             sender: who.name,
+            seat: who.anonymous ? undefined : who.seat,
             role: who.role,
             type: 'text',
             ...body
@@ -811,7 +813,8 @@ function start(options = {}) {
                 }
             }
             socket.data.role = 'agent';
-            let student = cleanText(payload.student, 40) ? canonicalName(cleanText(payload.student, 40)) : null;
+            // Агент помнит ученика только в пределах того же урока: на следующем уроке за ПК может сидеть другой
+            let student = cleanText(payload.student, 40) && payload.lessonId === state.lessonId ? canonicalName(cleanText(payload.student, 40)) : null;
             if (student) {
                 // Агент помнит, кто за ним сидел. Если этот человек уже пересел за другое место — не отбираем
                 if (holderOf(personKey(student), socket.id)) student = null;
@@ -837,6 +840,7 @@ function start(options = {}) {
                 uploadToken: socket.data.uploadToken,
                 roomName: state.roomName,
                 roster: state.roster,
+                lessonId: state.lessonId,
                 student,
                 teacherName: state.teacherName,
                 broadcast: state.broadcast,
@@ -882,6 +886,10 @@ function start(options = {}) {
             }
             // Такой человек уже на уроке в другом месте: это он пересел или другой человек с тем же именем?
             const key = personKey(raw);
+            if (state.banned.has(key)) {
+                socket.emit('join-error', 'Учитель закрыл для вас этот урок. Если это ошибка — напишите учителю.');
+                return;
+            }
             const holder = holderOf(key, socket.id);
             const heldName = holder ? ((state.online.get(holder.id) || {}).name || (state.agents.get(holder.id) || {}).student) : null;
             if (holder && !payload.confirm) {
@@ -1220,7 +1228,16 @@ function start(options = {}) {
             if (socket.data.role !== 'teacher') return;
             const s = io.sockets.sockets.get(data.userId);
             if (s && s.data.role === 'online') {
-                s.emit('kicked');
+                if (data.ban) { state.banned.add(s.data.key); persist(); }
+                // Сразу убираем с урока, не дожидаясь закрытия соединения
+                const u = state.online.get(s.id);
+                if (u && u.sharing) { clearShareTimer(s.id); toTeacher('online-user-stopped-sharing', { userId: s.id }); }
+                state.online.delete(s.id);
+                attendanceLeave(s);
+                s.data.replaced = true;
+                toTeacher('peer-gone', { id: s.id });
+                pushRoster();
+                s.emit('kicked', { ban: Boolean(data.ban) });
                 setTimeout(() => s.disconnect(true), 200);
             }
         });
@@ -1330,7 +1347,7 @@ function start(options = {}) {
             if (agent.focusHit === title) return;
             agent.focusHit = state.focus.enabled ? title : null;
             pushRoster();
-            if (agent.focusHit) toTeacher('focus-alert', { agentId: socket.id, name: agent.name, title: agent.focusHit });
+            if (agent.focusHit) toTeacher('focus-alert', { agentId: socket.id, name: agent.student ? `${agent.student}, ${agent.name}` : agent.name, title: agent.focusHit });
         });
 
         // Ученик представился на компьютере класса
@@ -1431,6 +1448,8 @@ function start(options = {}) {
     });
 
     function resetLesson() {
+        state.lessonId = crypto.randomBytes(6).toString('hex');
+        state.banned.clear();
         state.strokes = [];
         rewriteStrokes();
         state.chat = [];
@@ -1444,7 +1463,14 @@ function start(options = {}) {
             const who = identity(s);
             if (!who || who.role === 'teacher') continue;
             const ag = state.agents.get(s.id);
-            s.data.attendance = ag ? attendanceJoin(ag.student || ag.name, 'agent', ag.name, !ag.student) : attendanceJoin(who.name, 'online', 'из дома');
+            if (ag) {
+                // Новый урок — за компьютерами могут сидеть другие ученики
+                s.data.attendance = null;
+                setSeat(s, null, 'new-lesson');
+                s.emit('lesson-id', { lessonId: state.lessonId });
+            } else {
+                s.data.attendance = attendanceJoin(who.name, 'online', 'из дома');
+            }
         }
         io.emit('clear-canvas');
         io.emit('chat-history', []);

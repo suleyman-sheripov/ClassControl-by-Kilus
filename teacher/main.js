@@ -321,7 +321,7 @@ function writeReport(snap, boardPng) {
     if (m.type === 'system') return `[${t}] — ${m.text}`;
     const priv = m.to ? ` → ${m.toName || 'учителю'} (лично)` : '';
     const body = m.type === 'file' ? `[файл] ${m.filename}` : m.text;
-    return `[${t}] ${m.sender}${priv}: ${body}`;
+    return `[${t}] ${m.sender}${m.seat ? ` (${m.seat})` : ''}${priv}: ${body}`;
   });
   fs.writeFileSync(path.join(dir, 'Чат.txt'), '﻿' + `Урок: ${fmt(snap.lessonStartedAt)} — ${fmt(snap.endedAt)}\r\nУчитель: ${snap.teacherName}\r\n\r\n` + lines.join('\r\n'));
 

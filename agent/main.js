@@ -473,7 +473,8 @@ function onAnnounce(text) {
 
 
 // ---------- Кто за компьютером ----------
-let studentName = null;       // имя ученика на этот запуск агента (до выхода из Windows)
+let studentName = null;       // кто за ПК на этом уроке
+let lessonId = null;          // урок, на котором ученик представился
 let studentAsked = false;
 let uploadToken = '';
 let helloWindow = null;
@@ -516,6 +517,7 @@ ipcMain.on('seat-changed', (e, d) => {
   if (!studentName) { studentAsked = true; openHello(); }
   else if (helloWindow && !helloWindow.isDestroyed()) helloWindow.close();
 });
+ipcMain.on('lesson-id', (e, id) => { lessonId = id || null; });
 let classRoster = [];
 ipcMain.on('roster', (e, list) => { classRoster = Array.isArray(list) ? list : []; });
 ipcMain.handle('get-roster', () => classRoster);
@@ -568,6 +570,7 @@ ipcMain.handle('agent-info', () => ({
   uploadToken,
   room: settings.room,
   student: studentName,
+  lessonId,
   broadcast: broadcastState
 }));
 ipcMain.handle('get-idle', () => powerMonitor.getSystemIdleTime());
@@ -580,6 +583,7 @@ ipcMain.on('connection-state', (e, s) => {
   }
   agentSocketId = s.socketId || null;
   if (s.uploadToken) uploadToken = s.uploadToken;
+  if (s.lessonId) lessonId = s.lessonId;
   if (s.teacherName) teacherName = s.teacherName;
   if (connected) {
     clearTimeout(teacherGoneTimer); teacherGoneTimer = null;

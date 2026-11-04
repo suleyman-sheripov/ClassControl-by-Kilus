@@ -550,6 +550,7 @@ img, video, canvas { display: block; }
 .msg__head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .msg__name { font-weight: 600; font-size: var(--fs-body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .msg__role { font-size: var(--fs-xs); color: var(--accent-text); font-weight: 500; }
+.msg__seat { font-size: var(--fs-xs); color: var(--faint); white-space: nowrap; }
 .msg__time { font-size: var(--fs-xs); color: var(--faint); font-variant-numeric: tabular-nums; margin-left: auto; flex: none; }
 .msg__body { grid-column: 2; color: var(--text); font-size: var(--fs-body); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg__private {

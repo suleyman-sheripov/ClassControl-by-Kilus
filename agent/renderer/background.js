@@ -42,11 +42,11 @@
     socket.on('connect', () => {
       api.info().then((i) => {
         info = i;
-        socket.emit('register-agent', { hostname: i.hostname, name: i.pcName, os: i.platform, room: i.room, student: i.student });
+        socket.emit('register-agent', { hostname: i.hostname, name: i.pcName, os: i.platform, room: i.room, student: i.student, lessonId: i.lessonId });
       });
     });
     socket.on('agent-ready', (d) => {
-      api.connectionState({ connected: true, socketId: socket.id, teacherName: d.teacherName, uploadToken: d.uploadToken });
+      api.connectionState({ connected: true, socketId: socket.id, teacherName: d.teacherName, uploadToken: d.uploadToken, lessonId: d.lessonId });
       api.setRoster(d.roster || []);
       // Сервер мог не принять имя (этот человек уже сидит в другом месте) — место пустое
       if (!d.student) api.seatChanged({ student: null, quiet: true });
@@ -129,6 +129,7 @@
       if (act.collection) api.task({ type: 'collect', collection: act.collection });
     });
     socket.on('hand-lowered', () => api.handLowered());
+    socket.on('lesson-id', (d) => api.setLessonId(d.lessonId));
     socket.on('clear-canvas', () => {});
   }
 

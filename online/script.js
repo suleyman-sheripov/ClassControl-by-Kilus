@@ -161,7 +161,7 @@
     $('#gone-text').textContent = text;
     $('#gone').classList.remove('hidden');
   }
-  socket.on('kicked', () => leave('Учитель отключил вас от урока', 'Если это ошибка — войдите снова или напишите учителю.'));
+  socket.on('kicked', (d) => leave('Учитель отключил вас от урока', d && d.ban ? 'До конца этого урока войти под этим именем нельзя.' : 'Если это ошибка — войдите снова.'));
 
   // ---------- Учитель ----------
   function setTeacherLine(text, kind) {

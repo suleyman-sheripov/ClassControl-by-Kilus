@@ -356,6 +356,7 @@
         CC.el('div', { class: 'msg__head' },
           nameNode,
           isTeacher ? CC.el('span', { class: 'msg__role', text: 'учитель' }) : null,
+          !isTeacher && m.seat ? CC.el('span', { class: 'msg__seat', text: m.seat }) : null,
           CC.el('span', { class: 'msg__time', text: CC.clock(m.ts) })),
         body);
     }

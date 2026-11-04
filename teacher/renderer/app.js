@@ -373,7 +373,8 @@
           { icon: 'chat', label: 'Написать лично', run: () => chat.setRecipient({ id: u.id, name: u.name }) },
           u.hand ? { icon: 'raise', label: 'Опустить руку', run: () => socket.emit('teacher-voice', { userId: u.id, on: false }) } : null,
           '-',
-          { icon: 'door', label: 'Отключить от урока', danger: true, run: async () => { if (await CC.confirm(`Отключить ${u.name}?`, 'Ученик сможет зайти снова по ссылке.', 'Отключить', 'danger')) socket.emit('teacher-kick', { userId: u.id }); } }
+          { icon: 'door', label: 'Отключить', run: async () => { if (await CC.confirm(`Отключить ${u.name}?`, 'Ученик сможет зайти снова по ссылке — например, если зашёл не туда.', 'Отключить')) socket.emit('teacher-kick', { userId: u.id }); } },
+          { icon: 'lock', label: 'Не пускать до конца урока', danger: true, run: async () => { if (await CC.confirm(`Не пускать ${u.name} до конца урока?`, 'Под этим именем на урок не зайти до «Завершить урок». Блокировка снимается с новым уроком.', 'Не пускать', 'danger')) socket.emit('teacher-kick', { userId: u.id, ban: true }); } }
         ], { alignRight: true }) }, icon('more', 'i-sm')));
       list.appendChild(el('li', { class: 'row person' + (u.hand ? ' is-hand' : '') },
         CC.avatar(u.name),

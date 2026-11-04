@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('agentAPI', {
   introduceResult: (r) => ipcRenderer.send('introduce-result', r),
   onHelloTaken: on('hello-taken'),
   seatChanged: (d) => ipcRenderer.send('seat-changed', d),
+  setLessonId: (id) => ipcRenderer.send('lesson-id', id),
   setRoster: (list) => ipcRenderer.send('roster', list),
   getRoster: () => ipcRenderer.invoke('get-roster'),
   raiseHand: (up) => ipcRenderer.send('socket-emit-out', { event: 'raise-hand', data: up }),

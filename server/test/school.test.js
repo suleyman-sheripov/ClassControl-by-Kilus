@@ -155,7 +155,9 @@ test('имя ученика за компьютером класса идёт в
     await new Promise(r => setTimeout(r, 100));
     const got = once(t, 'chat-message');
     a.emit('chat-message', { text: 'готово' });
-    assert.equal((await got).sender, 'Иван Петров (ПК-07)');
+    const m = await got;
+    assert.equal(m.sender, 'Иван Петров');
+    assert.equal(m.seat, 'ПК-07', 'место — отдельной пометкой');
     const snap = srv.getLessonSnapshot();
     assert.ok(snap.attendance.some(x => x.name === 'Иван Петров' && x.seat === 'ПК-07'));
 });
@@ -278,4 +280,55 @@ test('ученик пришёл из дома в класс посреди ур�
     const moved = once(home, 'moved');
     await new Promise(res => pc.emit('agent-student', { student: 'Саша Белов', confirm: true }, res));
     await moved;
+});
+
+test('новый урок: места освобождаются, агент не «помнит» вчерашнего ученика', async () => {
+    const srv = await server({ port: 3922 });
+    const t = await teacher(srv, 'Учитель');
+    const pc = client(srv);
+    await once(pc, 'connect');
+    pc.emit('register-agent', { hostname: 'ПК-01', name: 'ПК-01' });
+    const ready = await once(pc, 'agent-ready');
+    await new Promise(r => pc.emit('agent-student', { student: 'Иван' }, r));
+    // Переподключение в том же уроке — Иван остаётся
+    const same = client(srv);
+    await once(same, 'connect');
+    same.emit('register-agent', { hostname: 'ПК-02', name: 'ПК-02', student: 'Пётр', lessonId: ready.lessonId });
+    assert.equal((await once(same, 'agent-ready')).student, 'Пётр');
+    // ПК помнит ученика с прошлого урока — не принимаем
+    const old = client(srv);
+    await once(old, 'connect');
+    old.emit('register-agent', { hostname: 'ПК-03', name: 'ПК-03', student: 'Вчерашний', lessonId: 'другой-урок' });
+    assert.equal((await once(old, 'agent-ready')).student, null);
+    // Учитель завершил урок — все ПК снова свободны
+    const freed = once(pc, 'seat-changed');
+    t.emit('lesson-reset');
+    const f = await freed;
+    assert.equal(f.student, null);
+    assert.equal(f.reason, 'new-lesson');
+});
+
+test('«Не пускать до конца урока» действует до нового урока', async () => {
+    const srv = await server({ port: 3923 });
+    const t = await teacher(srv, 'Учитель');
+    let roster = null;
+    t.on('roster', r => { roster = r; });
+    const join = async (name) => {
+        const u = client(srv);
+        await once(u, 'connect');
+        u.emit('register-online-user', { name, code: srv.lessonCode });
+        return u;
+    };
+    const u = await join('Хулиган');
+    await once(u, 'welcome');
+    await until(() => roster && roster.online.length === 1);
+    const kicked = once(u, 'kicked');
+    t.emit('teacher-kick', { userId: roster.online[0].id, ban: true });
+    assert.equal((await kicked).ban, true);
+    const again = await join('хулиган');
+    assert.match(await once(again, 'join-error'), /закрыл/);
+    t.emit('lesson-reset');
+    await new Promise(r => setTimeout(r, 100));
+    const next = await join('Хулиган');
+    await once(next, 'welcome');
 });
