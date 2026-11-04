@@ -33,7 +33,8 @@ const DEFAULTS = {
   fps: 15,
   allowExit: false,
   shareAudio: true,
-  shareMic: false
+  shareMic: false,
+  theme: 'dark'
 };
 let settings = { ...DEFAULTS };
 try {
@@ -56,7 +57,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 640,
     title: 'ClassControl',
-    backgroundColor: '#0b0b0c',
+    backgroundColor: '#0d1210',
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -193,6 +194,11 @@ ipcMain.handle('keep-awake', (e, on) => {
 });
 
 ipcMain.handle('open-path', (e, p) => { if (p) shell.showItemInFolder(p); });
+ipcMain.handle('open-folder', (e, p) => {
+  if (!p) return;
+  fs.mkdirSync(p, { recursive: true });
+  return shell.openPath(p);
+});
 ipcMain.handle('open-external', (e, url) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); });
 
 // ---------- Запись урока: пишем на диск частями, а не в память ----------
@@ -273,6 +279,26 @@ ipcMain.handle('lesson-save', async (e, { boardPng } = {}) => {
       const src = path.join(snap.uploadDir, path.basename(f.url));
       const safe = String(f.filename).replace(/[\\/:*?"<>|]/g, '_');
       try { if (fs.existsSync(src)) fs.copyFileSync(src, path.join(fdir, safe)); } catch (err) {}
+    }
+  }
+
+  // Опросы
+  if (snap.polls && snap.polls.length) {
+    const txt = snap.polls.slice().reverse().map(p => {
+      const lines = p.options.map((o, i) => `  ${o}: ${p.counts[i] || 0}`);
+      const who = (p.voters || []).map(v => `  ${v.name} — ${p.options[v.option]}`);
+      return `${p.question}\r\nОтветили: ${p.total}\r\n${lines.join('\r\n')}\r\n\r\nКто как ответил:\r\n${who.join('\r\n') || '  —'}`;
+    }).join('\r\n\r\n');
+    fs.writeFileSync(path.join(dir, 'Опросы.txt'), '\uFEFF' + txt);
+  }
+
+  // Собранные работы: копия папок сбора с понятными именами
+  for (const c of snap.collections || []) {
+    if (!c.submissions.length) continue;
+    const target = path.join(dir, 'Работы', String(c.title).replace(/[\\/:*?"<>|]/g, '_'));
+    fs.mkdirSync(target, { recursive: true });
+    for (const sub of c.submissions) {
+      try { fs.copyFileSync(path.join(c.dir, sub.stored), path.join(target, sub.stored)); } catch (err) {}
     }
   }
 

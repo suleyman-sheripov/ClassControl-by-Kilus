@@ -374,11 +374,12 @@
   }
   CC.Chat = Chat;
 
-  CC.uploadFile = async function (base, socketId, file, to) {
+  CC.uploadFile = async function (base, socketId, file, to, extra) {
     if (file.size > 50 * 1024 * 1024) { CC.toast('Файл больше 50 МБ', { kind: 'warning' }); return; }
     const fd = new FormData();
     fd.append('socketId', socketId);
     if (to) fd.append('to', to);
+    for (const [k, v] of Object.entries(extra || {})) fd.append(k, v);
     fd.append('file', file);
     const stop = CC.toast('Отправляю «' + file.name + '»…', { icon: 'clip', duration: 60000 });
     try {

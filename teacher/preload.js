@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('teacherAPI', {
   ownWindowSource: () => ipcRenderer.invoke('own-window-source'),
   keepAwake: (on) => ipcRenderer.invoke('keep-awake', on),
   openPath: (p) => ipcRenderer.invoke('open-path', p),
+  openFolder: (p) => ipcRenderer.invoke('open-folder', p),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   recStart: () => ipcRenderer.invoke('rec-start'),
   recChunk: (buf) => ipcRenderer.send('rec-chunk', buf),

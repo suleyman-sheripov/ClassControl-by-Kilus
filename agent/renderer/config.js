@@ -63,6 +63,6 @@
   });
   $('#cancel').addEventListener('click', () => { api.configLock(); window.close(); });
   $('#quit').addEventListener('click', async () => {
-    if (await CC.confirm('Выключить агент?', 'Учитель перестанет видеть этот компьютер до следующего запуска.', 'Выключить', 'danger')) api.configQuit();
+    if (await CC.confirm('Выключить агент?', 'Агент не будет работать до перезагрузки компьютера или ручного запуска из меню «Пуск».', 'Выключить', 'danger')) api.configQuit();
   });
 })();

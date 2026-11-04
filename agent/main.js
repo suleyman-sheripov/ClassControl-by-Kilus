@@ -6,7 +6,7 @@
  */
 const {
   app, BrowserWindow, Tray, Menu, ipcMain, desktopCapturer, Notification,
-  powerMonitor, screen, shell, session, nativeImage
+  powerMonitor, screen, shell, session, nativeImage, dialog
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -37,7 +37,8 @@ const DEFAULTS = {
   notifications: true,
   passwordHash: '',
   passwordSalt: '',
-  lastServer: ''
+  lastServer: '',
+  stoppedAtBoot: 0            // администратор выключил агент: не поднимать сторожем до перезагрузки
 };
 let settings = { ...DEFAULTS };
 try {
@@ -45,6 +46,10 @@ try {
 } catch (e) {}
 function saveSettings() {
   try { fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2)); } catch (e) {}
+}
+const bootTime = () => Date.now() - os.uptime() * 1000;
+function stoppedThisBoot() {
+  return settings.stoppedAtBoot && Math.abs(settings.stoppedAtBoot - bootTime()) < 120000;
 }
 function hashPassword(pw, salt) {
   return crypto.scryptSync(String(pw), salt, 32).toString('hex');
@@ -112,7 +117,7 @@ function openChat() {
   chatWindow = new BrowserWindow({
     width: 380, height: 560, minWidth: 320, minHeight: 400,
     x: workArea.x + workArea.width - 400, y: workArea.y + workArea.height - 580,
-    title: 'Беседа урока', backgroundColor: '#0b0b0c', autoHideMenuBar: true,
+    title: 'Беседа урока', backgroundColor: '#0d1210', autoHideMenuBar: true,
     webPreferences: webPrefs()
   });
   chatWindow.setMenuBarVisibility(false);
@@ -144,7 +149,7 @@ function openConfig() {
   if (configWindow && !configWindow.isDestroyed()) { configWindow.show(); configWindow.focus(); return; }
   configWindow = new BrowserWindow({
     width: 460, height: 620, resizable: false, title: 'ClassControl — настройки агента',
-    backgroundColor: '#0b0b0c', autoHideMenuBar: true, webPreferences: webPrefs()
+    backgroundColor: '#0d1210', autoHideMenuBar: true, webPreferences: webPrefs()
   });
   configWindow.setMenuBarVisibility(false);
   configWindow.loadFile(page('config.html'));
@@ -178,7 +183,7 @@ function lockScreens(text) {
       x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
       frame: false, fullscreen: true, kiosk: true, alwaysOnTop: true, skipTaskbar: true,
       movable: false, resizable: false, minimizable: false, closable: false,
-      backgroundColor: '#0b0b0c', webPreferences: webPrefs()
+      backgroundColor: '#0d1210', webPreferences: webPrefs()
     });
     w.setAlwaysOnTop(true, 'screen-saver');
     w.loadFile(page('lock.html'));
@@ -198,16 +203,16 @@ function reportStatus() {
   if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('agent-status', { locked: lockWindows.length > 0 });
 }
 
-function showMessage(text) {
+function showMessage(text, file) {
   const { workArea } = screen.getPrimaryDisplay();
   const w = new BrowserWindow({
     width: 420, height: 220, x: Math.round(workArea.x + workArea.width / 2 - 210), y: Math.round(workArea.y + workArea.height / 3 - 110),
-    frame: false, resizable: false, alwaysOnTop: true, skipTaskbar: false, backgroundColor: '#131315',
+    frame: false, resizable: false, alwaysOnTop: true, skipTaskbar: false, backgroundColor: '#131916',
     title: 'Сообщение от учителя', webPreferences: webPrefs()
   });
   w.setAlwaysOnTop(true, 'screen-saver');
   w.loadFile(page('message.html'));
-  w.webContents.on('did-finish-load', () => w.webContents.send('message', { text, from: teacherName }));
+  w.webContents.on('did-finish-load', () => w.webContents.send('message', { text, from: teacherName, file: file || null }));
 }
 
 // ---------- Удалённое управление (nut-js) ----------
@@ -490,6 +495,143 @@ ipcMain.on('chat-event', (e, ev) => { if (chatWindow && !chatWindow.isDestroyed(
 ipcMain.on('chat-request-history', () => { if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('chat-request-history'); });
 ipcMain.on('message-close', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });
 
+// ---------- Задания учителя: файл на рабочий стол ----------
+const TASKS_DIR = path.join(app.getPath('desktop'), 'Задания');
+function uniquePath(dir, name) {
+  const safe = String(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 150) || 'файл';
+  const ext = path.extname(safe), base = safe.slice(0, safe.length - ext.length);
+  let p = path.join(dir, safe);
+  for (let i = 2; fs.existsSync(p); i++) p = path.join(dir, `${base} (${i})${ext}`);
+  return p;
+}
+ipcMain.on('assignment', async (e, item) => {
+  try {
+    if (!/^https?:\/\//.test(item.url) || !serverAddress || !item.url.startsWith(serverAddress)) return;
+    fs.mkdirSync(TASKS_DIR, { recursive: true });
+    const res = await fetch(item.url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const dest = uniquePath(TASKS_DIR, item.filename);
+    fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+    showMessage(`Новое задание: «${item.filename}». Файл лежит на рабочем столе в папке «Задания».`, dest);
+  } catch (err) {
+    console.error('[AGENT] Задание не скачалось:', err.message);
+  }
+});
+ipcMain.on('open-file', (e, p) => {
+  // Открываем только файлы из папки заданий
+  const full = path.resolve(String(p || ''));
+  if (full.startsWith(TASKS_DIR + path.sep)) shell.openPath(full);
+  else if (full === TASKS_DIR) shell.openPath(TASKS_DIR);
+});
+
+// ---------- Опрос и сдача работы: отдельное небольшое окно ----------
+let taskWindow = null;
+let currentTasks = { poll: null, collect: null };
+function sendTask() {
+  if (taskWindow && !taskWindow.isDestroyed()) taskWindow.webContents.send('task', currentTasks);
+}
+function openTaskWindow() {
+  if (taskWindow && !taskWindow.isDestroyed()) { sendTask(); taskWindow.show(); taskWindow.focus(); return; }
+  const { workArea } = screen.getPrimaryDisplay();
+  taskWindow = new BrowserWindow({
+    width: 420, height: 460, x: workArea.x + workArea.width - 440, y: workArea.y + 20,
+    resizable: false, minimizable: false, maximizable: false, alwaysOnTop: true, frame: false,
+    title: 'Задание от учителя', backgroundColor: '#131916', webPreferences: webPrefs()
+  });
+  taskWindow.setAlwaysOnTop(true, 'floating');
+  taskWindow.loadFile(page('task.html'));
+  taskWindow.webContents.on('did-finish-load', sendTask);
+  taskWindow.on('closed', () => { taskWindow = null; });
+}
+function updateTray() {
+  if (!tray) return;
+  const items = [{ label: 'Открыть беседу', click: openChat }];
+  if (currentTasks.poll && currentTasks.poll.open !== false) items.push({ label: 'Ответить на опрос', click: openTaskWindow });
+  if (currentTasks.collect) items.push({ label: 'Сдать работу', click: openTaskWindow });
+  tray.setContextMenu(Menu.buildFromTemplate(items));
+}
+ipcMain.on('task', (e, t) => {
+  if (t.type === 'poll') { currentTasks.poll = { ...t.poll, open: true }; openTaskWindow(); }
+  if (t.type === 'poll-closed') {
+    if (currentTasks.poll && currentTasks.poll.id === t.poll.id) {
+      currentTasks.poll = t.poll.share ? { ...t.poll, open: false } : null;
+      if (currentTasks.poll || currentTasks.collect) sendTask();
+      else if (taskWindow && !taskWindow.isDestroyed()) taskWindow.close();
+    }
+  }
+  if (t.type === 'collect') { currentTasks.collect = t.collection; openTaskWindow(); }
+  if (t.type === 'collect-closed') {
+    if (currentTasks.collect && (!t.collection || !t.collection.id || currentTasks.collect.id === t.collection.id)) {
+      currentTasks.collect = null;
+      if (currentTasks.poll) sendTask(); else if (taskWindow && !taskWindow.isDestroyed()) taskWindow.close();
+    }
+  }
+  updateTray();
+});
+ipcMain.on('task-answer', (e, { pollId, option }) => {
+  if (!currentTasks.poll || currentTasks.poll.id !== pollId) return;
+  currentTasks.poll.myVote = option;
+  if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('socket-emit', { event: 'poll-answer', data: { id: pollId, option } });
+});
+ipcMain.handle('task-submit', async (e, collectId) => {
+  if (!currentTasks.collect || currentTasks.collect.id !== collectId) return { ok: false, error: 'Сбор работ закончен' };
+  const r = await dialog.showOpenDialog(taskWindow || undefined, { title: 'Выберите файл с работой', defaultPath: app.getPath('documents'), properties: ['openFile'] });
+  if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true };
+  const file = r.filePaths[0];
+  try {
+    const stat = fs.statSync(file);
+    if (stat.size > 50 * 1024 * 1024) return { ok: false, error: 'Файл больше 50 МБ' };
+    const fd = new FormData();
+    fd.append('file', new Blob([fs.readFileSync(file)]), path.basename(file));
+    const res = await fetch(`${serverAddress}/submit?socketId=${encodeURIComponent(agentSocketId || '')}&collect=${encodeURIComponent(collectId)}`, { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error || 'Не удалось сдать работу' };
+    currentTasks.collect.submitted = data.filename;
+    return { ok: true, filename: data.filename };
+  } catch (err) {
+    return { ok: false, error: 'Нет связи с учителем' };
+  }
+});
+ipcMain.on('task-close', () => { if (taskWindow && !taskWindow.isDestroyed()) taskWindow.close(); });
+
+// ---------- Режим «Фокус»: заголовок активного окна ----------
+let focusCfg = { enabled: false, words: [] };
+// nut-js в некоторых системах отдаёт UTF-8 как latin1 («ÐšÐ¾Ñ‚…») — чиним, чтобы находились русские слова
+const CP1252 = { 0x20ac: 0x80, 0x201a: 0x82, 0x0192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x02c6: 0x88, 0x2030: 0x89, 0x0160: 0x8a, 0x2039: 0x8b, 0x0152: 0x8c, 0x017d: 0x8e, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, 0x02dc: 0x98, 0x2122: 0x99, 0x0161: 0x9a, 0x203a: 0x9b, 0x0153: 0x9c, 0x017e: 0x9e, 0x0178: 0x9f };
+function fixMojibake(str) {
+  if (!/[\u00c3\u00d0\u00d1\u00e2]/.test(str)) return str;
+  const bytes = [];
+  for (const ch of str) {
+    const c = ch.codePointAt(0);
+    if (c < 0x100) bytes.push(c);
+    else if (CP1252[c] !== undefined) bytes.push(CP1252[c]);
+    else return str;            // это не «перекодированный» текст — оставляем как есть
+  }
+  const fixed = Buffer.from(bytes).toString('utf8');
+  return fixed.includes('\ufffd') ? str : fixed;
+}
+let focusTimer = null;
+let focusLast = null;
+ipcMain.on('set-focus', (e, f) => {
+  focusCfg = { enabled: Boolean(f && f.enabled), words: (f && f.words) || [] };
+  clearInterval(focusTimer);
+  focusTimer = null;
+  if (!focusCfg.enabled) { focusLast = null; return; }
+  if (!loadNut() || typeof nut.getActiveWindow !== 'function') return;
+  focusTimer = setInterval(async () => {
+    try {
+      const w = await nut.getActiveWindow();
+      const title = fixMojibake(String(await w.title || ''));
+      const low = title.toLowerCase();
+      const hit = focusCfg.words.some(word => word && low.includes(word)) ? title : null;
+      if (hit !== focusLast) {
+        focusLast = hit;
+        if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('socket-emit', { event: 'focus-violation', data: { title: hit } });
+      }
+    } catch (err) { /* окна нет — пропускаем */ }
+  }, 3000);
+});
+
 // Настройки под паролем
 let configUnlocked = false;
 ipcMain.handle('config-state', () => ({ hasPassword: Boolean(settings.passwordHash), unlocked: configUnlocked }));
@@ -529,6 +671,8 @@ ipcMain.handle('config-save', (e, patch) => {
 });
 ipcMain.handle('config-quit', () => {
   if (!configUnlocked) return false;
+  settings.stoppedAtBoot = bootTime();
+  saveSettings();
   app.isQuitting = true;
   unlockScreens();
   app.quit();
@@ -538,10 +682,21 @@ ipcMain.on('config-lock', () => { configUnlocked = false; });
 
 // ---------- Жизненный цикл ----------
 app.on('second-instance', (e, argv) => {
+  // Сторож из планировщика Windows запускает агент раз в минуту: если он уже работает — ничего не делаем
+  if (argv.includes('--watchdog') || argv.includes('--hidden')) return;
   if (argv.includes('--config')) openConfig(); else openChat();
 });
 
+// Сторож запустил агент, а администратор выключил его до перезагрузки — выходим сразу
+if (process.argv.includes('--watchdog') && stoppedThisBoot()) {
+  app.quit();
+} else if (settings.stoppedAtBoot && !process.argv.includes('--watchdog')) {
+  settings.stoppedAtBoot = 0;   // запустили вручную — снова работаем
+  saveSettings();
+}
+
 app.whenReady().then(() => {
+  if (process.argv.includes('--watchdog') && stoppedThisBoot()) return;
   // Показ экрана учителю: всегда весь основной экран, без системного окна выбора
   session.defaultSession.setDisplayMediaRequestHandler(async (req, cb) => {
     try {

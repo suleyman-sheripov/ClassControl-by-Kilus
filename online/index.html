@@ -8,6 +8,7 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="/ui/theme.css">
   <link rel="stylesheet" href="style.css">
+  <script src="theme-init.js"></script>
 </head>
 <body>
 
@@ -34,18 +35,19 @@
 
   <!-- ===== Урок ===== -->
   <div class="lesson hidden" id="lesson">
-    <header class="bar">
+    <header class="head">
       <div class="brand">
         <span class="brand__mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span>
-        <span class="brand__name bar__product">ClassControl</span>
+        <span class="brand__name head__product">ClassControl</span>
       </div>
-      <span class="bar__sep" aria-hidden="true"></span>
-      <div class="bar__lesson">
+      <span class="head__sep" aria-hidden="true"></span>
+      <div class="head__lesson">
         <span class="dot" id="teacher-dot"></span>
         <span class="truncate" id="teacher-line">Учитель</span>
       </div>
-      <div class="bar__right">
-        <span class="bar__me"><span id="me-avatar"></span><span class="truncate" id="me-name"></span></span>
+      <div class="head__right">
+        <span class="head__me"><span id="me-avatar"></span><span class="truncate" id="me-name"></span></span>
+        <button class="icon-btn" id="theme-btn" type="button" title="Светлая или тёмная тема" aria-label="Сменить тему"><svg class="i"><use href="#i-sun"/></svg></button>
         <button class="btn btn--sm btn--ghost" id="leave" type="button"><svg class="i i-sm"><use href="#i-door"/></svg><span>Выйти</span></button>
       </div>
     </header>
@@ -86,7 +88,12 @@
         </div>
       </section>
 
-      <aside class="panel side-chat">
+      <aside class="side">
+      <section class="panel task-panel hidden" id="task-panel" aria-label="Задание учителя">
+        <div class="task-panel__body" id="task-root"></div>
+        <input type="file" id="submit-file" class="hidden" aria-hidden="true">
+      </section>
+      <section class="panel side-chat">
         <div class="panel__head">
           <h2 class="panel__title">Чат урока</h2>
           <span class="panel__actions">
@@ -105,6 +112,7 @@
             </div>
           </div>
         </div>
+      </section>
       </aside>
     </div>
   </div>
@@ -126,6 +134,7 @@
 
   <script src="/ui/icons.js"></script>
   <script src="/ui/common.js"></script>
+  <script src="/ui/tasks.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="script.js"></script>
 </body>

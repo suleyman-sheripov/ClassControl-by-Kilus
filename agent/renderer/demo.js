@@ -5,7 +5,7 @@
   const video = document.getElementById('video');
   const wait = document.getElementById('wait');
   const board = new CC.Board(document.getElementById('stage'), document.getElementById('board'));
-  let peer = null, socket = null;
+  let viewer = null, socket = null;
   let info = await api.info();
 
   function setExit(allow) { document.getElementById('exit').classList.toggle('hidden', !allow); }
@@ -35,31 +35,22 @@
       board.setTransform(b.transform || {});
       showBoard(b.active);
     });
-    socket.on('signal', async ({ source, kind, type, payload }) => {
-      if (kind !== 'broadcast') return;
-      if (type === 'offer') {
-        if (peer) peer.close();
-        peer = CC.answerPeer({
-          socket, source, kind: 'broadcast',
-          onTrack: (stream) => {
-            video.srcObject = stream;
-            wait.classList.add('hidden');
-            video.play().catch(() => {
-              // Автозапуск со звуком запрещён — показываем без звука и даём кнопку
-              video.muted = true; video.play();
-              if (stream.getAudioTracks().length) document.getElementById('unmute').classList.remove('hidden');
-            });
-          },
-          onState: (st) => {
-            if (st === 'failed' || st === 'disconnected') {
-              wait.classList.remove('hidden');
-              document.getElementById('wait-text').textContent = 'Связь с учителем прервалась, переподключаюсь…';
-            }
-          }
+    viewer = CC.ClassViewer({
+      socket,
+      onStream: (stream) => {
+        if (video.srcObject !== stream) video.srcObject = stream;
+        wait.classList.add('hidden');
+        video.play().catch(() => {
+          // Автозапуск со звуком запрещён — показываем без звука и даём кнопку
+          video.muted = true; video.play();
+          if (stream.getAudioTracks().length) document.getElementById('unmute').classList.remove('hidden');
         });
-        await peer.offer(payload);
-      } else if (type === 'ice' && peer) {
-        await peer.ice(payload);
+      },
+      onState: (st) => {
+        if (st === 'failed' || st === 'disconnected') {
+          wait.classList.remove('hidden');
+          document.getElementById('wait-text').textContent = 'Связь с учителем прервалась, переподключаюсь…';
+        }
       }
     });
     socket.on('whiteboard-mode', showBoard);
@@ -68,7 +59,7 @@
     socket.on('clear-canvas', () => board.clear());
     socket.on('whiteboard-transform', (t) => board.setTransform(t));
     socket.on('broadcast-stopped', () => {
-      if (peer) { peer.close(); peer = null; }
+      viewer.stop();
       video.srcObject = null;
     });
   }

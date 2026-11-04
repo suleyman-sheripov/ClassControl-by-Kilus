@@ -70,7 +70,13 @@
     target: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/>',
     zoom: '<circle cx="11" cy="11" r="7"/><path d="M20.5 20.5L16 16M11 8v6M8 11h6"/>',
     focus: '<path d="M4 8.5V5.5a1.5 1.5 0 011.5-1.5H8.5M15.5 4h3A1.5 1.5 0 0120 5.5v3M20 15.5v3a1.5 1.5 0 01-1.5 1.5h-3M8.5 20h-3A1.5 1.5 0 014 18.5v-3"/><circle cx="12" cy="12" r="3"/>',
-    signal: '<path d="M4 20v-3M9 20v-7M14 20V9M19 20V4"/>'
+    signal: '<path d="M4 20v-3M9 20v-7M14 20V9M19 20V4"/>',
+    tasks: '<rect x="4" y="3.5" width="16" height="17.5" rx="2"/><path d="M9 3.5V2.5h6v1M8.5 10l2 2 4-4M8.5 16h7"/>',
+    inbox: '<path d="M3.5 13.5l2.6-8.2A2 2 0 018 4h8a2 2 0 011.9 1.3l2.6 8.2V18a2 2 0 01-2 2h-13a2 2 0 01-2-2z"/><path d="M3.5 13.5H8l1.5 2.5h5l1.5-2.5h4.5"/>',
+    poll: '<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/>',
+    moon: '<path d="M20.5 14.5A8.5 8.5 0 019.5 3.5a8.5 8.5 0 1011 11z"/>',
+    'power-off': '<path d="M12 3v8.5"/><path d="M6.4 6.6a8 8 0 1011.2 0"/><path d="M3 3l18 18"/>'
   };
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">' +
     Object.keys(P).map(k => `<symbol id="i-${k}" viewBox="0 0 24 24">${P[k]}</symbol>`).join('') + '</svg>';

@@ -32,6 +32,9 @@
         <button class="seg__btn" role="tab" id="tab-board" aria-selected="false">
           <svg class="i"><use href="#i-board"/></svg>Доска
         </button>
+        <button class="seg__btn" role="tab" id="tab-tasks" aria-selected="false">
+          <svg class="i"><use href="#i-tasks"/></svg>Задания<span class="seg__count hidden" id="tab-tasks-count"></span>
+        </button>
       </nav>
 
       <div class="topbar__right">
@@ -174,6 +177,8 @@
               <button class="icon-btn icon-btn--sm icon-btn--outline" data-act="unlock" type="button" title="Разблокировать" aria-label="Разблокировать"><svg class="i i-sm"><use href="#i-unlock"/></svg></button>
               <button class="icon-btn icon-btn--sm icon-btn--outline" data-act="open-url" type="button" title="Открыть сайт" aria-label="Открыть сайт"><svg class="i i-sm"><use href="#i-globe"/></svg></button>
               <button class="icon-btn icon-btn--sm icon-btn--outline" data-act="more" type="button" title="Выключить, перезагрузить" aria-label="Питание"><svg class="i i-sm"><use href="#i-power"/></svg></button>
+              <span class="toolbar__sep" aria-hidden="true"></span>
+              <button class="btn btn--sm" id="focus-btn" type="button" title="Предупреждать, если ученик открыл запрещённое"><svg class="i i-sm"><use href="#i-target"/></svg><span>Фокус</span></button>
             </div>
             <div class="toolbar__right">
               <div class="search" id="search">
@@ -194,6 +199,21 @@
               <div class="empty__title">Компьютеры класса появятся здесь</div>
               <div class="empty__text">Запустите ClassControl Agent на компьютерах учеников в этой же сети — они найдут учителя сами, ничего настраивать не нужно.</div>
             </div>
+          </div>
+        </div>
+
+        <div class="view hidden" id="view-tasks">
+          <div class="toolbar">
+            <span class="toolbar__title">Задания урока</span>
+            <div class="toolbar__right">
+              <button class="btn btn--sm" id="task-assign" type="button"><svg class="i i-sm"><use href="#i-download"/></svg><span>Раздать файл</span></button>
+              <button class="btn btn--sm" id="task-collect" type="button"><svg class="i i-sm"><use href="#i-inbox"/></svg><span>Собрать работы</span></button>
+              <button class="btn btn--sm btn--primary" id="task-poll" type="button"><svg class="i i-sm"><use href="#i-poll"/></svg><span>Опрос</span></button>
+              <input type="file" id="assign-file" class="hidden">
+            </div>
+          </div>
+          <div class="tasks-scroll">
+            <div class="tasks" id="tasks"></div>
           </div>
         </div>
 
@@ -250,7 +270,8 @@
       <button class="statusbar__item statusbar__link" id="status-lan" type="button" title="Скопировать адрес"><svg class="i i-sm"><use href="#i-wifi"/></svg><span class="mono" id="lan-text">—</span></button>
       <button class="statusbar__item statusbar__link" id="status-home" type="button"><svg class="i i-sm"><use href="#i-globe"/></svg><span id="home-text">Доступ из дома выключен</span></button>
       <span class="statusbar__spacer"></span>
-      <span class="statusbar__item num" id="status-counts">0 ПК · 0 онлайн</span>
+      <span class="statusbar__item num" id="status-pcs"><svg class="i i-sm"><use href="#i-monitor"/></svg><span id="status-pcs-n">0</span></span>
+      <span class="statusbar__item num" id="status-online"><svg class="i i-sm"><use href="#i-users"/></svg><span id="status-online-n">0</span></span>
     </footer>
   </div>
 

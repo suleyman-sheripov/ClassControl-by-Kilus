@@ -45,6 +45,10 @@
     socket.on('agent-ready', (d) => {
       api.connectionState({ connected: true, socketId: socket.id, teacherName: d.teacherName });
       state.broadcast = d.broadcast || { active: false };
+      api.setFocus(d.focus || { enabled: false, words: [] });
+      const act = d.activity || {};
+      if (act.poll) api.task({ type: 'poll', poll: act.poll });
+      if (act.collection) api.task({ type: 'collect', collection: act.collection });
       syncDemo();
       startShots();
     });
@@ -94,6 +98,14 @@
       }
     });
     socket.on('chat-history', (list) => api.chatEvent({ type: 'history', list }));
+
+    // Задания, опросы, сбор работ, «Фокус»
+    socket.on('assignment', (item) => api.assignment({ ...item, url: address + item.url }));
+    socket.on('poll', (poll) => api.task({ type: 'poll', poll }));
+    socket.on('poll-closed', (poll) => api.task({ type: 'poll-closed', poll }));
+    socket.on('collect-request', (collection) => api.task({ type: 'collect', collection }));
+    socket.on('collect-closed', (c) => api.task({ type: 'collect-closed', collection: c }));
+    socket.on('focus', (f) => api.setFocus(f));
     socket.on('clear-canvas', () => {});
   }
 
@@ -106,6 +118,9 @@
   api.onProcesses((list) => socket && socket.emit('agent-processes', { list }));
   api.onControlResult((r) => socket && socket.emit('agent-control-result', r));
   api.onAgentStatus((s) => socket && socket.emit('agent-status', s));
+  // Окна агента (опрос, «Фокус») отправляют события через это подключение — от имени ПК
+  const ALLOWED = new Set(['poll-answer', 'focus-violation']);
+  api.onSocketEmit(({ event, data }) => { if (ALLOWED.has(event) && socket && socket.connected) socket.emit(event, data); });
 
   // ---------- Скриншоты ----------
   function startShots() {

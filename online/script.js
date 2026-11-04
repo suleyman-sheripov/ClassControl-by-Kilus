@@ -17,7 +17,7 @@
     line.replaceChildren(
       CC.el('span', { class: 'dot ' + (!socket.connected ? 'dot--warning dot--pulse' : lesson.teacherOnline ? 'dot--positive' : '') }),
       CC.el('span', { text: !socket.connected ? 'Подключаюсь к классу…'
-        : lesson.teacherOnline ? `${lesson.teacherName} · урок идёт` : 'Учитель ещё не начал урок — можно войти и подождать' }));
+        : lesson.teacherOnline ? `${lesson.teacherName} ведёт урок` : 'Учитель ещё не начал урок — можно войти и подождать' }));
   }
 
   socket.on('lesson-info', (info) => {
@@ -68,6 +68,10 @@
     renderTeacher();
     renderStage();
     board.fit();
+    const act = w.activity || {};
+    tasks.poll = act.poll || null;
+    tasks.collect = act.collection || null;
+    renderTasks();
     if (lesson.broadcasting) armRelayFallback();
   });
 
@@ -97,7 +101,7 @@
     $('#teacher-line').textContent = text;
   }
   function renderTeacher() {
-    setTeacherLine(lesson.teacherOnline ? `${lesson.teacherName} · на связи` : `${lesson.teacherName} · не в сети`, lesson.teacherOnline ? 'ok' : '');
+    setTeacherLine(lesson.teacherOnline ? `${lesson.teacherName} на связи` : `${lesson.teacherName} пока не в сети`, lesson.teacherOnline ? 'ok' : '');
   }
   socket.on('teacher-online', ({ name }) => { lesson.teacherOnline = true; lesson.teacherName = name; renderTeacher(); renderJoinLesson(); });
   socket.on('teacher-disconnected', () => {
@@ -374,6 +378,82 @@
   $('#whisper-btn').addEventListener('click', () => {
     chat.setRecipient(chat.to ? null : { id: 'teacher', name: lesson.teacherName });
   });
+
+  // ---------- Опрос и сдача работы ----------
+  const tasks = { poll: null, collect: null };
+  let submitWaiter = null;
+  const finishSubmit = (r) => { const w = submitWaiter; submitWaiter = null; uploading = false; if (w) w(r); };
+  let uploading = false;
+  // Отмену засчитываем с небольшой задержкой: некоторые браузеры присылают cancel перед change
+  $('#submit-file').addEventListener('cancel', () => setTimeout(() => { if (!uploading) finishSubmit({ ok: false, canceled: true }); }, 400));
+  $('#submit-file').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    uploading = true;
+    if (!submitWaiter) {
+      // Кнопку уже «отпустили» — покажем результат сами
+      submitWaiter = (r) => {
+        if (r.ok && tasks.collect) { tasks.collect.submitted = r.filename; renderTasks(); toast('Работа сдана', { kind: 'positive' }); }
+        else if (!r.ok && !r.canceled) toast(r.error || 'Не удалось сдать работу', { kind: 'warning' });
+      };
+    }
+    if (!f) return finishSubmit({ ok: false, canceled: true });
+    if (f.size > 50 * 1024 * 1024) return finishSubmit({ ok: false, error: 'Файл больше 50 МБ' });
+    const fd = new FormData();
+    fd.append('file', f);
+    try {
+      const res = await fetch(`/submit?socketId=${encodeURIComponent(socket.id)}&collect=${encodeURIComponent(e.target.dataset.collect)}`, { method: 'POST', body: fd });
+      const data = await res.json().catch(() => ({}));
+      finishSubmit(res.ok ? { ok: true, filename: data.filename } : { ok: false, error: data.error });
+    } catch (err) { finishSubmit({ ok: false, error: 'Нет связи с учителем' }); }
+  });
+  function renderTasks() {
+    const has = Boolean(tasks.poll || tasks.collect);
+    $('#task-panel').classList.toggle('hidden', !has);
+    if (!has) return;
+    CC.renderStudentTasks($('#task-root'), tasks, {
+      onAnswer: (id, option) => socket.emit('poll-answer', { id, option }),
+      onSubmit: (collectId) => new Promise((resolve) => {
+        const input = $('#submit-file');
+        if (submitWaiter) submitWaiter({ ok: false, canceled: true });
+        submitWaiter = resolve;
+        input.dataset.collect = collectId;
+        input.value = '';
+        input.click();
+      })
+    });
+  }
+  socket.on('poll', (p) => {
+    tasks.poll = { ...p, open: true };
+    renderTasks();
+    toast('Учитель задал вопрос', { kind: 'accent', icon: 'poll' });
+  });
+  socket.on('poll-closed', (p) => {
+    if (!tasks.poll || tasks.poll.id !== p.id) return;
+    tasks.poll = p.share ? { ...p, open: false, myVote: tasks.poll.myVote } : null;
+    renderTasks();
+  });
+  socket.on('collect-request', (c) => {
+    tasks.collect = c;
+    renderTasks();
+    toast(`Учитель собирает работы: «${c.title}»`, { kind: 'accent', icon: 'inbox' });
+  });
+  socket.on('collect-closed', (c) => {
+    if (tasks.collect && (!c || !c.id || tasks.collect.id === c.id)) { tasks.collect = null; renderTasks(); }
+  });
+
+  // ---------- Тема ----------
+  function renderThemeBtn() {
+    const light = document.documentElement.dataset.theme === 'light';
+    $('#theme-btn use').setAttribute('href', light ? '#i-moon' : '#i-sun');
+    $('#theme-btn').title = light ? 'Тёмная тема' : 'Светлая тема';
+  }
+  $('#theme-btn').addEventListener('click', () => {
+    const light = document.documentElement.dataset.theme !== 'light';
+    if (light) document.documentElement.dataset.theme = 'light'; else delete document.documentElement.dataset.theme;
+    try { localStorage.setItem('cc-theme', light ? 'light' : 'dark'); } catch (e) {}
+    renderThemeBtn();
+  });
+  renderThemeBtn();
 
   window.addEventListener('beforeunload', () => { if (shareStream) socket.emit('online-user-stop-share'); });
   renderJoinLesson();

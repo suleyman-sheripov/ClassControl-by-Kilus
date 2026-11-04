@@ -18,6 +18,17 @@ contextBridge.exposeInMainWorld('agentAPI', {
   onProcesses: on('processes'),
   onControlResult: on('control-result'),
   notify: (title, body) => ipcRenderer.send('notify', { title, body }),
+  setFocus: (f) => ipcRenderer.send('set-focus', f),
+  assignment: (item) => ipcRenderer.send('assignment', item),
+  task: (t) => ipcRenderer.send('task', t),
+  onSocketEmit: on('socket-emit'),
+
+  // Окно задания (опрос, сдача работы)
+  onTask: on('task'),
+  taskAnswer: (pollId, option) => ipcRenderer.send('task-answer', { pollId, option }),
+  taskSubmit: (collectId) => ipcRenderer.invoke('task-submit', collectId),
+  taskClose: () => ipcRenderer.send('task-close'),
+  openFile: (p) => ipcRenderer.send('open-file', p),
 
   // Чат (окно беседы ⇄ фоновое окно)
   chatSend: (msg) => ipcRenderer.send('chat-send', msg),

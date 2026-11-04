@@ -12,7 +12,7 @@
       boot: async () => ({ port: Number(q.get('port')) || 3000, token: q.get('token') || '', settings: { teacherName: 'Учитель', roomName: 'Кабинет 301', quality: '1280x720', fps: 15, recordDir: '~/Видео/ClassControl', reportDir: '~/Документы/ClassControl' }, tunnel: { state: 'off' } }),
       saveSettings: async (p) => Object.assign(store, p),
       getSources: async () => [], setShareSource: async () => {}, ownWindowSource: async () => null,
-      keepAwake: async () => {}, openPath: async () => {}, openExternal: async (u) => window.open(u),
+      keepAwake: async () => {}, openPath: async () => {}, openFolder: async () => {}, openExternal: async (u) => window.open(u),
       recStart: async () => null, recChunk: () => {}, recStop: async () => null,
       lessonSave: async () => null, saveBoard: async () => null,
       tunnel: async () => ({ state: 'off' }), onTunnel: () => {}, pickFolder: async () => null
@@ -64,10 +64,12 @@
 
   socket.on('teacher-ready', (st) => {
     S.connected = true;
-    setServerStatus('ok', `Сервер урока работает · порт ${boot.port}`);
+    setServerStatus('ok', `Сервер урока работает, порт ${boot.port}`);
     S.lessonStartedAt = st.lessonStartedAt;
     S.links = st.links || [];
-    applyRoster({ agents: st.agents, online: st.online });
+    applyRoster({ agents: st.agents, online: st.online, offline: st.offline });
+    S.ready = true;
+    applyActivity(st.activity);
     chat.setHistory(st.chat);
     board.setStrokes(st.board.strokes || []);
     renderLinks();
@@ -92,6 +94,9 @@
       { icon: 'folder', label: 'Папка с отчётами', run: () => api.openPath(settings.reportDir) },
       { icon: 'record', label: 'Папка с записями', run: () => api.openPath(settings.recordDir) },
       '-',
+      document.documentElement.dataset.theme === 'light'
+        ? { icon: 'moon', label: 'Тёмная тема', run: () => { applyTheme('dark'); api.saveSettings({ theme: 'dark' }).then(x => { if (x) settings = x; }); } }
+        : { icon: 'sun', label: 'Светлая тема', run: () => { applyTheme('light'); api.saveSettings({ theme: 'light' }).then(x => { if (x) settings = x; }); } },
       { icon: 'settings', label: 'Настройки', run: openSettings }
     ], { alignRight: right });
   }
@@ -135,10 +140,10 @@
   // ---------- Переключение режимов ----------
   function setTab(tab) {
     S.tab = tab;
-    $('#tab-monitoring').setAttribute('aria-selected', tab === 'monitoring');
-    $('#tab-board').setAttribute('aria-selected', tab === 'board');
-    $('#view-monitoring').classList.toggle('hidden', tab !== 'monitoring');
-    $('#view-board').classList.toggle('hidden', tab !== 'board');
+    for (const t of ['monitoring', 'board', 'tasks']) {
+      $('#tab-' + t).setAttribute('aria-selected', tab === t);
+      $('#view-' + t).classList.toggle('hidden', tab !== t);
+    }
     $('#board-tools').classList.toggle('hidden', tab !== 'board');
     $('#studio').classList.toggle('is-compact', tab === 'board');
     socket.emit('monitoring-active', tab === 'monitoring');
@@ -147,6 +152,7 @@
   }
   $('#tab-monitoring').addEventListener('click', () => setTab('monitoring'));
   $('#tab-board').addEventListener('click', () => setTab('board'));
+  $('#tab-tasks').addEventListener('click', () => setTab('tasks'));
 
   // Боковые панели на узком окне
   $('#toggle-left').addEventListener('click', () => { $('#app').classList.toggle('show-left'); $('#app').classList.remove('show-right'); });
@@ -188,7 +194,10 @@
 
   function updateCounts() {
     const n = S.agents.size, m = S.online.size;
-    $('#status-counts').textContent = `${n} ПК · ${m} онлайн`;
+    $('#status-pcs-n').textContent = n;
+    $('#status-pcs').title = `${n} ${CC.plural(n, 'компьютер', 'компьютера', 'компьютеров')} класса на связи`;
+    $('#status-online-n').textContent = m;
+    $('#status-online').title = `${m} ${CC.plural(m, 'ученик', 'ученика', 'учеников')} онлайн`;
     $('#tab-pc-count').textContent = n;
     $('#count-class').textContent = n;
     $('#count-home').textContent = m;
@@ -260,12 +269,25 @@
   $('#invite-btn').addEventListener('click', openInvite);
 
   // ---------- Участники ----------
-  function applyRoster({ agents, online }) {
+  let goneBatch = [];
+  let goneTimer = null;
+  function applyRoster({ agents, online, offline }) {
     const prevAgents = S.agents;
     S.agents = new Map(agents.map(a => [a.id, a]));
     S.online = new Map(online.map(u => [u.id, u]));
+    S.offline = new Map((offline || []).map(a => [a.host, a]));
+    // Кто пропал во время урока — сообщаем одной строкой, если сразу несколько
+    if (S.ready) {
+      const hosts = new Set(agents.map(a => a.host));
+      for (const a of prevAgents.values()) if (!hosts.has(a.host)) goneBatch.push(a.name);
+      if (goneBatch.length && !goneTimer) goneTimer = setTimeout(() => {
+        const n = goneBatch.length;
+        toast(n === 1 ? `${goneBatch[0]} отключился` : `${n} ${CC.plural(n, 'компьютер отключился', 'компьютера отключились', 'компьютеров отключились')}`, { kind: 'warning', icon: 'power-off' });
+        goneBatch = []; goneTimer = null;
+      }, 2500);
+    }
     for (const id of [...S.selected]) if (!S.agents.has(id)) S.selected.delete(id);
-    for (const [id, url] of S.shots) if (!S.agents.has(id)) { URL.revokeObjectURL(url); S.shots.delete(id); }
+    for (const id of [...S.shots.keys()]) if (!S.agents.has(id)) S.shots.delete(id);
     if (prevAgents.size && agents.length > prevAgents.size) {
       const fresh = agents.filter(a => !prevAgents.has(a.id));
       if (fresh.length === 1) toast(`${fresh[0].name} подключился`, { icon: 'monitor' });
@@ -369,19 +391,56 @@
       .sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
   }
 
+  function visibleOffline() {
+    return [...(S.offline || new Map()).values()]
+      .filter(a => !S.filter || a.name.toLowerCase().includes(S.filter) || a.host.toLowerCase().includes(S.filter))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
+  }
+
   function renderGrid() {
     const grid = $('#pc-grid');
     const list = visibleAgents();
-    $('#pc-empty').classList.toggle('hidden', S.agents.size > 0);
-    const keep = new Set(list.map(a => a.id));
+    const off = visibleOffline();
+    $('#pc-empty').classList.toggle('hidden', S.agents.size > 0 || (S.offline && S.offline.size > 0));
+    const keep = new Set([...list.map(a => a.id), ...off.map(a => 'off:' + a.host)]);
     $$('.pc', grid).forEach(card => { if (!keep.has(card.dataset.id)) card.remove(); });
-    list.forEach((a, i) => {
+    let i = 0;
+    list.forEach((a) => {
       let card = grid.querySelector(`.pc[data-id="${CSS.escape(a.id)}"]`);
-      if (!card) card = buildCard(a);
+      if (!card) {
+        card = buildCard(a);
+        if (S.ready) card.classList.add('is-new');
+        // Тот же компьютер вернулся — показываем его прошлый кадр, пока не придёт новый
+        const last = S.lastShot && S.lastShot.get(a.host);
+        if (last) { const img = card.querySelector('.pc__screen img'); img.src = last; img.classList.remove('hidden'); card.querySelector('.pc__screen .empty')?.remove(); }
+      }
       updateCard(card, a);
       if (grid.children[i] !== card) grid.insertBefore(card, grid.children[i] || null);
+      i++;
+    });
+    off.forEach((a) => {
+      let card = grid.querySelector(`.pc[data-id="${CSS.escape('off:' + a.host)}"]`);
+      if (!card) card = buildOfflineCard(a);
+      card.querySelector('.pc__status-text').textContent = 'не в сети с ' + CC.clock(a.lastSeen);
+      if (grid.children[i] !== card) grid.insertBefore(card, grid.children[i] || null);
+      i++;
     });
     updateSelectionUi();
+  }
+
+  function buildOfflineCard(a) {
+    const last = S.lastShot && S.lastShot.get(a.host);
+    return el('article', { class: 'pc is-offline', 'data-id': 'off:' + a.host },
+      el('div', { class: 'pc__screen' },
+        last ? el('img', { src: last, alt: '', draggable: 'false' }) : null,
+        el('div', { class: 'pc__offline' }, icon('power-off'), 'Агент не на связи')),
+      el('div', { class: 'pc__foot' },
+        el('div', { class: 'pc__meta' },
+          el('span', { class: 'pc__name', text: a.name, title: a.host }),
+          el('span', { class: 'pc__status' }, el('span', { class: 'dot' }), el('span', { class: 'pc__status-text' }))),
+        el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Убрать из списка', 'aria-label': 'Убрать ' + a.name, onclick: async () => {
+          if (await CC.confirm(`Убрать ${a.name} из списка?`, 'Карточка появится снова, когда агент на этом компьютере подключится.', 'Убрать')) socket.emit('forget-agent', { host: a.host });
+        } }, icon('x', 'i-sm'))));
   }
 
   function buildCard(a) {
@@ -415,6 +474,13 @@
     card.querySelector('.pc__status-text').textContent = a.locked ? 'заблокирован' : CC.idleText(idle);
     card.classList.toggle('is-selected', S.selected.has(a.id));
     card.querySelector('.pc__check input').checked = S.selected.has(a.id);
+    card.classList.toggle('is-alert', Boolean(a.focusHit));
+    let alertEl = card.querySelector('.pc__alert');
+    if (a.focusHit) {
+      if (!alertEl) { alertEl = el('div', { class: 'pc__alert' }, icon('target', 'i-sm'), el('span')); card.querySelector('.pc__screen').appendChild(alertEl); }
+      alertEl.querySelector('span').textContent = a.focusHit;
+      alertEl.title = a.focusHit;
+    } else if (alertEl) alertEl.remove();
     let veil = card.querySelector('.pc__veil');
     if (a.locked && !veil) card.querySelector('.pc__screen').appendChild(el('div', { class: 'pc__veil' }, icon('lock', 'i-sm'), 'Экран заблокирован'));
     if (!a.locked && veil) veil.remove();
@@ -432,7 +498,14 @@
     const blob = new Blob([image], { type: 'image/jpeg' });
     const url = URL.createObjectURL(blob);
     const img = card.querySelector('.pc__screen img');
-    img.onload = () => { const old = S.shots.get(agentId); if (old && old !== url) URL.revokeObjectURL(old); S.shots.set(agentId, url); };
+    img.onload = () => {
+      // Последний кадр храним по имени компьютера: он пригодится, если ПК отключится
+      if (!S.lastShot) S.lastShot = new Map();
+      const prev = S.lastShot.get(a.host);
+      if (prev && prev !== url) URL.revokeObjectURL(prev);
+      S.lastShot.set(a.host, url);
+      S.shots.set(agentId, url);
+    };
     img.src = url;
     img.classList.remove('hidden');
     card.querySelector('.pc__screen .empty')?.remove();
@@ -458,7 +531,7 @@
     const all = $('#select-all');
     all.checked = n > 0 && n === total;
     all.indeterminate = n > 0 && n < total;
-    $('#selection-label').textContent = n ? `Выбрано ${n} из ${total}` : total ? `Все компьютеры · ${total}` : 'Компьютеры класса';
+    $('#selection-label').textContent = n ? `Выбрано ${n} из ${total}` : total ? `${total} ${CC.plural(total, 'компьютер', 'компьютера', 'компьютеров')} на связи` : 'Компьютеры класса';
     $('#pc-actions').classList.toggle('is-idle', total === 0);
     $('#pc-grid').classList.toggle('has-selection', n > 0);
     const lockAllBtn = $('[data-act="lock"]');
@@ -981,12 +1054,15 @@
       $('#preview-live').classList.toggle('hidden', !live);
       $('#live-badge').classList.toggle('hidden', !live);
       const n = this.peers.size;
-      $('#viewers-meta').textContent = live ? `${n} ${CC.plural(n, 'зритель', 'зрителя', 'зрителей')}` : '';
+      const total = Math.max(n, this.viewersTotal || 0);
+      $('#viewers-meta').textContent = live ? `${total} ${CC.plural(total, 'зритель', 'зрителя', 'зрителей')}` : '';
+      $('#viewers-meta').title = live && this.relayed ? `${this.relayed} компьютеров класса получают эфир друг от друга — так ноутбук учителя не перегружается` : '';
       $('#quality').disabled = live; $('#fps').disabled = live; $('#opt-audio').disabled = live;
     }
   };
 
   socket.on('peer-request', ({ ids }) => Broadcast.connect(ids));
+  socket.on('viewers', ({ total, relayed }) => { Broadcast.viewersTotal = total; Broadcast.relayed = relayed; Broadcast.render(); });
   socket.on('peer-gone', ({ id }) => { Broadcast.drop(id); dropVoice(id); });
 
   setInterval(() => { if (Broadcast.active) $('#live-time').textContent = CC.duration(Date.now() - Broadcast.startedAt); }, 1000);
@@ -1323,6 +1399,250 @@
     Recorder.active ? Recorder.stop() : Recorder.start().catch(err => toast('Не удалось начать запись: ' + err.message, { kind: 'warning' }));
   });
 
+  // ---------- Задания: опросы, сбор работ, раздача файлов ----------
+  S.activity = { polls: [], collections: [], assignments: [], focus: { enabled: false, words: [] }, students: [] };
+  S.openLists = new Set();
+  socket.on('activity', applyActivity);
+
+  function applyActivity(a) {
+    if (!a) return;
+    S.activity = a;
+    renderTasks();
+    renderFocusBtn();
+    const open = a.polls.filter(p => p.open).length + a.collections.filter(c => c.open).length;
+    const badge = $('#tab-tasks-count');
+    badge.textContent = open;
+    badge.classList.toggle('hidden', !open);
+  }
+
+  function taskItems() {
+    const a = S.activity;
+    return [
+      ...a.polls.map(p => ({ type: 'poll', open: p.open, ts: p.createdAt, data: p })),
+      ...a.collections.map(c => ({ type: 'collect', open: c.open, ts: c.createdAt, data: c })),
+      ...a.assignments.map(x => ({ type: 'assign', open: false, ts: x.ts, data: x }))
+    ].sort((x, y) => (y.open - x.open) || (y.ts - x.ts));
+  }
+
+  function starters(compact) {
+    const tile = (iconName, title, text, run) => el('button', { class: 'starter', type: 'button', onclick: run },
+      el('span', { class: 'starter__icon' }, icon(iconName)),
+      el('span', { class: 'starter__title', text: title }),
+      compact ? null : el('span', { class: 'starter__text', text }));
+    return el('div', { class: 'starters' },
+      tile('poll', 'Быстрый опрос', 'Вопрос с вариантами ответа. Ответы видно сразу, итоги можно показать классу.', createPoll),
+      tile('inbox', 'Собрать работы', 'Ученики сдают файлы одной кнопкой. Работы ложатся в папку, подписанные именами.', createCollection),
+      tile('download', 'Раздать файл', 'Файл появится на рабочем столе каждого компьютера класса и в чате урока.', () => $('#assign-file').click()));
+  }
+
+  function renderTasks() {
+    const root = $('#tasks');
+    root.replaceChildren();
+    const items = taskItems();
+    if (!items.length) {
+      root.appendChild(starters(false));
+      return;
+    }
+    for (const it of items) {
+      if (it.type === 'poll') root.appendChild(pollCard(it.data));
+      if (it.type === 'collect') root.appendChild(collectCard(it.data));
+      if (it.type === 'assign') root.appendChild(assignCard(it.data));
+    }
+  }
+
+  function taskHead(kindIcon, kind, title, open, menuItems) {
+    return el('div', { class: 'task__head' },
+      el('div', { class: 'task__main' },
+        el('div', { class: 'task__kind' }, icon(kindIcon, 'i-sm'), el('span', { text: kind }),
+          open ? el('span', { class: 'badge badge--positive', style: { height: '18px', fontSize: '11px' } }, el('span', { class: 'dot dot--positive dot--pulse' }), 'идёт') : null),
+        el('div', { class: 'task__title', text: title })),
+      menuItems ? el('button', { class: 'icon-btn icon-btn--sm', type: 'button', 'aria-label': 'Ещё', onclick: (e) => CC.menu(e.currentTarget, menuItems, { alignRight: true }) }, icon('more', 'i-sm')) : null);
+  }
+
+  function listToggle(key, label, build) {
+    const open = S.openLists.has(key);
+    const wrap = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } });
+    const btn = el('button', { class: 'btn btn--sm btn--ghost task__toggle', type: 'button' },
+      icon(open ? 'chevron-down' : 'chevron-right', 'i-sm'), label);
+    btn.addEventListener('click', () => { if (S.openLists.has(key)) S.openLists.delete(key); else S.openLists.add(key); renderTasks(); });
+    wrap.appendChild(btn);
+    if (open) wrap.appendChild(build());
+    return wrap;
+  }
+
+  function pollCard(p) {
+    const eligible = Math.max(S.activity.students.length, p.total);
+    const max = Math.max(0, ...p.counts);
+    const bars = el('div', { class: 'bars' });
+    p.options.forEach((opt, i) => {
+      const c = p.counts[i] || 0;
+      const pct = p.total ? Math.round(c / p.total * 100) : 0;
+      bars.appendChild(el('div', { class: 'bar' + (c && c === max ? ' is-top' : '') },
+        el('span', { class: 'bar__label', text: opt }),
+        el('span', { class: 'bar__value', text: p.total ? `${c} (${pct}%)` : '0' }),
+        el('div', { class: 'bar__track' }, el('div', { class: 'bar__fill', style: { width: pct + '%' } }))));
+    });
+    const body = el('div', { class: 'task__body' }, bars);
+    if (p.voters && p.voters.length) {
+      body.appendChild(listToggle('pv:' + p.id, 'Кто как ответил', () => el('ul', { class: 'subs' },
+        ...p.voters.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru')).map(v => el('li', null,
+          CC.avatar(v.name, { sm: true }), el('span', { class: 'subs__name', text: v.name }), el('span', { class: 'subs__file', text: p.options[v.option] }))))));
+    }
+    return el('article', { class: 'task' + (p.open ? ' is-open' : '') },
+      taskHead('poll', 'Опрос', p.question, p.open, [
+        { icon: 'chat', label: 'Отправить итоги в чат', run: () => sendPollToChat(p) },
+        { icon: 'trash', label: 'Удалить опрос', danger: true, run: () => socket.emit('poll-delete', { id: p.id }) }
+      ]),
+      body,
+      el('div', { class: 'task__foot' },
+        el('span', { class: 'task__meta', text: `Ответили ${p.total} из ${eligible}` }),
+        p.open ? el('button', { class: 'btn btn--sm btn--primary', type: 'button', onclick: () => socket.emit('poll-close', { id: p.id }) }, icon('check', 'i-sm'), 'Завершить и показать итоги')
+          : el('span', { class: 'faint', style: { fontSize: 'var(--fs-sm)' }, text: 'Итоги показаны ученикам' })));
+  }
+
+  function sendPollToChat(p) {
+    const lines = p.options.map((o, i) => `${o}: ${p.counts[i] || 0}`);
+    socket.emit('chat-message', { text: `Итоги опроса «${p.question}»\n${lines.join('\n')}` });
+    toast('Итоги отправлены в чат', { kind: 'positive', icon: 'chat' });
+  }
+
+  function collectCard(c) {
+    const names = new Set(c.submissions.map(x => x.name));
+    const missing = S.activity.students.filter(st => !names.has(st.name));
+    const eligible = Math.max(S.activity.students.length, c.submissions.length) || 0;
+    const pct = eligible ? Math.round(c.submissions.length / eligible * 100) : 0;
+    const body = el('div', { class: 'task__body' },
+      el('div', { class: 'progress', title: `${pct}%` }, el('div', { class: 'progress__fill', style: { width: pct + '%' } })));
+    if (c.submissions.length) {
+      body.appendChild(el('ul', { class: 'subs' }, ...c.submissions.slice().sort((a, b) => b.ts - a.ts).map(x => el('li', null,
+        CC.avatar(x.name, { sm: true }), el('span', { class: 'subs__name', text: x.name }),
+        el('span', { class: 'subs__file', text: x.filename, title: x.filename }), el('span', { class: 'subs__time', text: CC.clock(x.ts) })))));
+    } else {
+      body.appendChild(el('div', { class: 'faint', style: { fontSize: 'var(--fs-sm)' }, text: c.open ? 'Ждём первые работы. У учеников появилась кнопка «Сдать работу».' : 'Никто не сдал работу.' }));
+    }
+    if (c.open && missing.length) {
+      body.appendChild(listToggle('cm:' + c.id, `Ещё не сдали: ${missing.length}`, () => el('ul', { class: 'subs subs--missing' },
+        ...missing.map(st => el('li', null, CC.avatar(st.name, { sm: true }), el('span', { class: 'subs__name', text: st.name }),
+          el('span', { class: 'subs__file', text: st.role === 'agent' ? 'в классе' : 'онлайн' }))))));
+    }
+    return el('article', { class: 'task' + (c.open ? ' is-open' : '') },
+      taskHead('inbox', 'Сбор работ', c.title, c.open, null),
+      body,
+      el('div', { class: 'task__foot' },
+        el('span', { class: 'task__meta', text: `Сдали ${c.submissions.length} из ${eligible}` }),
+        el('button', { class: 'btn btn--sm', type: 'button', onclick: () => api.openFolder(c.dir) }, icon('folder', 'i-sm'), 'Папка'),
+        c.open ? el('button', { class: 'btn btn--sm btn--primary', type: 'button', onclick: () => socket.emit('collect-stop', { id: c.id }) }, 'Закончить сбор') : null));
+  }
+
+  function assignCard(x) {
+    return el('article', { class: 'task' },
+      taskHead('download', 'Раздан файл', x.filename, false, null),
+      el('div', { class: 'task__foot' },
+        el('span', { class: 'task__meta', text: `${CC.size(x.size)}, в ${CC.clock(x.ts)}` }),
+        el('a', { class: 'btn btn--sm', href: BASE + x.url, download: x.filename }, icon('download', 'i-sm'), 'Скачать')));
+  }
+
+  async function createPoll() {
+    const q = el('input', { class: 'input input--lg', placeholder: 'Например: Сколько будет 7 × 8?', maxlength: 300 });
+    const list = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } });
+    const addOpt = (val) => {
+      if (list.children.length >= 8) return;
+      const input = el('input', { class: 'input', placeholder: `Вариант ${list.children.length + 1}`, maxlength: 120 });
+      input.value = val || '';
+      const row = el('div', { class: 'poll-opt' }, input,
+        el('button', { class: 'icon-btn icon-btn--sm', type: 'button', 'aria-label': 'Убрать вариант', onclick: () => { if (list.children.length > 2) row.remove(); } }, icon('x', 'i-sm')));
+      list.appendChild(row);
+      return input;
+    };
+    const setOpts = (arr) => { list.replaceChildren(); arr.forEach(addOpt); };
+    setOpts(['', '']);
+    const presets = [['Да', 'Нет'], ['Понятно', 'Частично', 'Не понятно'], ['А', 'Б', 'В', 'Г']];
+    const body = el('div', { class: 'poll-form' },
+      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Вопрос' }), q),
+      el('div', { class: 'field' }, el('span', { class: 'field__label', text: 'Варианты' }), list,
+        el('div', { class: 'chips', style: { marginTop: '4px' } },
+          el('button', { class: 'chip', type: 'button', onclick: () => addOpt('')?.focus() }, icon('plus', 'i-sm'), 'Вариант'),
+          ...presets.map(pr => el('button', { class: 'chip', type: 'button', text: pr.join(' / '), onclick: () => setOpts(pr) })))));
+    const ok = await CC.dialog({
+      title: 'Быстрый опрос', sub: 'Вопрос появится у всех учеников: в классе и дома.', body, wide: true,
+      actions: [{ label: 'Отмена', value: null }, { label: 'Начать опрос', kind: 'primary', primary: true, value: () => true }]
+    });
+    if (!ok) return;
+    const question = q.value.trim();
+    const options = [...list.querySelectorAll('input')].map(i => i.value.trim()).filter(Boolean);
+    if (!question || options.length < 2) { toast('Нужен вопрос и хотя бы два варианта', { kind: 'warning' }); return; }
+    socket.emit('poll-start', { question, options });
+    setTab('tasks');
+  }
+
+  async function createCollection() {
+    const title = await CC.prompt({ title: 'Собрать работы', sub: 'У учеников появится кнопка «Сдать работу». Повторная сдача заменяет прежний файл.', label: 'Что собираем', value: 'Работа на уроке', okLabel: 'Начать сбор' });
+    if (!title) return;
+    socket.emit('collect-start', { title });
+    setTab('tasks');
+  }
+
+  $('#task-poll').addEventListener('click', createPoll);
+  $('#task-collect').addEventListener('click', createCollection);
+  $('#task-assign').addEventListener('click', () => $('#assign-file').click());
+  $('#assign-file').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    await CC.uploadFile(BASE, socket.id, f, null, { assign: '1' });
+    toast(`«${f.name}» отправлен на компьютеры класса`, { kind: 'positive', icon: 'download' });
+  });
+
+  // ---------- Режим «Фокус» ----------
+  const FOCUS_PRESETS = ['YouTube', 'ВКонтакте', 'TikTok', 'Telegram', 'Discord', 'Steam', 'Roblox', 'Minecraft', 'Twitch', 'Одноклассники'];
+  function renderFocusBtn() {
+    const f = S.activity.focus || {};
+    const b = $('#focus-btn');
+    b.classList.toggle('is-on', Boolean(f.enabled));
+    b.title = f.enabled ? 'Фокус включён: ' + f.words.join(', ') : 'Предупреждать, если ученик открыл запрещённое';
+  }
+  $('#focus-btn').addEventListener('click', async () => {
+    const f = S.activity.focus || { enabled: false, words: [] };
+    const chosen = new Set(f.words.length ? f.words : ['youtube', 'вконтакте', 'tiktok', 'steam', 'roblox']);
+    const enabled = el('input', { type: 'checkbox' });
+    enabled.checked = f.enabled || !f.words.length;
+    const chips = el('div', { class: 'chips' });
+    const renderChips = () => {
+      chips.replaceChildren();
+      const all = [...new Set([...FOCUS_PRESETS.map(w => w.toLowerCase()), ...chosen])];
+      all.forEach(w => {
+        const label = FOCUS_PRESETS.find(p => p.toLowerCase() === w) || w;
+        chips.appendChild(el('button', { class: 'chip' + (chosen.has(w) ? ' is-on' : ''), type: 'button', text: label, onclick: () => { if (chosen.has(w)) chosen.delete(w); else chosen.add(w); renderChips(); } }));
+      });
+    };
+    renderChips();
+    const custom = el('input', { class: 'input', placeholder: 'Своё слово из заголовка окна и Enter' });
+    custom.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && custom.value.trim()) { e.preventDefault(); e.stopPropagation(); chosen.add(custom.value.trim().toLowerCase()); custom.value = ''; renderChips(); }
+    });
+    const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
+      el('label', { class: 'switch' }, el('span', { class: 'switch__text' }, el('span', { class: 'switch__label', text: 'Следить за окнами учеников' }), el('span', { class: 'switch__hint', text: 'Если в заголовке окна есть слово из списка, карточка ПК подсветится и придёт уведомление' })), enabled, el('span', { class: 'switch__track' })),
+      el('div', { class: 'field' }, el('span', { class: 'field__label', text: 'Что считать отвлечением' }), chips),
+      custom);
+    const ok = await CC.dialog({ title: 'Фокус на уроке', body, wide: true, actions: [{ label: 'Отмена', value: null }, { label: 'Сохранить', kind: 'primary', value: () => true }] });
+    if (!ok) return;
+    socket.emit('focus-set', { enabled: enabled.checked, words: [...chosen] });
+    toast(enabled.checked && chosen.size ? 'Фокус включён' : 'Фокус выключен', { kind: 'positive', icon: 'target' });
+  });
+  const focusToastAt = new Map();
+  socket.on('focus-alert', ({ agentId, name, title }) => {
+    const last = focusToastAt.get(agentId) || 0;
+    if (Date.now() - last < 60000) return;
+    focusToastAt.set(agentId, Date.now());
+    toast(`${name}: ${title}`, { kind: 'warning', icon: 'target', duration: 8000, action: { label: 'Открыть', run: () => openViewer(agentId) } });
+  });
+
+  // ---------- Тема ----------
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+  }
+  applyTheme(settings.theme);
+
   // ---------- Клавиатура ----------
   document.addEventListener('keydown', (e) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
@@ -1333,6 +1653,7 @@
     if (document.querySelector('.overlay')) return;
     if ((e.ctrlKey || e.metaKey) && e.key === '1') { e.preventDefault(); setTab('monitoring'); }
     if ((e.ctrlKey || e.metaKey) && e.key === '2') { e.preventDefault(); setTab('board'); }
+    if ((e.ctrlKey || e.metaKey) && e.key === '3') { e.preventDefault(); setTab('tasks'); }
     if (typing) return;
     if (S.tab === 'board') {
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); undo(); }
