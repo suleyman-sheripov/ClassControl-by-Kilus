@@ -38,6 +38,7 @@ const DEFAULTS = {
   passwordHash: '',
   passwordSalt: '',
   lastServer: '',
+  room: '',                   // кабинет: агент подключается только к учителю этого кабинета
   stoppedAtBoot: 0            // администратор выключил агент: не поднимать сторожем до перезагрузки
 };
 let settings = { ...DEFAULTS };
@@ -203,16 +204,25 @@ function reportStatus() {
   if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('agent-status', { locked: lockWindows.length > 0 });
 }
 
+let messageWindow = null;
 function showMessage(text, file) {
+  const payload = { text, from: teacherName, file: file || null };
+  // Новое сообщение заменяет предыдущее, а не открывает ещё одно окно
+  if (messageWindow && !messageWindow.isDestroyed()) {
+    messageWindow.webContents.send('message', payload);
+    messageWindow.show(); messageWindow.moveTop();
+    return;
+  }
   const { workArea } = screen.getPrimaryDisplay();
-  const w = new BrowserWindow({
+  const w = messageWindow = new BrowserWindow({
     width: 420, height: 220, x: Math.round(workArea.x + workArea.width / 2 - 210), y: Math.round(workArea.y + workArea.height / 3 - 110),
     frame: false, resizable: false, alwaysOnTop: true, skipTaskbar: false, backgroundColor: '#131916',
     title: 'Сообщение от учителя', webPreferences: webPrefs()
   });
   w.setAlwaysOnTop(true, 'screen-saver');
   w.loadFile(page('message.html'));
-  w.webContents.on('did-finish-load', () => w.webContents.send('message', { text, from: teacherName, file: file || null }));
+  w.webContents.on('did-finish-load', () => w.webContents.send('message', payload));
+  w.on('closed', () => { if (messageWindow === w) messageWindow = null; });
 }
 
 // ---------- Удалённое управление (nut-js) ----------
@@ -429,23 +439,91 @@ function startDiscovery() {
 
 const discovered = new Map(); // адрес -> время последнего ответа (для окна настроек)
 let chosenAt = 0;
+const ignored = new Map();    // адрес учителя -> до какого времени не подключаться («это не мой компьютер»)
+const normRoom = (r) => String(r || '').trim().toLowerCase().replace(/\s+/g, ' ');
+function ignoreServer(address, minutes) {
+  if (!address) return;
+  ignored.set(address, Date.now() + minutes * 60000);
+  if (settings.lastServer === address) { settings.lastServer = ''; saveSettings(); }
+  if (serverAddress === address) { serverAddress = null; connected = false; }
+}
 function onAnnounce(text) {
   if (!text.startsWith('CLASSCONTROL_SERVER:')) return;
-  const [, ip, port] = text.split(':');
+  const [, ip, port, roomEnc = '', teacherEnc = ''] = text.split(':');
   if (!ip || !port) return;
+  let room = '', teacher = '';
+  try { room = decodeURIComponent(roomEnc); teacher = decodeURIComponent(teacherEnc); } catch (e) {}
   const address = `http://${ip}:${port}`;
-  discovered.set(address, Date.now());
+  const now = Date.now();
+  discovered.set(address, { ts: now, room, teacher });
   if (settings.serverMode === 'manual') return;
   if (connected && serverAddress) return;
-  const now = Date.now();
+  if ((ignored.get(address) || 0) > now) return;
+  // ПК закреплён за кабинетом — к учителям других кабинетов не подключается
+  if (settings.room && normRoom(room) !== normRoom(settings.room)) return;
+  const seen = (a) => discovered.has(a) && now - discovered.get(a).ts < 10000;
   // В одной сети может быть несколько кабинетов. Не прыгаем между учителями:
   // предпочитаем того, с кем были на связи в прошлый раз, а выбранного держим 15 секунд.
-  if (settings.lastServer && address !== settings.lastServer && discovered.has(settings.lastServer) &&
-      now - discovered.get(settings.lastServer) < 10000) return;
+  if (settings.lastServer && address !== settings.lastServer && seen(settings.lastServer) &&
+      (ignored.get(settings.lastServer) || 0) <= now) return;
   if (serverAddress && serverAddress !== address && now - chosenAt < 15000 && address !== settings.lastServer) return;
   if (serverAddress !== address) chosenAt = now;
   setServer(address);
 }
+
+
+// ---------- Кто за компьютером ----------
+let studentName = null;       // имя ученика на этот запуск агента (до выхода из Windows)
+let studentAsked = false;
+let uploadToken = '';
+let helloWindow = null;
+function openHello() {
+  if (helloWindow && !helloWindow.isDestroyed()) { helloWindow.show(); helloWindow.focus(); return; }
+  const { workArea } = screen.getPrimaryDisplay();
+  helloWindow = new BrowserWindow({
+    width: 400, height: 270, x: Math.round(workArea.x + workArea.width / 2 - 200), y: Math.round(workArea.y + workArea.height / 3 - 135),
+    frame: false, resizable: false, alwaysOnTop: true, backgroundColor: '#131916', title: 'Кто за компьютером?', webPreferences: webPrefs()
+  });
+  helloWindow.loadFile(page('hello.html'));
+  helloWindow.on('closed', () => { helloWindow = null; });
+}
+ipcMain.on('set-student', (e, name) => {
+  const clean = String(name || '').trim().slice(0, 40);
+  studentName = clean || null;
+  if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('socket-emit', { event: 'agent-student', data: { student: studentName } });
+  if (helloWindow && !helloWindow.isDestroyed()) helloWindow.close();
+  sendAll('connection-state', { connected, teacherName, socketId: agentSocketId, student: studentName });
+});
+ipcMain.on('hello-skip', () => { if (helloWindow && !helloWindow.isDestroyed()) helloWindow.close(); });
+ipcMain.on('open-hello', openHello);
+
+// ---------- Учитель пропал: через минуту снимаем блокировку и управление ----------
+let teacherGoneTimer = null;
+function teacherGone() {
+  if (teacherGoneTimer) return;
+  teacherGoneTimer = setTimeout(() => {
+    teacherGoneTimer = null;
+    // Ученик не должен остаться с заблокированным экраном, если приложение учителя закрылось или упало
+    unlockScreens();
+    remoteActive = false;
+    hideBanner();
+  }, Number(process.env.CLASSCONTROL_TEACHER_GRACE_MS) || 60000);
+}
+ipcMain.on('teacher-gone', teacherGone);
+ipcMain.on('teacher-back', () => { clearTimeout(teacherGoneTimer); teacherGoneTimer = null; });
+ipcMain.on('request-status', reportStatus);
+
+// ---------- «Это не мой компьютер» и закрепление за кабинетом ----------
+ipcMain.on('released', () => {
+  ignoreServer(serverAddress || settings.lastServer, 30);
+  sendAll('connection-state', { connected: false, teacherName, socketId: null });
+});
+ipcMain.on('room-mismatch', () => ignoreServer(serverAddress, 30));
+ipcMain.on('bind-room', (e, { room }) => {
+  if (settings.room || !room) return;
+  settings.room = String(room).slice(0, 60);
+  saveSettings();
+});
 
 // ---------- IPC ----------
 ipcMain.handle('agent-info', () => ({
@@ -456,8 +534,12 @@ ipcMain.handle('agent-info', () => ({
   connected,
   teacherName,
   socketId: agentSocketId,
+  uploadToken,
+  room: settings.room,
+  student: studentName,
   broadcast: broadcastState
 }));
+ipcMain.handle('get-idle', () => powerMonitor.getSystemIdleTime());
 ipcMain.handle('take-screenshot', takeScreenshot);
 ipcMain.on('connection-state', (e, s) => {
   connected = Boolean(s.connected);
@@ -466,7 +548,16 @@ ipcMain.on('connection-state', (e, s) => {
     saveSettings();
   }
   agentSocketId = s.socketId || null;
+  if (s.uploadToken) uploadToken = s.uploadToken;
   if (s.teacherName) teacherName = s.teacherName;
+  if (connected) {
+    clearTimeout(teacherGoneTimer); teacherGoneTimer = null;
+    reportStatus();
+    // Кто за компьютером? Спрашиваем один раз за запуск, когда начался урок
+    if (studentName === null && !studentAsked) { studentAsked = true; openHello(); }
+  } else {
+    teacherGone();
+  }
   if (tray) tray.setToolTip(connected ? `ClassControl — на связи с ${teacherName}` : 'ClassControl — ищу учителя…');
   sendAll('connection-state', { connected, teacherName, socketId: agentSocketId });
 });
@@ -583,7 +674,7 @@ ipcMain.handle('task-submit', async (e, collectId) => {
     if (stat.size > 50 * 1024 * 1024) return { ok: false, error: 'Файл больше 50 МБ' };
     const fd = new FormData();
     fd.append('file', new Blob([fs.readFileSync(file)]), path.basename(file));
-    const res = await fetch(`${serverAddress}/submit?socketId=${encodeURIComponent(agentSocketId || '')}&collect=${encodeURIComponent(collectId)}`, { method: 'POST', body: fd });
+    const res = await fetch(`${serverAddress}/submit?socketId=${encodeURIComponent(agentSocketId || '')}&token=${encodeURIComponent(uploadToken || '')}&collect=${encodeURIComponent(collectId)}`, { method: 'POST', body: fd });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: data.error || 'Не удалось сдать работу' };
     currentTasks.collect.submitted = data.filename;
@@ -652,12 +743,12 @@ ipcMain.handle('config-get', () => {
   if (!configUnlocked) return null;
   const { passwordHash, passwordSalt, ...rest } = settings;
   const now = Date.now();
-  const found = [...discovered].filter(([, t]) => now - t < 15000).map(([a]) => a);
+  const found = [...discovered].filter(([, d]) => now - d.ts < 15000).map(([a, d]) => ({ address: a, room: d.room, teacher: d.teacher }));
   return { ...rest, hostname: os.hostname(), serverAddressNow: serverAddress, connected, found };
 });
 ipcMain.handle('config-save', (e, patch) => {
   if (!configUnlocked) return false;
-  for (const k of ['pcName', 'serverMode', 'serverAddress', 'autoStart', 'notifications']) {
+  for (const k of ['pcName', 'serverMode', 'serverAddress', 'autoStart', 'notifications', 'room']) {
     if (patch[k] !== undefined) settings[k] = patch[k];
   }
   settings.pcName = String(settings.pcName || '').trim().slice(0, 40) || os.hostname();

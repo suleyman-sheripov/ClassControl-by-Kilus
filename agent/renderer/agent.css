@@ -63,3 +63,6 @@ body.transparent { background: transparent; }
 .task-win__head .icon-btn { -webkit-app-region: no-drag; margin-left: auto; }
 .task-win__title { font-weight: 600; font-size: var(--fs-md); }
 .task-win__body { overflow-y: auto; padding: 14px; }
+
+/* «Кто за компьютером?» */
+.hello__body { flex: 1; padding: 14px 16px; }

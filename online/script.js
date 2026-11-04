@@ -4,7 +4,20 @@
   const { $, toast } = CC;
   const socket = io({ transports: ['websocket', 'polling'] });
 
-  const me = { id: null, name: localStorage.getItem('cc-name') || '', joined: false, hand: false };
+  const me = { id: null, name: localStorage.getItem('cc-name') || '', joined: false, hand: false, uploadToken: '' };
+
+  // Код урока из ссылки учителя. Без верного кода на урок не попасть — даже если адрес
+  // в сети теперь принадлежит компьютеру другого учителя.
+  const params = new URLSearchParams(location.search);
+  let code = (params.get('code') || sessionStorage.getItem('cc-code') || '').toUpperCase();
+  let codeOk = false;
+  // Сессия этой вкладки: после обрыва связи ученик возвращается тем же человеком
+  let session = sessionStorage.getItem('cc-session');
+  if (!session) {
+    const a = new Uint8Array(12); crypto.getRandomValues(a);
+    session = [...a].map(b => b.toString(16).padStart(2, '0')).join('');
+    sessionStorage.setItem('cc-session', session);
+  }
   const lesson = { teacherName: 'Учитель', teacherOnline: false, broadcasting: false, board: false };
   let shareLimitMs = 5 * 60 * 1000;
 
@@ -14,19 +27,36 @@
 
   function renderJoinLesson() {
     const line = $('#join-lesson');
+    const where = [lesson.teacherName, lesson.roomName].filter(Boolean).join(', ');
     line.replaceChildren(
-      CC.el('span', { class: 'dot ' + (!socket.connected ? 'dot--warning dot--pulse' : lesson.teacherOnline ? 'dot--positive' : '') }),
+      CC.el('span', { class: 'dot ' + (!socket.connected ? 'dot--warning dot--pulse' : !codeOk ? '' : lesson.teacherOnline ? 'dot--positive' : '') }),
       CC.el('span', { text: !socket.connected ? 'Подключаюсь к классу…'
-        : lesson.teacherOnline ? `${lesson.teacherName} ведёт урок` : 'Учитель ещё не начал урок — можно войти и подождать' }));
+        : !codeOk ? 'Введите код урока от учителя'
+        : lesson.teacherOnline ? `Урок ведёт ${where}` : `${where}: учитель ещё не начал урок, можно войти и подождать` }));
+    $('#code-field').classList.toggle('hidden', codeOk);
   }
 
-  socket.on('lesson-info', (info) => {
-    Object.assign(lesson, { teacherName: info.teacherName, teacherOnline: info.teacherOnline, broadcasting: info.broadcasting });
+  function checkCode(c) {
+    return new Promise((resolve) => socket.emit('check-code', c, (r) => resolve(r || { ok: false })));
+  }
+  async function verifyCode() {
+    if (!code) { codeOk = false; renderJoinLesson(); return; }
+    const r = await checkCode(code);
+    codeOk = r.ok;
+    if (r.ok) {
+      sessionStorage.setItem('cc-code', code);
+      Object.assign(lesson, { teacherName: r.teacherName, roomName: r.roomName, teacherOnline: r.teacherOnline, broadcasting: r.broadcasting });
+    } else {
+      $('#code').value = code;
+      $('#join-error').textContent = r.error === 'Неверный код урока' ? 'Ссылка устарела или код неверный. Спросите у учителя новую ссылку.' : (r.error || '');
+    }
     renderJoinLesson();
-  });
+  }
+
   socket.on('connect', () => {
+    if (me.joined) socket.emit('register-online-user', { name: me.name, code, session });
+    else verifyCode();
     renderJoinLesson();
-    if (me.joined) socket.emit('register-online-user', { name: me.name });
   });
   socket.on('disconnect', () => {
     renderJoinLesson();
@@ -39,20 +69,30 @@
   $('#join-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const name = $('#name').value.trim();
+    if (!codeOk) code = ($('#code').value || '').trim().toUpperCase();
+    if (!code) { $('#join-error').textContent = 'Введите код урока'; $('#code').focus(); return; }
     if (!name) { $('#join-error').textContent = 'Введите имя'; return; }
     $('#join-error').textContent = '';
     me.name = name;
     localStorage.setItem('cc-name', name);
     $('#join-btn').disabled = true;
-    socket.emit('register-online-user', { name });
+    socket.emit('register-online-user', { name, code, session });
     setTimeout(() => { $('#join-btn').disabled = false; }, 3000);
   });
-  socket.on('join-error', (m) => { $('#join-error').textContent = m; $('#join-btn').disabled = false; });
+  socket.on('join-error', (m) => {
+    $('#join-error').textContent = m;
+    $('#join-btn').disabled = false;
+    if (/код/i.test(m)) { codeOk = false; me.joined = false; renderJoinLesson(); $('#code').focus(); }
+  });
 
   socket.on('welcome', (w) => {
     me.id = w.id;
     me.name = w.name;
     me.joined = true;
+    me.uploadToken = w.uploadToken;
+    codeOk = true;
+    sessionStorage.setItem('cc-code', code);
+    if (w.roomName) lesson.roomName = w.roomName;
     shareLimitMs = w.shareLimitMs || shareLimitMs;
     Object.assign(lesson, { teacherName: w.teacherName, teacherOnline: w.teacherOnline, broadcasting: w.broadcast.active, board: w.board.active });
     chat.opts.meId = w.id;
@@ -371,7 +411,7 @@
     meId: null,
     emptyText: 'Здесь пишут учитель и весь класс. Кнопка «Учителю» — личное сообщение.',
     onSend: (text, to) => socket.emit('chat-message', { text, to }),
-    onFile: (file, to) => CC.uploadFile('', socket.id, file, to)
+    onFile: (file, to) => CC.uploadFile('', socket.id, file, to, { token: me.uploadToken })
   });
   socket.on('chat-message', (m) => chat.add(m));
   socket.on('chat-history', (l) => chat.setHistory(l));
@@ -401,7 +441,7 @@
     const fd = new FormData();
     fd.append('file', f);
     try {
-      const res = await fetch(`/submit?socketId=${encodeURIComponent(socket.id)}&collect=${encodeURIComponent(e.target.dataset.collect)}`, { method: 'POST', body: fd });
+      const res = await fetch(`/submit?socketId=${encodeURIComponent(socket.id)}&token=${encodeURIComponent(me.uploadToken)}&collect=${encodeURIComponent(e.target.dataset.collect)}`, { method: 'POST', body: fd });
       const data = await res.json().catch(() => ({}));
       finishSubmit(res.ok ? { ok: true, filename: data.filename } : { ok: false, error: data.error });
     } catch (err) { finishSubmit({ ok: false, error: 'Нет связи с учителем' }); }

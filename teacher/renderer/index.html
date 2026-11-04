@@ -38,6 +38,7 @@
       </nav>
 
       <div class="topbar__right">
+        <span class="badge badge--accent hidden" id="board-badge" title="Учащиеся видят доску на весь экран"><svg class="i i-sm"><use href="#i-board"/></svg>Доска у учеников</span>
         <span class="badge badge--live hidden" id="live-badge"><span class="dot dot--live dot--pulse"></span>В эфире <span class="mono" id="live-time">00:00</span></span>
         <button class="btn btn--sm" id="rec-btn" type="button" title="Запись урока в файл">
           <svg class="i i-sm"><use href="#i-record"/></svg><span id="rec-label">Запись</span>
@@ -83,7 +84,12 @@
               <svg class="i i-sm faint"><use href="#i-chevron-down"/></svg>
             </button>
 
-            <div class="studio-settings">
+            <button class="disclosure" id="studio-more" type="button" aria-expanded="false" aria-controls="studio-settings">
+              <span>Настройки эфира</span>
+              <span class="disclosure__meta" id="studio-summary"></span>
+              <svg class="i i-sm"><use href="#i-chevron-down"/></svg>
+            </button>
+            <div class="studio-settings" id="studio-settings">
             <div class="field-row">
               <label class="field">
                 <span class="field__label">Качество</span>
@@ -139,6 +145,7 @@
             </div>
           </div>
           <div class="panel__body">
+            <button class="btn btn--block" id="board-share-btn" type="button"><svg class="i i-sm"><use href="#i-cast"/></svg><span>Показать доску ученикам</span></button>
             <div class="seg seg--full" role="radiogroup" aria-label="Инструмент">
               <button class="seg__btn is-active" data-tool="pen" type="button" title="Ручка (P)"><svg class="i"><use href="#i-pen"/></svg>Ручка</button>
               <button class="seg__btn" data-tool="eraser" type="button" title="Ластик (E)"><svg class="i"><use href="#i-eraser"/></svg>Ластик</button>
@@ -155,10 +162,6 @@
                 <span class="width-dot" id="width-dot"></span>
               </div>
             </div>
-            <label class="switch">
-              <span class="switch__text"><span class="switch__label">Показывать ученикам</span><span class="switch__hint">Доска поверх эфира у всех</span></span>
-              <input type="checkbox" id="board-share" checked><span class="switch__track"></span>
-            </label>
           </div>
         </section>
       </aside>

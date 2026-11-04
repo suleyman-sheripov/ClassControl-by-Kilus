@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'">
+  <title>Кто за компьютером?</title>
+  <link rel="stylesheet" href="../../shared/ui/theme.css">
+  <link rel="stylesheet" href="agent.css">
+</head>
+<body>
+  <form class="note-win hello" id="form">
+    <div class="note-win__head">
+      <span class="brand__mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span>
+      <span class="note-win__from">Урок начался</span>
+    </div>
+    <div class="hello__body">
+      <label class="field">
+        <span class="field__label">Как вас зовут? Учитель увидит имя рядом с этим компьютером</span>
+        <input class="input input--lg" id="name" maxlength="40" placeholder="Имя и фамилия" autocomplete="off" autofocus>
+      </label>
+    </div>
+    <div class="note-win__foot">
+      <button class="btn btn--ghost" id="skip" type="button" style="margin-right:8px">Пропустить</button>
+      <button class="btn btn--primary" type="submit">Готово</button>
+    </div>
+  </form>
+  <script src="../../shared/ui/icons.js"></script>
+  <script src="hello.js"></script>
+</body>
+</html>

@@ -23,6 +23,11 @@
         <h1 class="join__title">Вход на урок</h1>
         <p class="join__lesson" id="join-lesson"><span class="dot dot--warning dot--pulse"></span><span>Подключаюсь к классу…</span></p>
       </div>
+      <label class="field hidden" id="code-field">
+        <span class="field__label">Код урока</span>
+        <input class="input input--lg mono" id="code" name="code" maxlength="12" placeholder="Например: K7M3PA" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <span class="field__hint">Код есть в ссылке или на QR-коде учителя.</span>
+      </label>
       <label class="field">
         <span class="field__label">Как вас зовут</span>
         <input class="input input--lg" id="name" name="name" maxlength="40" placeholder="Имя и фамилия" autocomplete="name" required>

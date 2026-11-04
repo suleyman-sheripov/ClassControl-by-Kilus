@@ -13,13 +13,16 @@
     onFile: async (file, to) => {
       info = await api.info();
       if (!info.connected) return CC.toast('Нет связи с учителем', { kind: 'warning' });
-      CC.uploadFile(info.serverAddress, info.socketId, file, to);
+      CC.uploadFile(info.serverAddress, info.socketId, file, to, { token: info.uploadToken });
     }
   });
   // Ученик может написать учителю лично
   const toTeacher = CC.el('button', { class: 'icon-btn', type: 'button', title: 'Написать учителю лично', 'aria-label': 'Написать учителю лично' }, CC.icon('lock'));
   toTeacher.addEventListener('click', () => chat.setRecipient(chat.to ? null : { id: 'teacher', name: info.teacherName || 'учитель' }));
-  document.querySelector('.chat-head').appendChild(toTeacher);
+  // «Это я»: ученик может представиться, и учитель увидит его имя у этого ПК
+  const meBtn = CC.el('button', { class: 'icon-btn', type: 'button', title: 'Представиться', 'aria-label': 'Представиться' }, CC.icon('user'));
+  meBtn.addEventListener('click', () => api.openHello());
+  document.querySelector('.chat-head').append(meBtn, toTeacher);
 
   function render(s) {
     document.getElementById('dot').className = 'dot ' + (s.connected ? 'dot--positive' : 'dot--warning dot--pulse');

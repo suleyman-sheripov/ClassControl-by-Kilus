@@ -28,12 +28,13 @@ async function teacher() {
     t.emit('register-teacher', { token: srv.token, name: 'Учитель' });
     const ready = await once(t, 'teacher-ready');
     t.activity = ready.activity;
+    t.uploadToken = ready.uploadToken;
     return t;
 }
 async function online(name) {
     const u = client();
     await once(u, 'connect');
-    u.emit('register-online-user', { name });
+    u.emit('register-online-user', { name, code: srv.lessonCode });
     u.welcome = await once(u, 'welcome');
     return u;
 }
@@ -97,7 +98,7 @@ test('сбор работ: файл сохраняется с именем уч�
     const send = async (name, body) => {
         const fd = new FormData();
         fd.append('file', new Blob([body]), name);
-        return fetch(`${url}/submit?socketId=${u.welcome.id}&collect=${c.id}`, { method: 'POST', body: fd });
+        return fetch(`${url}/submit?socketId=${u.welcome.id}&token=${u.welcome.uploadToken}&collect=${c.id}`, { method: 'POST', body: fd });
     };
     assert.equal((await send('работа.txt', 'v1')).status, 200);
     assert.equal((await send('работа2.txt', 'v2')).status, 200);
@@ -116,6 +117,7 @@ test('задание учителя приходит на компьютеры �
     const got = once(a, 'assignment');
     const fd = new FormData();
     fd.append('socketId', t.id);
+    fd.append('token', t.uploadToken);
     fd.append('assign', '1');
     fd.append('file', new Blob(['задание']), 'Задание 5.pdf');
     const res = await fetch(url + '/upload', { method: 'POST', body: fd });

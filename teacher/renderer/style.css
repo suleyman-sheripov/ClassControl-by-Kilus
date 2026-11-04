@@ -96,7 +96,20 @@ input, textarea, .msg__body, .row__title { user-select: text; }
 .switches { display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
 .studio-settings { display: flex; flex-direction: column; gap: var(--gap); }
 /* Пока открыта доска, эфир занимает минимум места */
-#studio.is-compact .studio-settings { display: none; }
+#studio:not(.is-open) .studio-settings, #studio.is-compact .studio-settings, #studio.is-compact .disclosure { display: none; }
+.disclosure {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 2px;
+  border: 0; background: transparent; color: var(--muted); font-size: var(--fs-body); text-align: left;
+}
+.disclosure:hover { color: var(--text); }
+.disclosure__meta { margin-left: auto; color: var(--faint); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.disclosure .i { transition: transform var(--t-ui) var(--ease); }
+#studio.is-open .disclosure .i { transform: rotate(180deg); }
+#board-share-btn.is-on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.pc__pc { color: var(--faint); font-weight: 400; margin-left: 6px; font-size: var(--fs-sm); }
+.code-box { display: flex; align-items: center; gap: 12px; }
+.code-box__code { font-family: var(--mono); font-size: 22px; font-weight: 500; letter-spacing: .12em; color: var(--text); }
+.onboard__why { margin: 0; color: var(--faint); font-size: var(--fs-sm); line-height: 1.55; }
 #studio.is-compact .panel__body { gap: 8px; padding-bottom: 12px; }
 #studio.is-compact .preview { aspect-ratio: 16 / 7; }
 

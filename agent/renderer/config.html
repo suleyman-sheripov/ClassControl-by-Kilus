@@ -37,6 +37,11 @@
           <input class="input" id="pcName" maxlength="40" placeholder="Например: ПК-07">
           <span class="field__hint" id="host-hint"></span>
         </label>
+        <label class="field">
+          <span class="field__label">Кабинет</span>
+          <input class="input" id="room" maxlength="60" placeholder="Например: Кабинет 301">
+          <span class="field__hint">Агент подключится только к учителю этого кабинета. Пусто — к любому учителю в сети.</span>
+        </label>
         <div class="field">
           <span class="field__label">Подключение к учителю</span>
           <div class="seg seg--full" role="radiogroup">
@@ -47,6 +52,9 @@
         <div class="field hidden" id="manual">
           <input class="input mono" id="serverAddress" placeholder="192.168.1.10:3000">
           <span class="field__hint">Если в школе несколько кабинетов в одной сети — закрепите агент за компьютером своего учителя.</span>
+        </div>
+        <div class="field" id="found-wrap">
+          <span class="field__label">Учителя в сети сейчас</span>
           <div class="found" id="found"></div>
         </div>
         <label class="switch">

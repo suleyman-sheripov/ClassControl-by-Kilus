@@ -40,10 +40,14 @@
     socket = io(addr, { transports: ['websocket'], reconnectionDelayMax: 5000 });
 
     socket.on('connect', () => {
-      socket.emit('register-agent', { hostname: info.hostname, name: info.pcName, os: info.platform });
+      api.info().then((i) => {
+        info = i;
+        socket.emit('register-agent', { hostname: i.hostname, name: i.pcName, os: i.platform, room: i.room, student: i.student });
+      });
     });
     socket.on('agent-ready', (d) => {
-      api.connectionState({ connected: true, socketId: socket.id, teacherName: d.teacherName });
+      api.connectionState({ connected: true, socketId: socket.id, teacherName: d.teacherName, uploadToken: d.uploadToken });
+      api.teacherBack();
       state.broadcast = d.broadcast || { active: false };
       api.setFocus(d.focus || { enabled: false, words: [] });
       const act = d.activity || {};
@@ -52,7 +56,12 @@
       syncDemo();
       startShots();
     });
-    socket.on('auth-error', (m) => console.warn('[AGENT]', m));
+    socket.on('auth-error', (m) => {
+      console.warn('[AGENT]', m);
+      if (m === 'room-mismatch') api.roomMismatch();
+    });
+    socket.on('released', () => api.released());
+    socket.on('bind-room', (d) => api.bindRoom(d));
     socket.on('disconnect', () => {
       api.connectionState({ connected: false });
       stopShots();
@@ -84,8 +93,10 @@
     socket.on('broadcast-started', (st) => { state.broadcast = st || { active: true }; syncDemo(); });
     socket.on('broadcast-stopped', () => { state.broadcast = { active: false }; syncDemo(); });
     socket.on('whiteboard-mode', (on) => { state.board = Boolean(on); syncDemo(); });
-    socket.on('teacher-online', (d) => api.connectionState({ connected: true, socketId: socket.id, teacherName: d.name }));
+    socket.on('teacher-online', (d) => { api.connectionState({ connected: true, socketId: socket.id, teacherName: d.name }); api.teacherBack(); });
     socket.on('teacher-disconnected', () => {
+      api.teacherGone();
+      stopRemote();
       state.broadcast = { active: false }; state.board = false; syncDemo();
       api.notify('ClassControl', 'Учитель отключился');
     });
@@ -119,24 +130,79 @@
   api.onControlResult((r) => socket && socket.emit('agent-control-result', r));
   api.onAgentStatus((s) => socket && socket.emit('agent-status', s));
   // Окна агента (опрос, «Фокус») отправляют события через это подключение — от имени ПК
-  const ALLOWED = new Set(['poll-answer', 'focus-violation']);
+  const ALLOWED = new Set(['poll-answer', 'focus-violation', 'agent-student']);
   api.onSocketEmit(({ event, data }) => { if (ALLOWED.has(event) && socket && socket.connected) socket.emit(event, data); });
 
   // ---------- Скриншоты ----------
+  // Один постоянный захват экрана (1 кадр в секунду, 640×360) дешевле, чем каждую секунду
+  // просить систему сделать снимок. Неизменившийся экран не отправляем — только «пульс» раз в 5 с.
+  const cap = { track: null, grabber: null, canvas: document.createElement('canvas'), probe: document.createElement('canvas'), prev: null, lastSent: 0, failed: false };
+  cap.canvas.width = 640; cap.canvas.height = 360;
+  cap.probe.width = 32; cap.probe.height = 18;
+
+  async function ensureCapture() {
+    if (cap.grabber || cap.failed) return Boolean(cap.grabber);
+    try {
+      const st = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: 640, max: 640 }, height: { ideal: 360, max: 360 }, frameRate: { ideal: 1, max: 2 } }, audio: false });
+      cap.track = st.getVideoTracks()[0];
+      cap.grabber = new ImageCapture(cap.track);
+      cap.track.onended = () => { cap.track = null; cap.grabber = null; };
+      return true;
+    } catch (e) {
+      cap.failed = true;          // запасной путь — снимок через главный процесс
+      return false;
+    }
+  }
+
+  function changed(bmp) {
+    const p = cap.probe.getContext('2d', { willReadFrequently: true });
+    p.drawImage(bmp, 0, 0, 32, 18);
+    const data = p.getImageData(0, 0, 32, 18).data;
+    let diff = 0;
+    if (cap.prev) for (let k = 0; k < data.length; k += 4) diff += Math.abs(data[k] - cap.prev[k]) + Math.abs(data[k + 1] - cap.prev[k + 1]) + Math.abs(data[k + 2] - cap.prev[k + 2]);
+    const isNew = !cap.prev || diff > 600;
+    cap.prev = data;
+    return isNew;
+  }
+
+  async function shot() {
+    if (await ensureCapture()) {
+      const bmp = await cap.grabber.grabFrame();
+      const now = Date.now();
+      const isNew = changed(bmp);
+      if (!isNew && now - cap.lastSent < 5000) { bmp.close(); return; }
+      const ctx = cap.canvas.getContext('2d');
+      const scale = Math.min(640 / bmp.width, 360 / bmp.height, 1);
+      const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+      if (cap.canvas.width !== w || cap.canvas.height !== h) { cap.canvas.width = w; cap.canvas.height = h; }
+      ctx.drawImage(bmp, 0, 0, w, h);
+      bmp.close();
+      const blob = await new Promise(r => cap.canvas.toBlob(r, 'image/jpeg', 0.62));
+      const idle = await api.getIdle();
+      if (blob && socket && socket.connected) socket.emit('agent-screenshot', { image: await blob.arrayBuffer(), idle });
+      cap.lastSent = now;
+      return;
+    }
+    const r = await api.takeScreenshot();
+    if (r && r.image && socket && socket.connected) socket.emit('agent-screenshot', { image: r.image, idle: r.idle });
+  }
+
   function startShots() {
     if (shotTimer) return;
     const tick = async () => {
       if (socket && socket.connected) {
-        try {
-          const r = await api.takeScreenshot();
-          if (r && r.image) socket.emit('agent-screenshot', { image: r.image, idle: r.idle });
-        } catch (e) { /* пропускаем кадр */ }
+        try { await shot(); } catch (e) { /* пропускаем кадр */ }
       }
       shotTimer = setTimeout(tick, shotInterval);
     };
     shotTimer = setTimeout(tick, 200);
   }
-  function stopShots() { clearTimeout(shotTimer); shotTimer = null; }
+  function stopShots() {
+    clearTimeout(shotTimer); shotTimer = null;
+    // Нет связи с учителем — экран не захватываем вовсе
+    if (cap.track) { cap.track.stop(); cap.track = null; cap.grabber = null; }
+    cap.prev = null;
+  }
 
   // ---------- Показ экрана учителю (для просмотра и управления) ----------
   async function startRemote() {

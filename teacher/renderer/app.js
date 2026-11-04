@@ -9,12 +9,12 @@
     const q = new URLSearchParams(location.search);
     const store = {};
     return {
-      boot: async () => ({ port: Number(q.get('port')) || 3000, token: q.get('token') || '', settings: { teacherName: 'Учитель', roomName: 'Кабинет 301', quality: '1280x720', fps: 15, recordDir: '~/Видео/ClassControl', reportDir: '~/Документы/ClassControl' }, tunnel: { state: 'off' } }),
+      boot: async () => ({ port: Number(q.get('port')) || 3000, token: q.get('token') || '', settings: { onboarded: !q.has('firstrun'), teacherName: 'Учитель', roomName: q.has('firstrun') ? '' : 'Кабинет 301', quality: '1280x720', fps: 15, recordDir: '~/Видео/ClassControl', reportDir: '~/Документы/ClassControl' }, tunnel: { state: 'off' } }),
       saveSettings: async (p) => Object.assign(store, p),
       getSources: async () => [], setShareSource: async () => {}, ownWindowSource: async () => null,
       keepAwake: async () => {}, openPath: async () => {}, openFolder: async () => {}, openExternal: async (u) => window.open(u),
       recStart: async () => null, recChunk: () => {}, recStop: async () => null,
-      lessonSave: async () => null, saveBoard: async () => null,
+      lessonSave: async () => null, saveBoard: async () => null, newLessonCode: async () => null, reportBoard: async () => false,
       tunnel: async () => ({ state: 'off' }), onTunnel: () => {}, pickFolder: async () => null
     };
   }
@@ -67,15 +67,17 @@
     setServerStatus('ok', `Сервер урока работает, порт ${boot.port}`);
     S.lessonStartedAt = st.lessonStartedAt;
     S.links = st.links || [];
+    S.uploadToken = st.uploadToken;
+    S.lessonCode = st.lessonCode;
     applyRoster({ agents: st.agents, online: st.online, offline: st.offline });
     S.ready = true;
     applyActivity(st.activity);
     chat.setHistory(st.chat);
     board.setStrokes(st.board.strokes || []);
     renderLinks();
-    socket.emit('monitoring-active', S.tab === 'monitoring');
+    syncMonitoring();
     if (Broadcast.active) socket.emit('start-broadcast', { allowExit: $('#opt-exit').checked });
-    if (S.tab === 'board') socket.emit('whiteboard-mode', $('#board-share').checked);
+    socket.emit('whiteboard-mode', B.shared);
   });
 
   socket.on('roster', applyRoster);
@@ -83,7 +85,7 @@
   socket.on('lesson-started', (d) => { S.lessonStartedAt = d.lessonStartedAt; });
 
   // ---------- Верхняя панель: урок ----------
-  $('#room-name').textContent = settings.roomName || 'Кабинет';
+  $('#room-name').textContent = settings.roomName || 'Кабинет не указан';
   setInterval(() => { $('#lesson-time').textContent = CC.duration(Date.now() - S.lessonStartedAt); }, 1000);
   $('#lesson-chip').addEventListener('click', () => openLessonMenu($('#lesson-chip')));
   $('#menu-btn').addEventListener('click', () => openLessonMenu($('#menu-btn'), true));
@@ -91,6 +93,7 @@
   function openLessonMenu(anchor, right) {
     CC.menu(anchor, [
       { icon: 'save', label: 'Завершить урок и сохранить отчёт', run: endLesson },
+      { icon: 'lock', label: 'Закрепить ПК за этим кабинетом', run: bindRoom },
       { icon: 'folder', label: 'Папка с отчётами', run: () => api.openPath(settings.reportDir) },
       { icon: 'record', label: 'Папка с записями', run: () => api.openPath(settings.recordDir) },
       '-',
@@ -119,7 +122,8 @@
     const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
       el('div', { class: 'field-row' },
         el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Как вас видят ученики' }), name),
-        el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Кабинет или класс' }), room)),
+        el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Кабинет' }), room)),
+      el('p', { class: 'onboard__why', text: 'Компьютеры класса подключаются только к учителю своего кабинета. Если у двух учителей одинаковые названия, ПК могут попасть не к тому учителю.' }),
       el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Записи уроков' }), folder(recDir)),
       el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Отчёты уроков' }), folder(repDir)));
     const saved = await CC.dialog({
@@ -129,7 +133,7 @@
     if (!saved) return;
     settings = await api.saveSettings({
       teacherName: name.value.trim() || 'Учитель',
-      roomName: room.value.trim() || 'Кабинет',
+      roomName: room.value.trim() || settings.roomName,
       recordDir: recDir.value, reportDir: repDir.value
     }) || settings;
     $('#room-name').textContent = settings.roomName;
@@ -146,8 +150,7 @@
     }
     $('#board-tools').classList.toggle('hidden', tab !== 'board');
     $('#studio').classList.toggle('is-compact', tab === 'board');
-    socket.emit('monitoring-active', tab === 'monitoring');
-    socket.emit('whiteboard-mode', tab === 'board' && $('#board-share').checked);
+    syncMonitoring();
     if (tab === 'board') requestAnimationFrame(() => board.fit());
   }
   $('#tab-monitoring').addEventListener('click', () => setTab('monitoring'));
@@ -170,12 +173,12 @@
 
   function renderLinks() {
     const lan = lanLink();
-    $('#lan-text').textContent = lan ? lan.replace('http://', '') : 'нет сети';
+    $('#lan-text').textContent = lan ? lan.replace('http://', '').replace(/\/\?.*$/, '') : 'нет сети';
     const pub = publicLink();
     const home = $('#status-home');
     home.classList.toggle('is-on', Boolean(pub));
     const st = S.tunnel.state;
-    $('#home-text').textContent = pub ? 'Из дома: ' + pub.replace('https://', '')
+    $('#home-text').textContent = pub ? 'Из дома: ' + pub.replace('https://', '').replace(/\/\?.*$/, '')
       : st === 'starting' ? 'Включаю доступ из дома…'
       : st === 'downloading' ? `Скачиваю модуль доступа… ${S.tunnel.progress || 0}%`
       : st === 'error' ? 'Доступ из дома: ошибка'
@@ -220,10 +223,19 @@
     openBtn.addEventListener('click', () => api.openExternal(inviteRefs.current));
     tunnelSwitch.addEventListener('change', async () => { S.tunnel = await api.tunnel(tunnelSwitch.checked); renderLinks(); renderInvite(); });
 
+    const codeEl = el('span', { class: 'code-box__code', text: S.lessonCode || '' });
+    const newCode = el('button', { class: 'btn btn--sm btn--ghost', type: 'button', title: 'Старая ссылка перестанет работать' }, icon('restart', 'i-sm'), 'Новый код');
+    newCode.addEventListener('click', async () => {
+      if (!await CC.confirm('Сменить код урока?', 'Старые ссылки и QR-код перестанут работать. Тем, кто уже на уроке, ничего делать не нужно.', 'Сменить')) return;
+      const c = await api.newLessonCode();
+      if (c) { S.lessonCode = c; codeEl.textContent = c; }
+    });
     const body = el('div', { class: 'invite' },
       el('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px', minWidth: '0' } },
         el('div', { class: 'field' }, el('span', { class: 'field__label', text: 'Ссылка на урок' }),
           el('div', { class: 'link-box' }, linkText, openBtn, copyBtn)),
+        el('div', { class: 'field' }, el('span', { class: 'field__label', text: 'Код урока — уже есть в ссылке, вводить нужно, только если ученик открыл адрес вручную' }),
+          el('div', { class: 'code-box' }, codeEl, newCode)),
         el('label', { class: 'switch' },
           el('span', { class: 'switch__text' }, el('span', { class: 'switch__label', text: 'Доступ из дома через интернет' }), tunnelHint),
           tunnelSwitch, el('span', { class: 'switch__track' })),
@@ -321,7 +333,7 @@
       agents.forEach(a => list.appendChild(el('li', { class: 'row person' },
         el('span', { class: 'avatar', style: { '--av-bg': 'var(--active)', '--av-ink': 'var(--muted)' } }, icon('monitor', 'i-sm')),
         el('div', { class: 'row__main' },
-          el('span', { class: 'row__title', text: a.name }),
+          el('span', { class: 'row__title', text: a.student ? `${a.student} (${a.name})` : a.name }),
           el('span', { class: 'row__sub' }, el('span', { class: 'dot ' + (a.locked ? 'dot--warning' : a.idle >= 180 ? '' : 'dot--positive') }),
             a.locked ? 'заблокирован' : CC.idleText(a.idle || 0))),
         el('div', { class: 'row__actions' },
@@ -467,8 +479,10 @@
   }
 
   function updateCard(card, a) {
-    card.querySelector('.pc__name').textContent = a.name;
-    card.querySelector('.pc__name').title = a.host && a.host !== a.name ? `${a.host} · ${a.ip}` : a.ip;
+    const nameEl = card.querySelector('.pc__name');
+    nameEl.replaceChildren(a.student || a.name);
+    if (a.student) nameEl.appendChild(el('span', { class: 'pc__pc', text: a.name }));
+    nameEl.title = [a.student, a.name, a.host !== a.name ? a.host : null, a.ip].filter(Boolean).join(', ');
     const idle = a.idle || 0;
     card.querySelector('.pc__status .dot').className = 'dot ' + (a.locked ? 'dot--warning' : idle >= 180 ? '' : 'dot--positive');
     card.querySelector('.pc__status-text').textContent = a.locked ? 'заблокирован' : CC.idleText(idle);
@@ -596,7 +610,11 @@
       { icon: 'globe', label: 'Открыть сайт', run: () => actOpenUrl([id]) },
       '-',
       { icon: 'restart', label: 'Перезагрузить', run: () => actPower([id], 'restart') },
-      { icon: 'power', label: 'Выключить', danger: true, run: () => actPower([id], 'shutdown') }
+      { icon: 'power', label: 'Выключить', danger: true, run: () => actPower([id], 'shutdown') },
+      '-',
+      { icon: 'door', label: 'Это не мой компьютер', run: async () => {
+        if (await CC.confirm(`Отпустить ${a.name}?`, 'Компьютер отключится от вас и найдёт учителя своего кабинета. Пригодится, если он попал сюда из соседнего класса.', 'Отпустить')) socket.emit('release-agent', { agentId: id });
+      } }
     ], { alignRight: true });
   }
 
@@ -1168,7 +1186,7 @@
   board.padding = 24;
   board.fit();
   const COLORS = ['#111111', '#e5484d', '#f2a33a', '#2f9e6b', '#2f6fde', '#8e4ec6', '#ffffff'];
-  const B = { tool: 'pen', color: COLORS[0], width: 4, drawing: false, last: null, sid: null, panning: false, space: false };
+  const B = { tool: 'pen', color: COLORS[0], width: 4, drawing: false, last: null, sid: null, panning: false, space: false, shared: false };
 
   const sw = $('#swatches');
   COLORS.forEach(c => {
@@ -1291,7 +1309,17 @@
     const p = await api.saveBoard(board.toPNG());
     if (p) toast('Доска сохранена', { kind: 'positive', action: { label: 'Показать', run: () => api.openPath(p) } });
   });
-  $('#board-share').addEventListener('change', (e) => { if (S.tab === 'board') socket.emit('whiteboard-mode', e.target.checked); });
+  // Доска уходит на экраны учеников только по явной кнопке, а не при открытии вкладки
+  function setBoardShared(on) {
+    B.shared = on;
+    socket.emit('whiteboard-mode', on);
+    const btn = $('#board-share-btn');
+    btn.classList.toggle('is-on', on);
+    btn.querySelector('span').textContent = on ? 'Убрать доску с экранов' : 'Показать доску ученикам';
+    $('#board-badge').classList.toggle('hidden', !on);
+  }
+  $('#board-share-btn').addEventListener('click', () => setBoardShared(!B.shared));
+  $('#board-badge').addEventListener('click', () => setTab('board'));
 
   socket.on('board-strokes', (list) => board.setStrokes(list));
   socket.on('clear-canvas', () => board.clear());
@@ -1304,7 +1332,7 @@
     emptyText: 'Сообщения видят все: ученики в классе и дома. Нажмите на имя ученика, чтобы написать ему лично.',
     fileUrl: (u) => BASE + u,
     onSend: (text, to) => socket.emit('chat-message', { text, to }),
-    onFile: (file, to) => CC.uploadFile(BASE, socket.id, file, to),
+    onFile: (file, to) => CC.uploadFile(BASE, socket.id, file, to, { token: S.uploadToken }),
     onUnseen: () => { $('#chat-meta').textContent = chat && chat.unseen ? `${chat.unseen} новых` : ''; updateRightBadge(); }
   });
   socket.on('connect', () => { chat.opts.meId = socket.id; });
@@ -1589,7 +1617,7 @@
     const f = e.target.files[0];
     e.target.value = '';
     if (!f) return;
-    await CC.uploadFile(BASE, socket.id, f, null, { assign: '1' });
+    await CC.uploadFile(BASE, socket.id, f, null, { assign: '1', token: S.uploadToken });
     toast(`«${f.name}» отправлен на компьютеры класса`, { kind: 'positive', icon: 'download' });
   });
 
@@ -1642,6 +1670,80 @@
     document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
   }
   applyTheme(settings.theme);
+
+  // ---------- Кабинет, первый запуск, прошлый урок ----------
+  async function bindRoom() {
+    if (!settings.roomName) { toast('Сначала укажите кабинет в настройках', { kind: 'warning' }); openSettings(); return; }
+    const n = S.agents.size;
+    if (!n) { toast('Нет подключённых компьютеров'); return; }
+    const ok = await CC.confirm(`Закрепить ${n} ${CC.plural(n, 'компьютер', 'компьютера', 'компьютеров')} за «${settings.roomName}»?`,
+      'Эти ПК будут подключаться только к учителю этого кабинета, даже если в сети есть другие учителя. Уже закреплённые за другим кабинетом не изменятся.', 'Закрепить');
+    if (ok) { socket.emit('bind-room'); toast('Компьютеры закреплены за кабинетом', { kind: 'positive', icon: 'lock' }); }
+  }
+
+  async function onboarding() {
+    const name = el('input', { class: 'input input--lg', value: settings.teacherName && settings.teacherName !== 'Учитель' ? settings.teacherName : '', placeholder: 'Например: Анна Петровна', maxlength: 40 });
+    const room = el('input', { class: 'input input--lg', value: settings.roomName || '', placeholder: 'Например: Кабинет 301', maxlength: 60 });
+    const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
+      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Как вас видят ученики' }), name),
+      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Кабинет' }), room),
+      el('p', { class: 'onboard__why', text: 'Название кабинета нужно, чтобы компьютеры вашего класса не подключились к учителю из соседнего кабинета.' }));
+    let done = false;
+    while (!done) {
+      const ok = await CC.dialog({ title: 'Добро пожаловать в ClassControl', sub: 'Два вопроса перед первым уроком.', body, wide: true,
+        actions: [{ label: 'Готово', kind: 'primary', primary: true, value: () => true }] });
+      if (ok && room.value.trim()) done = true;
+      else if (ok) toast('Укажите кабинет', { kind: 'warning' });
+      else done = true;   // закрыли окно — спросим в следующий раз
+    }
+    if (!room.value.trim()) return;
+    settings = await api.saveSettings({ teacherName: name.value.trim() || 'Учитель', roomName: room.value.trim(), onboarded: true }) || settings;
+    $('#room-name').textContent = settings.roomName;
+    socket.emit('register-teacher', { token: boot.token, name: settings.teacherName });
+  }
+  if (!settings.onboarded || !settings.roomName) setTimeout(onboarding, 300);
+
+  // Прошлый урок (например, вчерашний) уже сохранён в отчёт — дорисуем картинку доски
+  if (boot.previousReport) {
+    const pr = boot.previousReport;
+    if (pr.strokes && pr.strokes.length) {
+      const c = document.createElement('canvas');
+      c.width = 1920; c.height = 1080;
+      const x = c.getContext('2d');
+      x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+      const layer = document.createElement('canvas');
+      layer.width = c.width; layer.height = c.height;
+      const lx = layer.getContext('2d');
+      for (const st of pr.strokes) {
+        lx.globalCompositeOperation = st.tool === 'eraser' ? 'destination-out' : 'source-over';
+        lx.strokeStyle = st.color || '#111'; lx.lineWidth = Math.max(1, st.width * c.width); lx.lineCap = 'round'; lx.lineJoin = 'round';
+        lx.beginPath(); lx.moveTo(st.x0 * c.width, st.y0 * c.height); lx.lineTo(st.x1 * c.width, st.y1 * c.height); lx.stroke();
+      }
+      x.drawImage(layer, 0, 0);
+      api.reportBoard({ dir: pr.dir, png: c.toDataURL('image/png') });
+    }
+    setTimeout(() => toast('Прошлый урок сохранён в отчёт, начат новый', { kind: 'positive', icon: 'save', duration: 8000, action: { label: 'Открыть', run: () => api.openFolder(pr.dir) } }), 800);
+  }
+
+  // ---------- Мониторинг: скриншоты нужны, только когда их видно ----------
+  function syncMonitoring() {
+    socket.emit('monitoring-active', S.tab === 'monitoring' && !document.hidden);
+  }
+  document.addEventListener('visibilitychange', syncMonitoring);
+
+  // ---------- Настройки эфира свёрнуты: меняются редко ----------
+  function renderStudioSummary() {
+    const q = $('#quality');
+    $('#studio-summary').textContent = `${q.options[q.selectedIndex].text}, ${$('#fps').value} к/с`;
+  }
+  $('#studio-more').addEventListener('click', () => {
+    const open = !$('#studio').classList.contains('is-open');
+    $('#studio').classList.toggle('is-open', open);
+    $('#studio-more').setAttribute('aria-expanded', String(open));
+  });
+  $('#quality').addEventListener('change', renderStudioSummary);
+  $('#fps').addEventListener('change', renderStudioSummary);
+  renderStudioSummary();
 
   // ---------- Клавиатура ----------
   document.addEventListener('keydown', (e) => {

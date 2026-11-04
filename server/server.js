@@ -27,6 +27,17 @@ const SHARE_LIMIT_MS = 5 * 60 * 1000;
 const TEACHER_FANOUT = 6;   // сколько компьютеров класса учитель кормит эфиром напрямую
 const RELAY_FANOUT = 3;     // сколько соседей подхватывает каждый компьютер класса
 const MAX_POLL_OPTIONS = 8;
+const STALE_LESSON_MS = 3 * 60 * 60 * 1000;   // урок старше 3 часов — это уже прошлый урок
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // без похожих 0/O, 1/I
+
+/** Код урока: 6 понятных символов, его нет у других учителей в той же сети. */
+function makeLessonCode() {
+    const bytes = crypto.randomBytes(6);
+    return [...bytes].map(b => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+}
+function normCode(c) { return String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); }
+function normRoom(r) { return String(r || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+function round5(n) { return Math.round(n * 1e5) / 1e5; }
 const MAX_STROKES = 60000;
 const MAX_CHAT = 500;
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
@@ -155,6 +166,7 @@ function start(options = {}) {
     const sharedDir = options.sharedDir || path.join(__dirname, '..', 'shared');
     const uploadDir = path.join(dataDir, 'uploads');
     const statePath = path.join(dataDir, 'lesson-state.json');
+    const strokesPath = path.join(dataDir, 'board-strokes.jsonl');
     const log = options.log || ((...a) => console.log('[SERVER]', ...a));
     const TEACHER_TOKEN = options.token || process.env.TEACHER_TOKEN || crypto.randomBytes(24).toString('hex');
     const preferredPort = options.port || Number(process.env.PORT) || DEFAULT_PORT;
@@ -166,7 +178,10 @@ function start(options = {}) {
     // ----- Состояние урока -----
     const state = {
         teacherId: null,
-        teacherName: 'Учитель',
+        teacherName: options.teacherName || 'Учитель',
+        roomName: cleanText(options.roomName, 60),
+        lessonCode: normCode(options.lessonCode) || makeLessonCode(),
+        previousLesson: null,
         agents: new Map(),        // socketId -> { id, name, host, ip, idle, locked, since }
         demoViewers: new Map(),   // socketId -> host
         online: new Map(),        // socketId -> { id, name, hand, voice, sharing, since }
@@ -192,15 +207,42 @@ function start(options = {}) {
     try {
         if (fs.existsSync(statePath)) {
             const saved = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-            if (Array.isArray(saved.strokes)) state.strokes = saved.strokes.slice(-MAX_STROKES);
+            if (Array.isArray(saved.knownAgents)) saved.knownAgents.forEach(a => state.knownAgents.set(a.host, a));
+            if (saved.focus) state.focus = saved.focus;
+            let strokes = Array.isArray(saved.strokes) ? saved.strokes : [];
+            if (fs.existsSync(strokesPath)) {
+                strokes = fs.readFileSync(strokesPath, 'utf-8').split('\n').filter(Boolean)
+                    .map(l => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(Boolean);
+            }
+            const stale = Date.now() - (saved.savedAt || 0) > (options.staleAfterMs || STALE_LESSON_MS);
+            if (stale) {
+                // Вчерашний урок не продолжаем: отдаём его приложению учителя для отчёта и начинаем новый
+                const hasContent = (saved.chat || []).length || (saved.attendance || []).length || (saved.polls || []).length || strokes.length;
+                if (hasContent) {
+                    state.previousLesson = {
+                        teacherName: state.teacherName,
+                        lessonStartedAt: saved.lessonStartedAt || saved.savedAt,
+                        endedAt: saved.savedAt,
+                        chat: saved.chat || [],
+                        attendance: (saved.attendance || []).map(a => ({ ...a, leftAt: a.leftAt || saved.savedAt })),
+                        polls: [],
+                        collections: [],
+                        strokes,
+                        uploadDir: path.join(dataDir, 'uploads')
+                    };
+                }
+                saved.chat = []; saved.attendance = []; saved.polls = []; saved.collections = []; saved.assignments = [];
+                strokes = [];
+                try { fs.unlinkSync(strokesPath); } catch (e) {}
+                saved.lessonStartedAt = Date.now();
+            }
+            state.strokes = strokes.slice(-MAX_STROKES);
             if (Array.isArray(saved.chat)) state.chat = saved.chat.slice(-MAX_CHAT);
             if (Array.isArray(saved.attendance)) state.attendance = saved.attendance;
             if (saved.lessonStartedAt) state.lessonStartedAt = saved.lessonStartedAt;
             if (Array.isArray(saved.polls)) state.polls = saved.polls;
             if (Array.isArray(saved.collections)) state.collections = saved.collections;
             if (Array.isArray(saved.assignments)) state.assignments = saved.assignments;
-            if (saved.focus) state.focus = saved.focus;
-            if (Array.isArray(saved.knownAgents)) saved.knownAgents.forEach(a => state.knownAgents.set(a.host, a));
             state.attendance.forEach(a => { if (!a.leftAt) a.leftAt = saved.savedAt || Date.now(); });
         }
     } catch (e) {
@@ -215,7 +257,6 @@ function start(options = {}) {
             const data = {
                 savedAt: Date.now(),
                 lessonStartedAt: state.lessonStartedAt,
-                strokes: state.strokes,
                 chat: state.chat,
                 attendance: state.attendance,
                 polls: state.polls,
@@ -228,6 +269,27 @@ function start(options = {}) {
                 if (err) log('Ошибка сохранения урока:', err.message);
             });
         }, 1500);
+    }
+
+    // Штрихи доски пишем журналом: дописываем строки, а не пересохраняем весь урок
+    let strokeBuffer = [];
+    let strokeTimer = null;
+    function journalStroke(st) {
+        strokeBuffer.push(JSON.stringify(st));
+        if (strokeTimer) return;
+        strokeTimer = setTimeout(() => {
+            strokeTimer = null;
+            const chunk = strokeBuffer.join('\n') + '\n';
+            strokeBuffer = [];
+            fs.appendFile(strokesPath, chunk, () => {});
+        }, 1000);
+    }
+    function rewriteStrokes() {
+        clearTimeout(strokeTimer);
+        strokeTimer = null;
+        strokeBuffer = [];
+        const body = state.strokes.map(x => JSON.stringify(x)).join('\n');
+        fs.writeFile(strokesPath, body ? body + '\n' : '', () => {});
     }
 
     const app = express();
@@ -317,7 +379,7 @@ function start(options = {}) {
             }
             if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
             const sock = io.sockets.sockets.get(String(req.body.socketId || ''));
-            const who = sock && identity(sock);
+            const who = sock && sock.data.uploadToken === String(req.body.token || '') && identity(sock);
             if (!who || !who.canChat) {
                 fs.unlink(req.file.path, () => {});
                 return res.status(403).json({ error: 'Сначала подключитесь к уроку' });
@@ -371,14 +433,14 @@ function start(options = {}) {
         const ip = normalizeIp(req.headers['cf-connecting-ip'] || req.socket.remoteAddress);
         if (!allow(`submit:${ip}`, 10, 60000)) return res.status(429).json({ error: 'Слишком часто. Подождите минуту.' });
         const sock = io.sockets.sockets.get(String(req.query.socketId || ''));
-        const who = sock && identity(sock);
+        const who = sock && sock.data.uploadToken === String(req.query.token || '') && identity(sock);
         if (!who || who.role === 'teacher') return res.status(403).json({ error: 'Сначала подключитесь к уроку' });
         const c = state.collections.find(x => x.id === String(req.query.collect || ''));
         if (!c || !c.open) return res.status(409).json({ error: 'Учитель уже закончил собирать работы' });
         submitUpload.single('file')(req, res, (err) => {
             if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Файл больше 50 МБ' : err.message });
             if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
-            const key = who.role + ':' + who.name;
+            const key = sock.data.key;
             // Понятное имя в папке: «Иванов Пётр — работа.docx»; повторная сдача заменяет прежнюю
             const nice = safeFileName(`${who.name} — ${req.file.originalname}`);
             const old = c.submissions.find(x => x.key === key);
@@ -400,13 +462,18 @@ function start(options = {}) {
         if (d.role === 'teacher') return { id: socket.id, name: state.teacherName, role: 'teacher', canChat: true };
         if (d.role === 'agent') {
             const a = state.agents.get(socket.id);
-            return a && { id: socket.id, name: a.name, role: 'agent', canChat: true };
+            return a && { id: socket.id, name: agentDisplayName(a), role: 'agent', canChat: true };
         }
         if (d.role === 'online') {
             const u = state.online.get(socket.id);
             return u && { id: socket.id, name: u.name, role: 'online', canChat: true };
         }
         return null;
+    }
+
+    /** Как ПК класса подписан для людей: «Иван Петров (ПК-07)» или просто «ПК-07». */
+    function agentDisplayName(a) {
+        return a.student ? `${a.student} (${a.name})` : a.name;
     }
 
     function teacherSocket() {
@@ -452,14 +519,13 @@ function start(options = {}) {
             collections: state.collections.map(c => ({ id: c.id, title: c.title, open: c.open, createdAt: c.createdAt, dir: path.join(worksDir, c.id), submissions: c.submissions.map(({ key, ...rest }) => rest) })),
             assignments: state.assignments,
             focus: state.focus,
-            students: [...agentList().map(a => ({ name: a.name, role: 'agent' })), ...onlineList().map(u => ({ name: u.name, role: 'online' }))]
+            students: [...agentList().map(a => ({ name: agentDisplayName(a), role: 'agent' })), ...onlineList().map(u => ({ name: u.name, role: 'online' }))]
         };
     }
 
     // Что ученик должен увидеть при подключении: открытый опрос, открытый сбор работ
     function studentActivity(socket) {
-        const who = identity(socket);
-        const key = who ? who.role + ':' + who.name : '';
+        const key = socket.data.key || '';
         const poll = state.polls.find(p => p.open);
         const col = state.collections.find(c => c.open);
         return {
@@ -523,9 +589,10 @@ function start(options = {}) {
         toTeacher('viewers', { total: state.online.size + state.demoViewers.size, relayed: [...state.relay.values()].filter(n => n.parent !== 'teacher').length });
     }
 
-    function visibleChat(socketId) {
-        return state.chat.filter(m => !m.to || m.to === socketId || m.senderId === socketId ||
-            (m.to === 'teacher' && socketId === state.teacherId) || socketId === state.teacherId);
+    function visibleChat(socket) {
+        if (socket.data.role === 'teacher') return state.chat;
+        const key = socket.data.key;
+        return state.chat.filter(m => !m.to || m.toKey === key || m.senderKey === key);
     }
 
     function pushChat(socket, body, to) {
@@ -534,6 +601,7 @@ function start(options = {}) {
             id: crypto.randomBytes(6).toString('hex'),
             ts: Date.now(),
             senderId: socket.id,
+            senderKey: socket.data.key,
             sender: who.name,
             role: who.role,
             type: 'text',
@@ -545,6 +613,7 @@ function start(options = {}) {
             const target = to === 'teacher' ? null : io.sockets.sockets.get(to);
             if (to !== 'teacher' && !target) return null;
             msg.to = to;
+            msg.toKey = to === 'teacher' ? 'teacher' : target.data.key;
             msg.toName = to === 'teacher' ? state.teacherName : (identity(target) || {}).name || '';
             socket.emit('chat-message', msg);
             if (to === 'teacher') toTeacher('chat-message', msg);
@@ -573,8 +642,8 @@ function start(options = {}) {
         return entry;
     }
 
-    function uniqueOnlineName(name) {
-        const taken = new Set(onlineList().map(u => u.name.toLowerCase()));
+    function uniqueOnlineName(name, exceptSession) {
+        const taken = new Set(onlineList().filter(u => u.session !== exceptSession).map(u => u.name.toLowerCase()));
         if (!taken.has(name.toLowerCase())) return name;
         for (let i = 2; i < 100; i++) {
             const candidate = `${name} ${i}`;
@@ -599,9 +668,19 @@ function start(options = {}) {
     }
 
     function links() {
-        const list = ipv4Interfaces().map(i => ({ kind: 'lan', url: `http://${i.address}:${actualPort}`, iface: i.name }));
-        if (state.publicUrl) list.unshift({ kind: 'public', url: state.publicUrl });
+        const q = `/?code=${state.lessonCode}`;
+        const list = ipv4Interfaces().map(i => ({ kind: 'lan', url: `http://${i.address}:${actualPort}${q}`, iface: i.name }));
+        if (state.publicUrl) list.unshift({ kind: 'public', url: state.publicUrl + q });
         return list;
+    }
+
+    function lessonInfo() {
+        return {
+            teacherName: state.teacherName,
+            roomName: state.roomName,
+            teacherOnline: Boolean(state.teacherId),
+            broadcasting: state.broadcast.active
+        };
     }
 
     // ----- Socket.IO -----
@@ -610,10 +689,16 @@ function start(options = {}) {
         socket.data.tunneled = isTunneled(headers);
         socket.data.ip = normalizeIp(socket.handshake.address);
         socket.data.local = !socket.data.tunneled && isLanAddress(socket.data.ip);
-        socket.emit('lesson-info', {
-            teacherName: state.teacherName,
-            teacherOnline: Boolean(state.teacherId),
-            broadcasting: state.broadcast.active
+        // Секрет для загрузки файлов: номер подключения виден всем в чате, а этот ключ — только владельцу
+        socket.data.uploadToken = crypto.randomBytes(16).toString('hex');
+        // Страница ученика узнаёт, чей это урок, только после верного кода
+        socket.emit('lesson-info', { needCode: true });
+
+        socket.on('check-code', (code, reply) => {
+            if (typeof reply !== 'function') return;
+            if (!allow(`code:${socket.data.ip}`, 20, 60000)) return reply({ ok: false, error: 'Слишком много попыток. Подождите минуту.' });
+            if (normCode(code) !== state.lessonCode) return reply({ ok: false, error: 'Неверный код урока' });
+            reply({ ok: true, ...lessonInfo() });
         });
 
         // --- Регистрация ---
@@ -625,9 +710,13 @@ function start(options = {}) {
             const old = teacherSocket();
             if (old && old.id !== socket.id) old.disconnect(true);
             socket.data.role = 'teacher';
+            socket.data.key = 'teacher';
             state.teacherId = socket.id;
             if (payload.name) state.teacherName = cleanText(payload.name, 40) || 'Учитель';
             socket.emit('teacher-ready', {
+                uploadToken: socket.data.uploadToken,
+                lessonCode: state.lessonCode,
+                roomName: state.roomName,
                 agents: agentList(),
                 online: onlineList(),
                 chat: state.chat,
@@ -649,6 +738,13 @@ function start(options = {}) {
                 return;
             }
             const host = cleanText(payload.hostname, 64) || 'ПК';
+            // ПК закреплён за другим кабинетом — к этому учителю он не подключается
+            const room = normRoom(payload.room);
+            if (room && state.roomName && room !== normRoom(state.roomName)) {
+                socket.emit('auth-error', 'room-mismatch');
+                socket.disconnect(true);
+                return;
+            }
             // Один компьютер — одна карточка: старое подключение того же ПК убираем
             for (const [id, a] of state.agents) {
                 if (a.host === host && a.ip === socket.data.ip && id !== socket.id) {
@@ -658,9 +754,12 @@ function start(options = {}) {
                 }
             }
             socket.data.role = 'agent';
+            socket.data.key = 'pc:' + host;
             const agent = {
                 id: socket.id,
                 name: cleanText(payload.name, 40) || host,
+                student: cleanText(payload.student, 40) || null,
+                room: room || null,
                 host,
                 ip: socket.data.ip,
                 os: cleanText(payload.os, 32),
@@ -670,8 +769,10 @@ function start(options = {}) {
             };
             state.agents.set(socket.id, agent);
             state.knownAgents.set(host, { host, name: agent.name, ip: agent.ip, lastSeen: Date.now() });
-            socket.data.attendance = attendanceJoin(agent.name, 'agent');
+            socket.data.attendance = attendanceJoin(agentDisplayName(agent), 'agent');
             socket.emit('agent-ready', {
+                uploadToken: socket.data.uploadToken,
+                roomName: state.roomName,
                 teacherName: state.teacherName,
                 broadcast: state.broadcast,
                 monitoring: true,
@@ -691,17 +792,34 @@ function start(options = {}) {
         });
 
         socket.on('register-online-user', (payload = {}) => {
-            if (!allow(`reg:${socket.id}`, 5, 60000)) return;
-            const raw = cleanText(typeof payload === 'string' ? payload : payload.name, 40);
+            if (!allow(`reg:${socket.data.ip}`, 20, 60000)) { socket.emit('join-error', 'Слишком много попыток. Подождите минуту.'); return; }
+            if (normCode(payload.code) !== state.lessonCode) {
+                socket.emit('join-error', 'Неверный код урока. Проверьте ссылку от учителя.');
+                return;
+            }
+            const raw = cleanText(payload.name, 40);
             if (!raw) {
                 socket.emit('join-error', 'Введите имя');
                 return;
             }
             if (socket.data.role === 'online') return;
+            // Переподключение после обрыва связи: тот же ученик, то же имя, те же ответы
+            const session = /^[a-z0-9]{12,48}$/i.test(String(payload.session || '')) ? String(payload.session) : crypto.randomBytes(12).toString('hex');
+            for (const [id, u] of state.online) {
+                if (u.session === session && id !== socket.id) {
+                    const old = io.sockets.sockets.get(id);
+                    state.online.delete(id);
+                    if (old) { old.data.replaced = true; old.disconnect(true); }
+                    if (u.sharing) toTeacher('online-user-stopped-sharing', { userId: id });
+                    toTeacher('peer-gone', { id });
+                }
+            }
             socket.data.role = 'online';
+            socket.data.key = 'web:' + session;
             const user = {
                 id: socket.id,
-                name: uniqueOnlineName(raw),
+                session,
+                name: uniqueOnlineName(raw, session),
                 hand: false,
                 voice: false,
                 sharing: false,
@@ -712,10 +830,13 @@ function start(options = {}) {
             socket.data.attendance = attendanceJoin(user.name, 'online');
             socket.emit('welcome', {
                 id: socket.id,
+                session,
+                uploadToken: socket.data.uploadToken,
+                roomName: state.roomName,
                 name: user.name,
                 teacherName: state.teacherName,
                 teacherOnline: Boolean(state.teacherId),
-                chat: visibleChat(socket.id),
+                chat: visibleChat(socket),
                 board: boardState(),
                 broadcast: state.broadcast,
                 shareLimitMs: SHARE_LIMIT_MS,
@@ -892,15 +1013,15 @@ function start(options = {}) {
             if (s.width <= 0 || s.width > 0.2) return;
             const stroke = {
                 sid: cleanText(s.sid, 24),
-                x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1,
-                width: s.width,
+                x0: round5(s.x0), y0: round5(s.y0), x1: round5(s.x1), y1: round5(s.y1),
+                width: round5(s.width),
                 color: /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#111111',
                 tool: TOOLS.has(s.tool) ? s.tool : 'pen'
             };
             state.strokes.push(stroke);
-            if (state.strokes.length > MAX_STROKES) state.strokes.splice(0, state.strokes.length - MAX_STROKES);
             socket.broadcast.emit('draw', stroke);
-            persist();
+            if (state.strokes.length > MAX_STROKES) { state.strokes.splice(0, state.strokes.length - MAX_STROKES); rewriteStrokes(); }
+            else journalStroke(stroke);
         });
 
         socket.on('board-undo', () => {
@@ -908,14 +1029,14 @@ function start(options = {}) {
             const sid = state.strokes[state.strokes.length - 1].sid;
             state.strokes = state.strokes.filter(s => s.sid !== sid);
             io.emit('board-strokes', state.strokes);
-            persist();
+            rewriteStrokes();
         });
 
         socket.on('clear-canvas', () => {
             if (socket.data.role !== 'teacher') return;
             state.strokes = [];
             socket.broadcast.emit('clear-canvas');
-            persist();
+            rewriteStrokes();
         });
 
         socket.on('whiteboard-mode', (active) => {
@@ -946,7 +1067,7 @@ function start(options = {}) {
         });
 
         socket.on('request-chat-history', () => {
-            if (identity(socket)) socket.emit('chat-history', visibleChat(socket.id));
+            if (identity(socket)) socket.emit('chat-history', visibleChat(socket));
         });
 
         // --- Онлайн-участник: рука, голос, показ экрана ---
@@ -1059,7 +1180,7 @@ function start(options = {}) {
             const poll = state.polls.find(p => p.id === data.id && p.open);
             const idx = Number(data.option);
             if (!poll || !Number.isInteger(idx) || idx < 0 || idx >= poll.options.length) return;
-            const key = who.role + ':' + who.name;
+            const key = socket.data.key;
             poll.votes[key] = idx;
             poll.voters[key] = who.name;
             toTeacher('activity', activity());
@@ -1126,6 +1247,44 @@ function start(options = {}) {
             if (agent.focusHit) toTeacher('focus-alert', { agentId: socket.id, name: agent.name, title: agent.focusHit });
         });
 
+        // Ученик представился на компьютере класса
+        socket.on('agent-student', (data = {}) => {
+            if (socket.data.role !== 'agent') return;
+            const agent = state.agents.get(socket.id);
+            if (!agent) return;
+            agent.student = cleanText(data.student, 40) || null;
+            if (socket.data.attendance) {
+                // Новый человек за тем же ПК — новая строка посещаемости
+                const prev = socket.data.attendance;
+                if (prev.name !== agentDisplayName(agent)) {
+                    if (prev.name === agent.name && !prev.renamed) { prev.name = agentDisplayName(agent); prev.renamed = true; }
+                    else { prev.leftAt = Date.now(); socket.data.attendance = attendanceJoin(agentDisplayName(agent), 'agent'); }
+                }
+            }
+            pushRoster();
+            persist();
+        });
+
+        // Закрепить подключённые ПК за кабинетом учителя (только те, что ещё ни за кем не закреплены)
+        socket.on('bind-room', () => {
+            if (socket.data.role !== 'teacher' || !state.roomName) return;
+            for (const a of state.agents.values()) {
+                if (!a.room) { io.to(a.id).emit('bind-room', { room: state.roomName }); a.room = normRoom(state.roomName); }
+            }
+            pushRoster();
+        });
+
+        // «Это не мой компьютер»: ПК отключается и ищет своего учителя
+        socket.on('release-agent', (data = {}) => {
+            if (socket.data.role !== 'teacher') return;
+            const a = state.agents.get(data.agentId);
+            if (!a) return;
+            state.knownAgents.delete(a.host);
+            const s = io.sockets.sockets.get(a.id);
+            if (s) { s.emit('released', { room: state.roomName }); setTimeout(() => s.disconnect(true), 300); }
+            persist();
+        });
+
         socket.on('forget-agent', (data = {}) => {
             if (socket.data.role !== 'teacher') return;
             state.knownAgents.delete(String(data.host || ''));
@@ -1156,6 +1315,8 @@ function start(options = {}) {
                     persist();
                 }
                 pushRoster();
+            } else if (role === 'online' && socket.data.replaced) {
+                // переподключился — новая сессия уже на месте
             } else if (role === 'online') {
                 const user = state.online.get(socket.id);
                 state.online.delete(socket.id);
@@ -1175,6 +1336,7 @@ function start(options = {}) {
 
     function resetLesson() {
         state.strokes = [];
+        rewriteStrokes();
         state.chat = [];
         state.polls = [];
         state.collections = [];
@@ -1199,6 +1361,7 @@ function start(options = {}) {
             teacherName: state.teacherName,
             lessonStartedAt: state.lessonStartedAt,
             endedAt: Date.now(),
+            roomName: state.roomName,
             chat: state.chat.slice(),
             attendance: state.attendance.map(a => ({ ...a })),
             polls: state.polls.map(p => pollView(p, true)),
@@ -1209,11 +1372,15 @@ function start(options = {}) {
 
     // ----- Обнаружение в локальной сети (UDP) -----
     let actualPort = preferredPort;
+    // CLASSCONTROL_SERVER:ip:port:кабинет:учитель — агент выбирает учителя своего кабинета
+    function announceText(ip) {
+        return `CLASSCONTROL_SERVER:${ip}:${actualPort}:${encodeURIComponent(state.roomName || '')}:${encodeURIComponent(state.teacherName || '')}`;
+    }
     const udp = dgram.createSocket({ type: 'udp4', reuseAddr: true });
     udp.on('message', (msg, rinfo) => {
         if (msg.toString() !== 'CLASSCONTROL_DISCOVER') return;
         const ip = interfaceFor(rinfo.address);
-        udp.send(Buffer.from(`CLASSCONTROL_SERVER:${ip}:${actualPort}`), rinfo.port, rinfo.address, () => {});
+        udp.send(Buffer.from(announceText(ip)), rinfo.port, rinfo.address, () => {});
     });
     udp.on('error', (err) => {
         log(`UDP: ${err.code === 'EADDRINUSE' ? `порт ${UDP_QUERY_PORT} занят, ответы на поиск отключены` : err.message}`);
@@ -1233,7 +1400,7 @@ function start(options = {}) {
     });
     const announceTimer = setInterval(() => {
         for (const iface of ipv4Interfaces()) {
-            const msg = Buffer.from(`CLASSCONTROL_SERVER:${iface.address}:${actualPort}`);
+            const msg = Buffer.from(announceText(iface.address));
             const targets = [broadcastAddress(iface.address, iface.netmask), '255.255.255.255'];
             for (const t of targets) announcer.send(msg, UDP_ANNOUNCE_PORT, t, () => {});
         }
@@ -1279,6 +1446,18 @@ function start(options = {}) {
                     },
                     getLessonSnapshot,
                     worksDir,
+                    get lessonCode() { return state.lessonCode; },
+                    setLesson({ roomName, teacherName, lessonCode } = {}) {
+                        if (roomName !== undefined) state.roomName = cleanText(roomName, 60);
+                        if (teacherName) state.teacherName = cleanText(teacherName, 40);
+                        if (lessonCode) state.lessonCode = normCode(lessonCode);
+                        toTeacher('links', links());
+                    },
+                    takePreviousLesson() {
+                        const p = state.previousLesson;
+                        state.previousLesson = null;
+                        return p;
+                    },
                     resetLesson,
                     close() {
                         clearInterval(announceTimer);

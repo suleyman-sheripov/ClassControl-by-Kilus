@@ -42,7 +42,7 @@ async function teacher() {
 async function online(name) {
     const u = client();
     await once(u, 'connect');
-    u.emit('register-online-user', { name });
+    u.emit('register-online-user', { name, code: srv.lessonCode });
     const w = await once(u, 'welcome');
     return { u, w };
 }
@@ -157,6 +157,7 @@ test('загрузка: SVG запрещён, файл без подключен
     const { w } = await online('Файлов');
     const svg = new FormData();
     svg.append('socketId', w.id);
+    svg.append('token', w.uploadToken);
     svg.append('file', new Blob(['<svg onload=alert(1)>']), 'x.svg');
     let res = await fetch(url + '/upload', { method: 'POST', body: svg });
     assert.equal(res.status, 400);
@@ -169,11 +170,17 @@ test('загрузка: SVG запрещён, файл без подключен
 
     const ok = new FormData();
     ok.append('socketId', w.id);
+    ok.append('token', w.uploadToken);
     ok.append('file', new Blob(['hi']), 'задание.txt');
     res = await fetch(url + '/upload', { method: 'POST', body: ok });
     assert.equal(res.status, 200);
     const msg = await res.json();
     assert.equal(msg.filename, 'задание.txt');
+    // Чужой номер подключения без ключа не помогает
+    const forged = new FormData();
+    forged.append('socketId', w.id);
+    forged.append('file', new Blob(['x']), 'b.txt');
+    assert.equal((await fetch(url + '/upload', { method: 'POST', body: forged })).status, 403);
     const file = await fetch(url + msg.url);
     assert.match(file.headers.get('content-disposition'), /attachment/);
 });

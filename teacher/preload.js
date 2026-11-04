@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('teacherAPI', {
   recChunk: (buf) => ipcRenderer.send('rec-chunk', buf),
   recStop: () => ipcRenderer.invoke('rec-stop'),
   lessonSave: (data) => ipcRenderer.invoke('lesson-save', data),
+  newLessonCode: () => ipcRenderer.invoke('new-lesson-code'),
+  reportBoard: (data) => ipcRenderer.invoke('report-board', data),
   saveBoard: (dataUrl) => ipcRenderer.invoke('save-board', dataUrl),
   tunnel: (on) => ipcRenderer.invoke('tunnel', on),
   onTunnel: (cb) => ipcRenderer.on('tunnel-status', (e, s) => cb(s)),

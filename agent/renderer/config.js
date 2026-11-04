@@ -35,17 +35,21 @@
     $('#pcName').value = c.pcName;
     $('#host-hint').textContent = 'Имя в Windows: ' + c.hostname;
     $('#serverAddress').value = c.serverAddress || '';
+    $('#room').value = c.room || '';
     $('#autoStart').checked = c.autoStart;
     $('#notifications').checked = c.notifications;
     $('#st-dot').className = 'dot ' + (c.connected ? 'dot--positive' : 'dot--warning dot--pulse');
     $('#st-text').textContent = c.connected ? 'На связи с учителем · ' + (c.serverAddressNow || '').replace('http://', '') : 'Учитель пока не найден';
     const found = $('#found');
     found.replaceChildren();
-    (c.found || []).forEach(a => {
-      const b = CC.el('button', { class: 'found__item', type: 'button' }, CC.icon('monitor', 'i-sm'), a.replace('http://', ''));
-      b.addEventListener('click', () => { $('#serverAddress').value = a.replace('http://', ''); });
+    (c.found || []).forEach(f => {
+      const label = [f.room || 'кабинет не указан', f.teacher].filter(Boolean).join(', ');
+      const b = CC.el('button', { class: 'found__item', type: 'button', title: 'Закрепить за этим кабинетом' }, CC.icon('monitor', 'i-sm'),
+        CC.el('span', { style: { fontFamily: 'var(--font)' }, text: label }), CC.el('span', { class: 'faint', style: { marginLeft: 'auto' }, text: f.address.replace('http://', '') }));
+      b.addEventListener('click', () => { if (f.room) $('#room').value = f.room; else { setMode('manual'); $('#serverAddress').value = f.address.replace('http://', ''); } });
       found.appendChild(b);
     });
+    $('#found-wrap').classList.toggle('hidden', !(c.found || []).length);
     setMode(c.serverMode || 'auto');
   }
 
@@ -55,6 +59,7 @@
       pcName: $('#pcName').value,
       serverMode: mode,
       serverAddress: $('#serverAddress').value.trim(),
+      room: $('#room').value.trim(),
       autoStart: $('#autoStart').checked,
       notifications: $('#notifications').checked
     });

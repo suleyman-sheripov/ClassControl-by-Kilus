@@ -17,6 +17,7 @@ if (!app.requestSingleInstanceLock()) {
 
 let mainWindow = null;
 let lessonServer = null;
+let previousReport = null;
 let serverError = null;
 let pendingSourceId = null;
 let awakeId = null;
@@ -25,7 +26,9 @@ let awakeId = null;
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'teacher-settings.json');
 const DEFAULTS = {
   teacherName: 'Учитель',
-  roomName: 'Кабинет',
+  roomName: '',
+  lessonCode: '',
+  onboarded: false,
   recordDir: path.join(app.getPath('videos'), 'ClassControl'),
   reportDir: path.join(app.getPath('documents'), 'ClassControl'),
   remoteAccess: false,
@@ -129,8 +132,18 @@ app.whenReady().then(async () => {
       dataDir: path.join(app.getPath('userData'), 'lesson'),
       onlineDir: ONLINE_DIR,
       sharedDir: SHARED_DIR,
+      teacherName: settings.teacherName,
+      roomName: settings.roomName,
+      lessonCode: settings.lessonCode || undefined,
       log: (...a) => console.log('[SERVER]', ...a)
     });
+    // Код урока постоянный для этого учителя: ссылка и QR в кабинете работают каждый день
+    if (!settings.lessonCode) { settings.lessonCode = lessonServer.lessonCode; saveSettings(); }
+    // Урок, который остался с прошлого раза, сохраняем в отчёт и начинаем новый
+    const prev = lessonServer.takePreviousLesson();
+    if (prev) {
+      try { previousReport = { dir: writeReport(prev, null), strokes: prev.strokes || [] }; } catch (e) { console.error('[TEACHER] отчёт прошлого урока:', e); }
+    }
   } catch (err) {
     serverError = err.message;
     console.error('[TEACHER] Сервер не запустился:', err);
@@ -155,14 +168,33 @@ ipcMain.handle('boot', () => ({
   settings,
   platform: process.platform,
   version: app.getVersion(),
-  tunnel: tunnelState
+  tunnel: tunnelState,
+  previousReport
 }));
 
 ipcMain.handle('save-settings', (e, patch) => {
   const allowed = Object.keys(DEFAULTS);
   for (const k of Object.keys(patch || {})) if (allowed.includes(k)) settings[k] = patch[k];
   saveSettings();
+  if (lessonServer) lessonServer.setLesson({ roomName: settings.roomName, teacherName: settings.teacherName, lessonCode: settings.lessonCode });
   return settings;
+});
+
+// Новый код урока (если старая ссылка попала не к тем людям)
+ipcMain.handle('new-lesson-code', () => {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  settings.lessonCode = [...require('crypto').randomBytes(6)].map(b => A[b % A.length]).join('');
+  saveSettings();
+  if (lessonServer) lessonServer.setLesson({ lessonCode: settings.lessonCode });
+  return settings.lessonCode;
+});
+
+// Картинка доски для отчёта прошлого урока (рисует окно учителя)
+ipcMain.handle('report-board', (e, { dir, png }) => {
+  if (!previousReport || dir !== previousReport.dir || !png || !png.startsWith('data:image/png;base64,')) return false;
+  fs.writeFileSync(path.join(dir, 'Доска.png'), Buffer.from(png.split(',')[1], 'base64'));
+  previousReport = null;
+  return true;
 });
 
 ipcMain.handle('pick-folder', async (e, current) => {
@@ -246,7 +278,10 @@ function fmt(ts) {
 
 ipcMain.handle('lesson-save', async (e, { boardPng } = {}) => {
   if (!lessonServer) return null;
-  const snap = lessonServer.getLessonSnapshot();
+  return writeReport(lessonServer.getLessonSnapshot(), boardPng);
+});
+
+function writeReport(snap, boardPng) {
   const d = new Date(snap.lessonStartedAt);
   const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
   const dir = path.join(settings.reportDir, `Урок ${stamp}`);
@@ -306,7 +341,7 @@ ipcMain.handle('lesson-save', async (e, { boardPng } = {}) => {
     fs.writeFileSync(path.join(dir, 'Доска.png'), Buffer.from(boardPng.split(',')[1], 'base64'));
   }
   return dir;
-});
+}
 
 ipcMain.handle('save-board', async (e, dataUrl) => {
   const r = await dialog.showSaveDialog(mainWindow, {
