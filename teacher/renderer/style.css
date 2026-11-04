@@ -225,14 +225,11 @@ input, textarea, .msg__body, .row__title { user-select: text; }
 /* ---------- Доска ---------- */
 .board-stage {
   position: absolute; inset: 0; overflow: hidden;
-  background:
-    radial-gradient(circle at 1px 1px, var(--dot-grid) 1px, transparent 0) 0 0 / 24px 24px,
-    var(--inset);
-  cursor: crosshair; touch-action: none;
+  cursor: crosshair; touch-action: none; border-radius: 0 0 var(--r-card) var(--r-card);
 }
 .board-stage.tool-hand { cursor: grab; }
 .board-stage.is-panning { cursor: grabbing; }
-.board-stage .board-canvas { border-radius: 4px; box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 18px 48px rgba(0,0,0,.5); }
+.zoom__sep { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
 .zoom {
   position: absolute; right: 16px; bottom: 16px; display: flex; align-items: center; gap: 2px;
   padding: 3px; border-radius: 9px; background: var(--raised); box-shadow: var(--shadow-float);
@@ -240,7 +237,7 @@ input, textarea, .msg__body, .row__title { user-select: text; }
 .zoom__value { min-width: 52px; height: 28px; border: 0; border-radius: var(--r-control); background: transparent; color: var(--muted); font-size: var(--fs-sm); }
 .zoom__value:hover { background: var(--hover); color: var(--text); }
 .board-hint {
-  position: absolute; left: 16px; bottom: 20px; font-size: var(--fs-sm); color: var(--faint);
+  position: absolute; left: 16px; bottom: 20px; font-size: var(--fs-sm); color: #5c6660;
   display: flex; align-items: center; gap: 4px; pointer-events: none;
 }
 
@@ -454,3 +451,5 @@ input, textarea, .msg__body, .row__title { user-select: text; }
   #view-tasks .toolbar__right .btn { width: var(--control-h-sm); padding: 0; }
 }
 .pc.is-hand .pc__foot { background: var(--accent-tint); }
+.lesson-chip__teacher { color: var(--text); max-width: 200px; }
+.lesson-chip__teacher:empty { display: none; }

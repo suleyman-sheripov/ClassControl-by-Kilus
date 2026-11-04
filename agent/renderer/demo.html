@@ -20,7 +20,7 @@
 <body>
   <div class="stage" id="stage">
     <video id="video" class="stage__video" autoplay playsinline></video>
-    <canvas id="board" class="board-canvas hidden"></canvas>
+    <div class="board-surface hidden" id="board-surface"><canvas id="board" class="board-canvas"></canvas></div>
     <div class="wait" id="wait"><span class="spinner"></span><span id="wait-text">Подключаюсь к эфиру учителя…</span></div>
   </div>
   <button class="btn exit hidden" id="exit" type="button"><svg class="i i-sm"><use href="#i-x"/></svg>Свернуть <span class="kbd">Esc</span></button>

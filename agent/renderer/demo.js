@@ -4,7 +4,7 @@
   const api = window.agentAPI;
   const video = document.getElementById('video');
   const wait = document.getElementById('wait');
-  const board = new CC.Board(document.getElementById('stage'), document.getElementById('board'));
+  const board = new CC.Board(document.getElementById('board-surface'), document.getElementById('board'), { follow: true });
   let viewer = null, socket = null;
   let info = await api.info();
 
@@ -16,8 +16,8 @@
   document.getElementById('unmute').addEventListener('click', () => { video.muted = false; video.play(); document.getElementById('unmute').classList.add('hidden'); });
 
   function showBoard(on) {
-    document.getElementById('board').classList.toggle('hidden', !on);
-    if (on) { wait.classList.add('hidden'); board.fit(); }
+    document.getElementById('board-surface').classList.toggle('hidden', !on);
+    if (on) { wait.classList.add('hidden'); board.resize(); }
     else if (!video.srcObject) wait.classList.remove('hidden');
   }
 
@@ -32,7 +32,7 @@
     socket.on('connect', () => socket.emit('register-demo-viewer', { hostname: info.hostname }));
     socket.on('board-state', (b) => {
       board.setStrokes(b.strokes || []);
-      board.setTransform(b.transform || {});
+      board.setView(b.transform);
       showBoard(b.active);
     });
     viewer = CC.ClassViewer({
@@ -57,7 +57,7 @@
     socket.on('draw', (s) => board.add(s));
     socket.on('board-strokes', (l) => board.setStrokes(l));
     socket.on('clear-canvas', () => board.clear());
-    socket.on('whiteboard-transform', (t) => board.setTransform(t));
+    socket.on('whiteboard-transform', (t) => board.setView(t));
     socket.on('broadcast-stopped', () => {
       viewer.stop();
       video.srcObject = null;

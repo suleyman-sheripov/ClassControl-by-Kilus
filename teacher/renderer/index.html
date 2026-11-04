@@ -21,6 +21,7 @@
         <span class="topbar__sep" aria-hidden="true"></span>
         <button class="lesson-chip" id="lesson-chip" type="button" title="Урок">
           <span id="room-name" class="truncate">Кабинет</span>
+          <span id="teacher-name" class="lesson-chip__teacher truncate"></span>
           <span class="lesson-chip__time mono" id="lesson-time">00:00</span>
         </button>
       </div>
@@ -224,11 +225,13 @@
           <div class="board-stage" id="board-stage">
             <canvas class="board-canvas" id="board"></canvas>
           </div>
-          <div class="board-hint" id="board-hint"><span class="kbd">Ctrl</span> + колесо — масштаб · <span class="kbd">Пробел</span> — двигать</div>
+          <div class="board-hint" id="board-hint">Колесо или <span class="kbd">Пробел</span> — двигать, <span class="kbd">Ctrl</span> + колесо — масштаб</div>
           <div class="zoom">
             <button class="icon-btn icon-btn--sm" id="zoom-out" type="button" aria-label="Отдалить"><svg class="i i-sm"><use href="#i-minus"/></svg></button>
             <button class="zoom__value mono" id="zoom-reset" type="button" title="Сбросить масштаб">100%</button>
             <button class="icon-btn icon-btn--sm" id="zoom-in" type="button" aria-label="Приблизить"><svg class="i i-sm"><use href="#i-plus"/></svg></button>
+            <span class="zoom__sep" aria-hidden="true"></span>
+            <button class="icon-btn icon-btn--sm" id="zoom-fit" type="button" title="Показать всё нарисованное" aria-label="Показать всё"><svg class="i i-sm"><use href="#i-focus"/></svg></button>
           </div>
         </div>
       </section>

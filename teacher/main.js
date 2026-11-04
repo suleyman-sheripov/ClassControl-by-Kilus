@@ -17,7 +17,6 @@ if (!app.requestSingleInstanceLock()) {
 
 let mainWindow = null;
 let lessonServer = null;
-let previousReport = null;
 let serverError = null;
 let pendingSourceId = null;
 let awakeId = null;
@@ -25,20 +24,16 @@ let awakeId = null;
 // ---------- Настройки ----------
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'teacher-settings.json');
 const DEFAULTS = {
-  teacherName: 'Учитель',
   roomName: '',
-  lessonCode: '',
   onboarded: false,
   recordDir: path.join(app.getPath('videos'), 'ClassControl'),
   reportDir: path.join(app.getPath('documents'), 'ClassControl'),
-  remoteAccess: false,
   quality: '1280x720',
   fps: 15,
   allowExit: false,
   shareAudio: true,
   shareMic: false,
-  theme: 'dark',
-  rosters: {}                 // кабинет -> список класса
+  theme: 'dark'
 };
 let settings = { ...DEFAULTS };
 try {
@@ -133,25 +128,15 @@ app.whenReady().then(async () => {
       dataDir: path.join(app.getPath('userData'), 'lesson'),
       onlineDir: ONLINE_DIR,
       sharedDir: SHARED_DIR,
-      teacherName: settings.teacherName,
+      teacherName: 'Учитель',
       roomName: settings.roomName,
-      lessonCode: settings.lessonCode || undefined,
-      roster: (settings.rosters || {})[settings.roomName] || [],
       log: (...a) => console.log('[SERVER]', ...a)
     });
-    // Код урока постоянный для этого учителя: ссылка и QR в кабинете работают каждый день
-    if (!settings.lessonCode) { settings.lessonCode = lessonServer.lessonCode; saveSettings(); }
-    // Урок, который остался с прошлого раза, сохраняем в отчёт и начинаем новый
-    const prev = lessonServer.takePreviousLesson();
-    if (prev) {
-      try { previousReport = { dir: writeReport(prev, null), strokes: prev.strokes || [] }; } catch (e) { console.error('[TEACHER] отчёт прошлого урока:', e); }
-    }
   } catch (err) {
     serverError = err.message;
     console.error('[TEACHER] Сервер не запустился:', err);
   }
   createWindow();
-  if (settings.remoteAccess) startTunnel();
 });
 
 app.on('before-quit', () => {
@@ -171,32 +156,78 @@ ipcMain.handle('boot', () => ({
   platform: process.platform,
   version: app.getVersion(),
   tunnel: tunnelState,
-  previousReport
+  // Урок не был завершён (программу закрыли или был сбой) — учитель решает, что с ним делать
+  previous: lessonServer ? summarizePrevious(lessonServer.peekPreviousLesson()) : null
 }));
+
+function summarizePrevious(p) {
+  if (!p) return null;
+  return {
+    teacherName: p.teacherName, startedAt: p.lessonStartedAt, endedAt: p.endedAt,
+    messages: p.chat.filter(m => m.type !== 'system').length,
+    strokes: p.strokes,
+    works: p.collections.reduce((n, c) => n + c.submissions.length, 0),
+    polls: p.polls.length
+  };
+}
 
 ipcMain.handle('save-settings', (e, patch) => {
   const allowed = Object.keys(DEFAULTS);
   for (const k of Object.keys(patch || {})) if (allowed.includes(k)) settings[k] = patch[k];
   saveSettings();
-  if (lessonServer) lessonServer.setLesson({ roomName: settings.roomName, teacherName: settings.teacherName, lessonCode: settings.lessonCode, roster: (settings.rosters || {})[settings.roomName] || [] });
+  if (lessonServer) lessonServer.setLesson({ roomName: settings.roomName });
   return settings;
 });
 
-// Новый код урока (если старая ссылка попала не к тем людям)
-ipcMain.handle('new-lesson-code', () => {
-  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  settings.lessonCode = [...require('crypto').randomBytes(6)].map(b => A[b % A.length]).join('');
-  saveSettings();
-  if (lessonServer) lessonServer.setLesson({ lessonCode: settings.lessonCode });
-  return settings.lessonCode;
+// ---------- Урок: начало, смена кода, конец ----------
+// Имя учителя — только на этот урок: учителя в кабинете меняются
+ipcMain.handle('lesson-start', (e, { teacherName } = {}) => {
+  if (lessonServer) lessonServer.setLesson({ teacherName: String(teacherName || '').trim() || 'Учитель' });
+  return lessonServer ? lessonServer.lessonCode : null;
 });
 
-// Картинка доски для отчёта прошлого урока (рисует окно учителя)
-ipcMain.handle('report-board', (e, { dir, png }) => {
-  if (!previousReport || dir !== previousReport.dir || !png || !png.startsWith('data:image/png;base64,')) return false;
-  fs.writeFileSync(path.join(dir, 'Доска.png'), Buffer.from(png.split(',')[1], 'base64'));
-  previousReport = null;
-  return true;
+// Новый код посреди урока (если ссылка попала не к тем людям)
+ipcMain.handle('new-lesson-code', () => {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const code = [...require('crypto').randomBytes(6)].map(b => A[b % A.length]).join('');
+  if (lessonServer) lessonServer.setLesson({ lessonCode: code });
+  return code;
+});
+
+/** Куда сохранить материалы урока — решает учитель (папка, флешка). */
+async function askFolder(title) {
+  fs.mkdirSync(settings.reportDir, { recursive: true });
+  const r = await dialog.showOpenDialog(mainWindow, { title, defaultPath: settings.reportDir, buttonLabel: 'Сохранить сюда', properties: ['openDirectory', 'createDirectory'] });
+  return r.canceled ? null : r.filePaths[0];
+}
+
+// Конец урока: по желанию сохранить материалы, затем всё стереть
+ipcMain.handle('lesson-end', async (e, { save, boardPng } = {}) => {
+  if (!lessonServer) return { ok: false };
+  let dir = null;
+  if (save) {
+    const base = await askFolder('Куда сохранить материалы урока');
+    if (!base) return { ok: false, canceled: true };
+    dir = writeReport(lessonServer.getLessonSnapshot(), boardPng, base);
+  }
+  lessonServer.endLesson();
+  stopTunnel();
+  return { ok: true, dir };
+});
+
+// Незавершённый урок с прошлого запуска
+ipcMain.handle('previous-lesson', async (e, { action, boardPng } = {}) => {
+  if (!lessonServer) return { ok: false };
+  if (action === 'resume') { lessonServer.resumePrevious(); return { ok: true }; }
+  let dir = null;
+  if (action === 'save') {
+    const base = await askFolder('Куда сохранить материалы прошлого урока');
+    if (!base) return { ok: false, canceled: true };
+    const prev = lessonServer.peekPreviousLesson();
+    if (prev) dir = writeReport(prev, boardPng, base);
+  }
+  lessonServer.discardPrevious();
+  return { ok: true, dir };
 });
 
 ipcMain.handle('pick-folder', async (e, current) => {
@@ -246,26 +277,42 @@ function closeRecording() {
   recStream = null;
 }
 
-ipcMain.handle('rec-start', () => {
+// Запись пишется во временный файл программы; после остановки учитель сам выбирает, куда её сохранить
+let recName = '';
+ipcMain.handle('rec-start', (e, { teacherName } = {}) => {
   closeRecording();
-  fs.mkdirSync(settings.recordDir, { recursive: true });
+  const tmpDir = path.join(app.getPath('userData'), 'recording');
+  fs.mkdirSync(tmpDir, { recursive: true });
   const d = new Date();
-  const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
-  recPath = path.join(settings.recordDir, `Урок ${stamp}.webm`);
+  const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
+  recName = `Урок ${stamp}${teacherName ? ' — ' + String(teacherName).replace(/[\\/:*?"<>|]/g, '_') : ''}.webm`;
+  recPath = path.join(tmpDir, `rec-${Date.now()}.webm`);
   recStream = fs.createWriteStream(recPath);
-  return recPath;
+  return true;
 });
 
 ipcMain.on('rec-chunk', (e, chunk) => {
   if (recStream && chunk) recStream.write(Buffer.from(chunk));
 });
 
-ipcMain.handle('rec-stop', () => new Promise((resolve) => {
-  if (!recStream) return resolve(recPath);
-  const p = recPath;
-  recStream.end(() => resolve(p));
+ipcMain.handle('rec-stop', async () => {
+  const tmp = recPath;
+  if (recStream) await new Promise(r => recStream.end(r));
   recStream = null;
-}));
+  if (!tmp || !fs.existsSync(tmp)) return null;
+  // Сохранить как… Если отказаться — спросим, точно ли удалить запись
+  for (;;) {
+    fs.mkdirSync(settings.recordDir, { recursive: true });
+    const r = await dialog.showSaveDialog(mainWindow, { title: 'Сохранить запись урока', defaultPath: path.join(settings.recordDir, recName || 'Урок.webm'), filters: [{ name: 'Видео', extensions: ['webm'] }] });
+    if (!r.canceled && r.filePath) {
+      try { fs.renameSync(tmp, r.filePath); } catch (err) { fs.copyFileSync(tmp, r.filePath); fs.unlinkSync(tmp); }
+      recPath = null;
+      return r.filePath;
+    }
+    const c = await dialog.showMessageBox(mainWindow, { type: 'question', message: 'Удалить запись урока?', detail: 'Запись не сохранена. Её можно сохранить в любую папку или на флешку.', buttons: ['Выбрать, куда сохранить', 'Удалить запись'], defaultId: 0, cancelId: 0, noLink: true });
+    if (c.response === 1) { try { fs.unlinkSync(tmp); } catch (err) {} recPath = null; return null; }
+  }
+});
 
 // ---------- Отчёт урока ----------
 function csvCell(v) {
@@ -278,42 +325,15 @@ function fmt(ts) {
   return d.toLocaleString('ru-RU');
 }
 
-ipcMain.handle('lesson-save', async (e, { boardPng } = {}) => {
-  if (!lessonServer) return null;
-  return writeReport(lessonServer.getLessonSnapshot(), boardPng);
-});
 
-function writeReport(snap, boardPng) {
+function writeReport(snap, boardPng, baseDir) {
   const d = new Date(snap.lessonStartedAt);
   const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
-  const dir = path.join(settings.reportDir, `Урок ${stamp}`);
+  const who = snap.teacherName && snap.teacherName !== 'Учитель' ? ' — ' + String(snap.teacherName).replace(/[\\/:*?"<>|]/g, '_') : '';
+  let dir = path.join(baseDir || settings.reportDir, `Урок ${stamp}${who}`);
+  for (let i = 2; fs.existsSync(dir); i++) dir = path.join(baseDir || settings.reportDir, `Урок ${stamp}${who} (${i})`);
   fs.mkdirSync(dir, { recursive: true });
 
-  // Посещаемость по людям: где сидел (с пересадками), сколько был; кто из списка класса не пришёл
-  const rows = [['Ученик', 'Где', 'Пришёл', 'Ушёл', 'Минут на уроке']];
-  const people = new Map();
-  const anonymousSeats = new Set(), namedSeats = new Set();
-  for (const a of snap.attendance) {
-    if (a.anonymous) { anonymousSeats.add(a.seat || a.name); continue; }
-    if (a.seat) namedSeats.add(a.seat);
-    const key = String(a.name).toLowerCase().replace(/ё/g, 'е');
-    const p = people.get(key) || { name: a.name, seats: [], from: a.joinedAt, to: 0, ms: 0 };
-    if (!p.seats.length || p.seats[p.seats.length - 1] !== (a.seat || (a.role === 'online' ? 'из дома' : ''))) p.seats.push(a.seat || (a.role === 'online' ? 'из дома' : ''));
-    const end = a.leftAt || snap.endedAt;
-    p.from = Math.min(p.from, a.joinedAt);
-    p.to = Math.max(p.to, end);
-    p.ms += end - a.joinedAt;
-    people.set(key, p);
-  }
-  [...people.values()].sort((x, y) => x.name.localeCompare(y.name, 'ru')).forEach(p => {
-    rows.push([p.name, p.seats.filter(Boolean).join(' → '), fmt(p.from), fmt(p.to), Math.round(p.ms / 60000)]);
-  });
-  for (const n of (snap.roster || [])) {
-    if (!people.has(String(n).toLowerCase().replace(/ё/g, 'е'))) rows.push([n, 'не был на уроке', '', '', 0]);
-  }
-  const silent = [...anonymousSeats].filter(seat => !namedSeats.has(seat));
-  if (silent.length) rows.push(['', 'Компьютеры, за которыми никто не представился: ' + silent.join(', '), '', '', '']);
-  fs.writeFileSync(path.join(dir, 'Посещаемость.csv'), '﻿' + rows.map(r => r.map(csvCell).join(';')).join('\r\n'));
 
   // Чат
   const lines = snap.chat.map(m => {
@@ -472,8 +492,6 @@ function stopTunnel() {
 }
 
 ipcMain.handle('tunnel', (e, on) => {
-  settings.remoteAccess = Boolean(on);
-  saveSettings();
   if (on) startTunnel(); else stopTunnel();
   return tunnelState;
 });

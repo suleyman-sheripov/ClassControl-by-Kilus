@@ -158,46 +158,41 @@ test('имя ученика за компьютером класса идёт в
     const m = await got;
     assert.equal(m.sender, 'Иван Петров');
     assert.equal(m.seat, 'ПК-07', 'место — отдельной пометкой');
-    const snap = srv.getLessonSnapshot();
-    assert.ok(snap.attendance.some(x => x.name === 'Иван Петров' && x.seat === 'ПК-07'));
 });
 
-test('доска переживает перезапуск, а вчерашний урок уходит в отчёт', async () => {
+test('урок одноразовый: после перезапуска прошлый урок не продолжается сам', async () => {
     const dir = tmp();
     const s1 = await start({ port: 3917, dataDir: dir, log: () => {} });
     const t = connect(`http://127.0.0.1:3917`, { transports: ['websocket'], forceNew: true });
     await once(t, 'connect');
-    t.emit('register-teacher', { token: s1.token });
+    t.emit('register-teacher', { token: s1.token, name: 'Анна Петровна' });
     await once(t, 'teacher-ready');
-    for (let i = 0; i < 50; i++) t.emit('draw', { sid: 's' + (i >> 4), x0: i / 100, y0: 0.1, x1: i / 100 + 0.01, y1: 0.2, width: 0.003, color: '#ff0000', tool: 'pen' });
+    for (let i = 0; i < 50; i++) t.emit('draw', { sid: 's' + (i >> 4), x0: i * 10, y0: 10, x1: i * 10 + 8, y1: 20, width: 3, color: '#ff0000', tool: 'pen' });
     t.emit('chat-message', { text: 'было на уроке' });
     await new Promise(r => setTimeout(r, 2200));
     t.close();
     await s1.close();
 
-    // Через час — тот же урок продолжается
+    // Программу открыли снова: новый урок пустой, а прошлый ждёт решения учителя
     const s2 = await start({ port: 3918, dataDir: dir, log: () => {} });
+    assert.equal(s2.getLessonSnapshot().chat.length, 0, 'новый урок пуст');
+    const prev = s2.peekPreviousLesson();
+    assert.ok(prev && prev.chat.some(m => m.text === 'было на уроке'));
+    assert.equal(prev.strokes.length, 50);
+    assert.equal(prev.teacherName, 'Анна Петровна');
+    // «Продолжить» — урок и доска возвращаются
+    s2.resumePrevious();
     assert.equal(s2.getLessonSnapshot().chat.length, 1);
-    const t2 = connect(`http://127.0.0.1:3918`, { transports: ['websocket'], forceNew: true });
-    await once(t2, 'connect');
-    t2.emit('register-teacher', { token: s2.token });
-    const r2 = await once(t2, 'teacher-ready');
-    assert.equal(r2.board.strokes.length, 50, 'все штрихи на месте');
-    t2.close();
     await s2.close();
 
-    // На следующий день — новый урок, а прошлый отдаётся для отчёта
-    const s3 = await start({ port: 3919, dataDir: dir, log: () => {}, staleAfterMs: 1 });
-    await new Promise(r => setTimeout(r, 5));
-    assert.equal(s3.getLessonSnapshot().chat.length, 0, 'чат нового урока пуст');
-    const prev = s3.takePreviousLesson();
-    assert.ok(prev && prev.chat.some(m => m.text === 'было на уроке'), 'прошлый урок доступен для отчёта');
-    assert.equal(prev.strokes.length, 50);
+    // А «Начать с чистого листа» — прошлое стирается
+    const s3 = await start({ port: 3919, dataDir: tmp(), log: () => {} });
+    assert.equal(s3.peekPreviousLesson(), null);
     await s3.close();
 });
 
 test('ученика пересадили: ответы, работы и личные сообщения идут за ним, а не остаются у ПК', async () => {
-    const srv = await server({ port: 3920, roster: ['Иван Петров', 'Мария Козлова'] });
+    const srv = await server({ port: 3920 });
     const t = await teacher(srv, 'Учитель');
     let activity = t.ready.activity, roster = null;
     t.on('activity', a => { activity = a; });
@@ -211,10 +206,8 @@ test('ученика пересадили: ответы, работы и лич�
     };
     const pc7 = await pc('ПК-07');
     const pc12 = await pc('ПК-12');
-    assert.deepEqual(pc7.ready.roster, ['Иван Петров', 'Мария Козлова'], 'агент получил список класса');
 
-    // Иван представился на ПК-07 (с опечаткой в регистре — подхватится имя из списка класса)
-    const r1 = await new Promise(r => pc7.emit('agent-student', { student: 'иван петров' }, r));
+    const r1 = await new Promise(r => pc7.emit('agent-student', { student: 'Иван Петров' }, r));
     assert.equal(r1.student, 'Иван Петров');
     t.emit('poll-start', { question: '2+2?', options: ['3', '4'] });
     const poll = await once(pc7, 'poll');
@@ -249,13 +242,9 @@ test('ученика пересадили: ответы, работы и лич�
 
     // Учитель сам сажает Марию за ПК-07
     const seated = once(pc7, 'seat-changed');
-    t.emit('seat-assign', { agentId: pc7.id, name: 'мария козлова' });
+    t.emit('seat-assign', { agentId: pc7.id, name: 'Мария Козлова' });
     assert.equal((await seated).student, 'Мария Козлова');
 
-    // Посещаемость — по людям, с местами
-    const att = srv.getLessonSnapshot().attendance;
-    const ivan = att.filter(x => x.name === 'Иван Петров').map(x => x.seat);
-    assert.deepEqual(ivan, ['ПК-07', 'ПК-12']);
 
     // Рука у ученика в классе
     const hand = once(t, 'hand-raised');

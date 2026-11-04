@@ -69,6 +69,9 @@ body { overflow: hidden; }
 .stage__chips .badge--live { color: var(--live); }
 .stage__chips .badge--warning { color: var(--warning); }
 .stage__unmute { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); }
+/* Доска — бесконечный холст: занимает всю область, без рамки 16:9 и тёмных полей */
+.stage.is-board { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; }
+.stage-wrap.is-board { padding: 0; background: transparent; border: 0; }
 .stage:fullscreen { border-radius: 0; width: 100%; max-height: none; aspect-ratio: auto; }
 
 /* Кнопки урока */

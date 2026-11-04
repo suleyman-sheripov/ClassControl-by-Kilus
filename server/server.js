@@ -27,7 +27,6 @@ const SHARE_LIMIT_MS = 5 * 60 * 1000;
 const TEACHER_FANOUT = 6;   // сколько компьютеров класса учитель кормит эфиром напрямую
 const RELAY_FANOUT = 3;     // сколько соседей подхватывает каждый компьютер класса
 const MAX_POLL_OPTIONS = 8;
-const STALE_LESSON_MS = 3 * 60 * 60 * 1000;   // урок старше 3 часов — это уже прошлый урок
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // без похожих 0/O, 1/I
 
 /** Код урока: 6 понятных символов, его нет у других учителей в той же сети. */
@@ -37,12 +36,11 @@ function makeLessonCode() {
 }
 function normCode(c) { return String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); }
 function normRoom(r) { return String(r || '').trim().toLowerCase().replace(/\s+/g, ' '); }
-function round5(n) { return Math.round(n * 1e5) / 1e5; }
+function round2(n) { return Math.round(n * 100) / 100; }
 /** Ключ человека: одно и то же имя — один и тот же ученик, где бы он ни сидел. */
 function personKey(name) { return 'p:' + String(name || '').trim().toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' '); }
 const MAX_STROKES = 60000;
 const MAX_CHAT = 500;
-const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 
 const ALLOWED_EXTENSIONS = new Set([
     '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp',
@@ -182,7 +180,6 @@ function start(options = {}) {
         teacherId: null,
         teacherName: options.teacherName || 'Учитель',
         roomName: cleanText(options.roomName, 60),
-        roster: Array.isArray(options.roster) ? options.roster.map(n => cleanText(n, 40)).filter(Boolean) : [],
         lessonCode: normCode(options.lessonCode) || makeLessonCode(),
         lessonId: crypto.randomBytes(6).toString('hex'),
         banned: new Set(),        // кого учитель отключил до конца урока (ключи людей)
@@ -191,10 +188,9 @@ function start(options = {}) {
         demoViewers: new Map(),   // socketId -> host
         online: new Map(),        // socketId -> { id, name, hand, voice, sharing, since }
         broadcast: { active: false, allowExit: false, startedAt: 0 },
-        whiteboard: { active: false, transform: { zoom: 1, panX: 0, panY: 0 } },
+        whiteboard: { active: false, transform: { cx: 0, cy: 0, w: 1600, h: 900 } },
         strokes: [],
         chat: [],
-        attendance: [],           // { name, role, joinedAt, leftAt }
         lessonStartedAt: Date.now(),
         publicUrl: null,
         shareTimers: new Map(),
@@ -213,44 +209,29 @@ function start(options = {}) {
         if (fs.existsSync(statePath)) {
             const saved = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
             if (Array.isArray(saved.knownAgents)) saved.knownAgents.forEach(a => state.knownAgents.set(a.host, a));
-            if (saved.focus) state.focus = saved.focus;
             let strokes = Array.isArray(saved.strokes) ? saved.strokes : [];
             if (fs.existsSync(strokesPath)) {
                 strokes = fs.readFileSync(strokesPath, 'utf-8').split('\n').filter(Boolean)
                     .map(l => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(Boolean);
             }
-            const stale = Date.now() - (saved.savedAt || 0) > (options.staleAfterMs || STALE_LESSON_MS);
-            if (stale) {
-                // Вчерашний урок не продолжаем: отдаём его приложению учителя для отчёта и начинаем новый
-                const hasContent = (saved.chat || []).length || (saved.attendance || []).length || (saved.polls || []).length || strokes.length;
-                if (hasContent) {
-                    state.previousLesson = {
-                        teacherName: state.teacherName,
-                        lessonStartedAt: saved.lessonStartedAt || saved.savedAt,
-                        endedAt: saved.savedAt,
-                        chat: saved.chat || [],
-                        attendance: (saved.attendance || []).map(a => ({ ...a, leftAt: a.leftAt || saved.savedAt })),
-                        polls: [],
-                        collections: [],
-                        strokes,
-                        uploadDir: path.join(dataDir, 'uploads')
-                    };
-                }
-                saved.chat = []; saved.attendance = []; saved.polls = []; saved.collections = []; saved.assignments = [];
-                strokes = [];
-                try { fs.unlinkSync(strokesPath); } catch (e) {}
-                saved.lessonStartedAt = Date.now();
+            // Урок одноразовый: прошлый (незавершённый) урок сам не продолжается.
+            // Учитель решает — продолжить, сохранить материалы или начать с чистого листа.
+            if (saved.pending) state.previousLesson = saved.pending;
+            const hasContent = !saved.pending && ((saved.chat || []).length || (saved.polls || []).length || (saved.collections || []).length || strokes.length);
+            if (hasContent) {
+                state.previousLesson = {
+                    teacherName: saved.teacherName || '',
+                    lessonStartedAt: saved.lessonStartedAt || saved.savedAt,
+                    endedAt: saved.savedAt,
+                    lessonId: saved.lessonId,
+                    chat: saved.chat || [],
+                    polls: saved.polls || [],
+                    collections: saved.collections || [],
+                    assignments: saved.assignments || [],
+                    banned: saved.banned || [],
+                    strokes
+                };
             }
-            state.strokes = strokes.slice(-MAX_STROKES);
-            if (Array.isArray(saved.chat)) state.chat = saved.chat.slice(-MAX_CHAT);
-            if (Array.isArray(saved.attendance)) state.attendance = saved.attendance;
-            if (saved.lessonStartedAt) state.lessonStartedAt = saved.lessonStartedAt;
-            if (saved.lessonId && !stale) state.lessonId = saved.lessonId;
-            if (Array.isArray(saved.banned) && !stale) state.banned = new Set(saved.banned);
-            if (Array.isArray(saved.polls)) state.polls = saved.polls;
-            if (Array.isArray(saved.collections)) state.collections = saved.collections;
-            if (Array.isArray(saved.assignments)) state.assignments = saved.assignments;
-            state.attendance.forEach(a => { if (!a.leftAt) a.leftAt = saved.savedAt || Date.now(); });
         }
     } catch (e) {
         log('Не удалось восстановить урок:', e.message);
@@ -265,9 +246,11 @@ function start(options = {}) {
                 savedAt: Date.now(),
                 lessonStartedAt: state.lessonStartedAt,
                 lessonId: state.lessonId,
+                teacherName: state.teacherName,
+                // Пока учитель не решил судьбу незавершённого урока — он хранится как есть
+                pending: state.previousLesson || undefined,
                 banned: [...state.banned],
                 chat: state.chat,
-                attendance: state.attendance,
                 polls: state.polls,
                 collections: state.collections,
                 assignments: state.assignments,
@@ -523,8 +506,7 @@ function start(options = {}) {
             collections: state.collections.map(c => ({ id: c.id, title: c.title, open: c.open, createdAt: c.createdAt, dir: path.join(worksDir, c.id), submissions: c.submissions.map(({ key, ...rest }) => rest) })),
             assignments: state.assignments,
             focus: state.focus,
-            students: [...agentList().map(a => ({ name: a.student || a.name, seat: a.name, anonymous: !a.student, role: 'agent' })), ...onlineList().map(u => ({ name: u.name, seat: 'из дома', role: 'online' }))],
-            roster: state.roster
+            students: [...agentList().map(a => ({ name: a.student || a.name, seat: a.name, anonymous: !a.student, role: 'agent' })), ...onlineList().map(u => ({ name: u.name, seat: 'из дома', role: 'online' }))]
         };
     }
 
@@ -646,28 +628,9 @@ function start(options = {}) {
         persist();
     }
 
-    function attendanceJoin(name, role, seat, anonymous) {
-        const entry = { name, role, seat: seat || (role === 'online' ? 'из дома' : ''), anonymous: Boolean(anonymous), joinedAt: Date.now(), leftAt: null };
-        state.attendance.push(entry);
-        persist();
-        return entry;
-    }
-
-    function attendanceLeave(socket) {
-        const e = socket.data.attendance;
-        if (e && !e.leftAt) { e.leftAt = Date.now(); persist(); }
-        socket.data.attendance = null;
-    }
-
     // ---------- Человек и место ----------
     // Место — компьютер класса или устройство ученика дома. Человек может пересесть,
     // а его ответы, работы, личные сообщения и посещаемость идут за ним.
-    function canonicalName(name) {
-        const key = personKey(name);
-        const fromRoster = state.roster.find(n => personKey(n) === key);
-        return fromRoster || name;
-    }
-
     /** Кто из подключённых сейчас «является» этим человеком. */
     function holderOf(key, exceptId) {
         for (const sk of io.sockets.sockets.values()) {
@@ -688,7 +651,6 @@ function start(options = {}) {
             setSeat(sk, null, reason);
         } else if (sk.data.role === 'online') {
             const u = state.online.get(sk.id);
-            attendanceLeave(sk);
             state.online.delete(sk.id);
             sk.data.replaced = true;
             if (u && u.sharing) { clearShareTimer(sk.id); toTeacher('online-user-stopped-sharing', { userId: sk.id }); }
@@ -702,11 +664,9 @@ function start(options = {}) {
     function setSeat(sk, name, reason) {
         const a = state.agents.get(sk.id);
         if (!a) return;
-        attendanceLeave(sk);
         a.student = name || null;
         a.hand = false;
         sk.data.key = name ? personKey(name) : 'pc:' + a.host;
-        sk.data.attendance = attendanceJoin(name || a.name, 'agent', a.name, !name);
         sk.emit('seat-changed', { student: a.student, reason: reason || null, activity: studentActivity(sk) });
     }
 
@@ -757,7 +717,7 @@ function start(options = {}) {
             if (typeof reply !== 'function') return;
             if (!allow(`code:${socket.data.ip}`, 20, 60000)) return reply({ ok: false, error: 'Слишком много попыток. Подождите минуту.' });
             if (normCode(code) !== state.lessonCode) return reply({ ok: false, error: 'Неверный код урока' });
-            reply({ ok: true, ...lessonInfo(), roster: state.roster });
+            reply({ ok: true, ...lessonInfo() });
         });
 
         // --- Регистрация ---
@@ -782,7 +742,6 @@ function start(options = {}) {
                 board: boardState(),
                 broadcast: state.broadcast,
                 lessonStartedAt: state.lessonStartedAt,
-                attendance: state.attendance,
                 links: links(),
                 offline: offlineAgents(),
                 activity: activity()
@@ -814,7 +773,7 @@ function start(options = {}) {
             }
             socket.data.role = 'agent';
             // Агент помнит ученика только в пределах того же урока: на следующем уроке за ПК может сидеть другой
-            let student = cleanText(payload.student, 40) && payload.lessonId === state.lessonId ? canonicalName(cleanText(payload.student, 40)) : null;
+            let student = cleanText(payload.student, 40) && payload.lessonId === state.lessonId ? cleanText(payload.student, 40) : null;
             if (student) {
                 // Агент помнит, кто за ним сидел. Если этот человек уже пересел за другое место — не отбираем
                 if (holderOf(personKey(student), socket.id)) student = null;
@@ -835,11 +794,9 @@ function start(options = {}) {
             };
             state.agents.set(socket.id, agent);
             state.knownAgents.set(host, { host, name: agent.name, ip: agent.ip, lastSeen: Date.now() });
-            socket.data.attendance = attendanceJoin(student || agent.name, 'agent', agent.name, !student);
             socket.emit('agent-ready', {
                 uploadToken: socket.data.uploadToken,
                 roomName: state.roomName,
-                roster: state.roster,
                 lessonId: state.lessonId,
                 student,
                 teacherName: state.teacherName,
@@ -872,7 +829,7 @@ function start(options = {}) {
                 return;
             }
             if (socket.data.role === 'online') return;
-            const raw = canonicalName(raw0);
+            const raw = raw0;
             // Переподключение после обрыва связи: тот же ученик, то же имя, те же ответы
             const session = /^[a-z0-9]{12,48}$/i.test(String(payload.session || '')) ? String(payload.session) : crypto.randomBytes(12).toString('hex');
             for (const [id, u] of state.online) {
@@ -911,7 +868,6 @@ function start(options = {}) {
                 remote: socket.data.tunneled
             };
             state.online.set(socket.id, user);
-            socket.data.attendance = attendanceJoin(user.name, 'online', 'из дома');
             socket.emit('welcome', {
                 id: socket.id,
                 key,
@@ -1095,11 +1051,11 @@ function start(options = {}) {
             if (socket.data.role !== 'teacher') return;
             const nums = [s.x0, s.y0, s.x1, s.y1, s.width];
             if (!nums.every(n => typeof n === 'number' && isFinite(n))) return;
-            if (s.width <= 0 || s.width > 0.2) return;
+            if (s.width <= 0 || s.width > 2000 || nums.some(n => Math.abs(n) > 1e7)) return;
             const stroke = {
                 sid: cleanText(s.sid, 24),
-                x0: round5(s.x0), y0: round5(s.y0), x1: round5(s.x1), y1: round5(s.y1),
-                width: round5(s.width),
+                x0: round2(s.x0), y0: round2(s.y0), x1: round2(s.x1), y1: round2(s.y1),
+                width: round2(s.width),
                 color: /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#111111',
                 tool: TOOLS.has(s.tool) ? s.tool : 'pen'
             };
@@ -1130,12 +1086,13 @@ function start(options = {}) {
             socket.broadcast.emit('whiteboard-mode', state.whiteboard.active);
         });
 
+        // Вид учителя на бесконечном холсте: центр и размер видимой области
         socket.on('whiteboard-transform', (t = {}) => {
             if (socket.data.role !== 'teacher') return;
-            const zoom = Number(t.zoom), panX = Number(t.panX), panY = Number(t.panY);
-            if (![zoom, panX, panY].every(isFinite)) return;
-            state.whiteboard.transform = { zoom: Math.min(8, Math.max(0.25, zoom)), panX, panY };
-            socket.broadcast.volatile.emit('whiteboard-transform', state.whiteboard.transform);
+            const v = { cx: Number(t.cx), cy: Number(t.cy), w: Number(t.w), h: Number(t.h) };
+            if (![v.cx, v.cy, v.w, v.h].every(isFinite) || v.w <= 0 || v.h <= 0 || v.w > 1e6 || v.h > 1e6) return;
+            state.whiteboard.transform = v;
+            socket.broadcast.volatile.emit('whiteboard-transform', v);
         });
 
         // --- Чат ---
@@ -1233,7 +1190,6 @@ function start(options = {}) {
                 const u = state.online.get(s.id);
                 if (u && u.sharing) { clearShareTimer(s.id); toTeacher('online-user-stopped-sharing', { userId: s.id }); }
                 state.online.delete(s.id);
-                attendanceLeave(s);
                 s.data.replaced = true;
                 toTeacher('peer-gone', { id: s.id });
                 pushRoster();
@@ -1245,7 +1201,7 @@ function start(options = {}) {
         // --- Урок ---
         socket.on('lesson-reset', () => {
             if (socket.data.role !== 'teacher') return;
-            resetLesson();
+            endLesson();
         });
 
         // --- Каскад эфира: узел получил видео и готов делиться ---
@@ -1356,7 +1312,7 @@ function start(options = {}) {
             if (socket.data.role !== 'agent') return reply({ ok: false });
             const agent = state.agents.get(socket.id);
             if (!agent) return reply({ ok: false });
-            const name = cleanText(data.student, 40) ? canonicalName(cleanText(data.student, 40)) : null;
+            const name = cleanText(data.student, 40) ? cleanText(data.student, 40) : null;
             if (!name) { setSeat(socket, null); pushRoster(); return reply({ ok: true, student: null }); }
             if (agent.student && personKey(agent.student) === personKey(name)) return reply({ ok: true, student: agent.student });
             const holder = holderOf(personKey(name), socket.id);
@@ -1372,7 +1328,7 @@ function start(options = {}) {
             if (socket.data.role !== 'teacher') return;
             const sk = io.sockets.sockets.get(String(data.agentId || ''));
             if (!sk || sk.data.role !== 'agent') return;
-            const name = cleanText(data.name, 40) ? canonicalName(cleanText(data.name, 40)) : null;
+            const name = cleanText(data.name, 40) ? cleanText(data.name, 40) : null;
             if (name) {
                 const holder = holderOf(personKey(name), sk.id);
                 if (holder) vacate(holder, 'teacher');
@@ -1410,7 +1366,6 @@ function start(options = {}) {
 
         // --- Отключение ---
         socket.on('disconnect', () => {
-            attendanceLeave(socket);
             clearShareTimer(socket.id);
             const role = socket.data.role;
             if (role === 'teacher' && state.teacherId === socket.id) {
@@ -1447,8 +1402,18 @@ function start(options = {}) {
         });
     });
 
-    function resetLesson() {
+    function emptyDir(dir) {
+        try { for (const f of fs.readdirSync(dir)) fs.rmSync(path.join(dir, f), { recursive: true, force: true }); } catch (e) {}
+    }
+
+    /**
+     * Конец урока. Ничего не переходит к следующему уроку: чат, доска, задания, файлы
+     * и сданные работы стираются, у урока новый код (старая ссылка больше не работает),
+     * ученики из дома видят «Урок закончился», места в классе освобождаются.
+     */
+    function endLesson() {
         state.lessonId = crypto.randomBytes(6).toString('hex');
+        state.lessonCode = makeLessonCode();
         state.banned.clear();
         state.strokes = [];
         rewriteStrokes();
@@ -1456,27 +1421,68 @@ function start(options = {}) {
         state.polls = [];
         state.collections = [];
         state.assignments = [];
+        state.focus = { enabled: false, words: [] };
+        state.whiteboard = { active: false, transform: { cx: 0, cy: 0, w: 1600, h: 900 } };
+        state.publicUrl = null;
         state.lessonStartedAt = Date.now();
-        // Посещаемость нового урока начинается с тех, кто уже на связи
-        state.attendance = [];
+        emptyDir(uploadDir);
+        emptyDir(worksDir);
+        fileMeta.clear();
         for (const s of io.sockets.sockets.values()) {
-            const who = identity(s);
-            if (!who || who.role === 'teacher') continue;
-            const ag = state.agents.get(s.id);
-            if (ag) {
-                // Новый урок — за компьютерами могут сидеть другие ученики
-                s.data.attendance = null;
+            if (s.data.role === 'agent') {
+                // За компьютерами будут другие ученики
                 setSeat(s, null, 'new-lesson');
                 s.emit('lesson-id', { lessonId: state.lessonId });
-            } else {
-                s.data.attendance = attendanceJoin(who.name, 'online', 'из дома');
+                s.emit('focus', state.focus);
+            } else if (s.data.role === 'online') {
+                const u = state.online.get(s.id);
+                if (u && u.sharing) clearShareTimer(s.id);
+                state.online.delete(s.id);
+                s.data.replaced = true;
+                s.emit('lesson-ended');
+                setTimeout(() => s.disconnect(true), 300);
             }
         }
+        io.emit('whiteboard-mode', false);
         io.emit('clear-canvas');
         io.emit('chat-history', []);
         io.emit('collect-closed', {});
-        toTeacher('lesson-started', { lessonStartedAt: state.lessonStartedAt, attendance: state.attendance });
+        toTeacher('lesson-started', { lessonStartedAt: state.lessonStartedAt, lessonCode: state.lessonCode });
+        toTeacher('links', links());
         toTeacher('activity', activity());
+        pushRoster();
+        try { fs.unlinkSync(statePath); } catch (e) {}
+        persist();
+    }
+
+    /** Продолжить незавершённый урок (например, после сбоя). */
+    function resumePrevious() {
+        const p = state.previousLesson;
+        if (!p) return false;
+        state.previousLesson = null;
+        state.strokes = (p.strokes || []).slice(-MAX_STROKES);
+        rewriteStrokes();
+        state.chat = p.chat.slice(-MAX_CHAT);
+        state.polls = p.polls;
+        state.collections = p.collections;
+        state.assignments = p.assignments;
+        state.banned = new Set(p.banned);
+        if (p.lessonId) state.lessonId = p.lessonId;
+        if (p.teacherName) state.teacherName = p.teacherName;
+        state.lessonStartedAt = p.lessonStartedAt || Date.now();
+        io.emit('chat-history', state.chat);
+        io.emit('board-strokes', state.strokes);
+        toTeacher('activity', activity());
+        persist();
+        return true;
+    }
+
+    /** Отказаться от незавершённого урока: его файлы тоже стираются. */
+    function discardPrevious() {
+        state.previousLesson = null;
+        emptyDir(uploadDir);
+        emptyDir(worksDir);
+        try { fs.unlinkSync(strokesPath); } catch (e) {}
         persist();
     }
 
@@ -1486,9 +1492,7 @@ function start(options = {}) {
             lessonStartedAt: state.lessonStartedAt,
             endedAt: Date.now(),
             roomName: state.roomName,
-            roster: state.roster.slice(),
             chat: state.chat.slice(),
-            attendance: state.attendance.map(a => ({ ...a })),
             polls: state.polls.map(p => pollView(p, true)),
             collections: state.collections.map(c => ({ id: c.id, title: c.title, dir: path.join(worksDir, c.id), submissions: c.submissions })),
             uploadDir
@@ -1532,17 +1536,6 @@ function start(options = {}) {
     }, 3000);
     announceTimer.unref();
 
-    // ----- Очистка старых файлов -----
-    const cleanupTimer = setInterval(() => {
-        try {
-            const now = Date.now();
-            for (const file of fs.readdirSync(uploadDir)) {
-                const p = path.join(uploadDir, file);
-                if (now - fs.statSync(p).mtimeMs > UPLOAD_TTL_MS) fs.unlinkSync(p);
-            }
-        } catch (e) {}
-    }, 60 * 60 * 1000);
-    cleanupTimer.unref();
 
     // ----- Запуск -----
     return new Promise((resolve, reject) => {
@@ -1572,22 +1565,28 @@ function start(options = {}) {
                     getLessonSnapshot,
                     worksDir,
                     get lessonCode() { return state.lessonCode; },
-                    setLesson({ roomName, teacherName, lessonCode, roster } = {}) {
-                        if (Array.isArray(roster)) state.roster = roster.map(n => cleanText(n, 40)).filter(Boolean).slice(0, 200);
+                    setLesson({ roomName, teacherName, lessonCode } = {}) {
                         if (roomName !== undefined) state.roomName = cleanText(roomName, 60);
                         if (teacherName) state.teacherName = cleanText(teacherName, 40);
                         if (lessonCode) state.lessonCode = normCode(lessonCode);
                         toTeacher('links', links());
                     },
-                    takePreviousLesson() {
+                    /** Незавершённый урок с прошлого запуска (или null). */
+                    peekPreviousLesson() {
                         const p = state.previousLesson;
-                        state.previousLesson = null;
-                        return p;
+                        if (!p) return null;
+                        return {
+                            ...p,
+                            polls: p.polls.map(x => pollView(x, true)),
+                            collections: p.collections.map(c => ({ id: c.id, title: c.title, dir: path.join(worksDir, c.id), submissions: c.submissions })),
+                            uploadDir
+                        };
                     },
-                    resetLesson,
+                    resumePrevious,
+                    discardPrevious,
+                    endLesson,
                     close() {
                         clearInterval(announceTimer);
-                        clearInterval(cleanupTimer);
                         try { udp.close(); } catch (e) {}
                         try { announcer.close(); } catch (e) {}
                         io.close();

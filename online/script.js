@@ -111,6 +111,12 @@
     leave('Урок продолжается на другом устройстве', 'Вы вошли под этим именем в другом месте, поэтому здесь урок закрыт.');
   });
   socket.on('hand-lowered', () => { me.hand = false; renderHand(); });
+  // Учитель завершил урок: у следующего урока будет другая ссылка
+  socket.on('lesson-ended', () => {
+    sessionStorage.removeItem('cc-code');
+    leave('Урок закончился', 'Спасибо! Ссылка этого урока больше не работает — на следующий урок учитель пришлёт новую.');
+    $('#rejoin').classList.add('hidden');
+  });
 
   socket.on('welcome', (w) => {
     me.id = w.id;
@@ -126,7 +132,7 @@
     chat.opts.meId = w.id;
     chat.setHistory(w.chat || []);
     board.setStrokes(w.board.strokes || []);
-    board.setTransform(w.board.transform || {});
+    board.setView(w.board.transform);
     $('#join').classList.add('hidden');
     $('#gone').classList.add('hidden');
     $('#lesson').classList.remove('hidden');
@@ -135,7 +141,7 @@
     document.title = `Урок · ${w.teacherName}`;
     renderTeacher();
     renderStage();
-    board.fit();
+    board.resize();
     const act = w.activity || {};
     tasks.poll = act.poll || null;
     tasks.collect = act.collection || null;
@@ -180,7 +186,9 @@
 
   // ---------- Сцена: эфир и доска ----------
   const video = $('#video');
-  const board = new CC.Board($('#stage'), $('#board'));
+  // Ученик не двигает доску сам: видит ровно то, что показывает учитель
+  const board = new CC.Board($('#board-surface'), $('#board'), { follow: true });
+  window.__board = board;   // для проверок
   let peer = null;
   let gotTrack = false;
   let relayTimer = null;
@@ -189,7 +197,9 @@
 
   function renderStage() {
     const hasVideo = Boolean(video.srcObject) || relayOn;
-    $('#board').classList.toggle('hidden', !lesson.board);
+    $('#board-surface').classList.toggle('hidden', !lesson.board);
+    $('#stage').classList.toggle('is-board', lesson.board);
+    $('#stage-wrap').classList.toggle('is-board', lesson.board);
     $('#live-chip').classList.toggle('hidden', !(lesson.broadcasting && (hasVideo || lesson.board)));
     const empty = !hasVideo && !lesson.board;
     $('#empty').classList.toggle('hidden', !empty);
@@ -198,7 +208,7 @@
         : lesson.broadcasting ? 'Подключаюсь к эфиру…' : 'Учитель ещё не начал показ';
       $('#empty-text').textContent = lesson.broadcasting ? 'Обычно это занимает пару секунд.' : 'Экран учителя или доска появятся здесь автоматически.';
     }
-    if (lesson.board) board.fit();
+    if (lesson.board) board.resize();
   }
 
   socket.on('broadcast-started', () => {
@@ -304,7 +314,7 @@
   socket.on('draw', (s) => board.add(s));
   socket.on('board-strokes', (l) => board.setStrokes(l));
   socket.on('clear-canvas', () => board.clear());
-  socket.on('whiteboard-transform', (t) => board.setTransform(t));
+  socket.on('whiteboard-transform', (t) => board.setView(t));
 
   // Во весь экран
   $('#full-btn').addEventListener('click', () => {
@@ -314,7 +324,7 @@
   });
   document.addEventListener('fullscreenchange', () => {
     $('#full-btn use').setAttribute('href', document.fullscreenElement ? '#i-shrink' : '#i-expand');
-    setTimeout(() => board.fit(), 50);
+    setTimeout(() => board.resize(), 50);
   });
 
   // ---------- Рука ----------

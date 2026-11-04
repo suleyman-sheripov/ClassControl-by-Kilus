@@ -14,7 +14,7 @@
       getSources: async () => [], setShareSource: async () => {}, ownWindowSource: async () => null,
       keepAwake: async () => {}, openPath: async () => {}, openFolder: async () => {}, openExternal: async (u) => window.open(u),
       recStart: async () => null, recChunk: () => {}, recStop: async () => null,
-      lessonSave: async () => null, saveBoard: async () => null, newLessonCode: async () => null, reportBoard: async () => false,
+      lessonStart: async () => null, lessonEnd: async () => { if (window.__socket) window.__socket.emit('lesson-reset'); return { ok: true }; }, previousLesson: async () => ({ ok: true }), saveBoard: async () => null, newLessonCode: async () => null,
       tunnel: async () => ({ state: 'off' }), onTunnel: () => {}, pickFolder: async () => null
     };
   }
@@ -47,6 +47,7 @@
     return;
   }
   const socket = io(BASE, { transports: ['websocket'] });
+  if (!window.teacherAPI) window.__socket = socket;   // браузерная заглушка: завершает урок сама
 
   function loadScript(src) {
     return new Promise((res, rej) => {
@@ -57,7 +58,7 @@
   }
 
   socket.on('connect', () => {
-    socket.emit('register-teacher', { token: boot.token, name: settings.teacherName });
+    socket.emit('register-teacher', { token: boot.token, name: S.teacherName || 'Учитель' });
   });
   socket.on('disconnect', () => { S.connected = false; setServerStatus('wait', 'Переподключение к серверу…'); });
   socket.on('auth-error', (m) => setServerStatus('error', m));
@@ -82,7 +83,7 @@
 
   socket.on('roster', applyRoster);
   socket.on('links', (l) => { S.links = l; renderLinks(); });
-  socket.on('lesson-started', (d) => { S.lessonStartedAt = d.lessonStartedAt; });
+  socket.on('lesson-started', (d) => { S.lessonStartedAt = d.lessonStartedAt; if (d.lessonCode) S.lessonCode = d.lessonCode; });
 
   // ---------- Верхняя панель: урок ----------
   $('#room-name').textContent = settings.roomName || 'Кабинет не указан';
@@ -92,11 +93,9 @@
 
   function openLessonMenu(anchor, right) {
     CC.menu(anchor, [
-      { icon: 'save', label: 'Завершить урок и сохранить отчёт', run: endLesson },
-      { icon: 'lock', label: 'Закрепить ПК за этим кабинетом', run: bindRoom },
-      { icon: 'folder', label: 'Папка с отчётами', run: () => api.openPath(settings.reportDir) },
-      { icon: 'record', label: 'Папка с записями', run: () => api.openPath(settings.recordDir) },
+      { icon: 'save', label: 'Завершить урок', run: endLesson },
       '-',
+      { icon: 'lock', label: 'Закрепить ПК за этим кабинетом', run: bindRoom },
       document.documentElement.dataset.theme === 'light'
         ? { icon: 'moon', label: 'Тёмная тема', run: () => { applyTheme('dark'); api.saveSettings({ theme: 'dark' }).then(x => { if (x) settings = x; }); } }
         : { icon: 'sun', label: 'Светлая тема', run: () => { applyTheme('light'); api.saveSettings({ theme: 'light' }).then(x => { if (x) settings = x; }); } },
@@ -104,45 +103,83 @@
     ], { alignRight: right });
   }
 
+  // Урок одноразовый: после него на компьютере ничего не остаётся, если учитель сам не сохранил
   async function endLesson() {
-    const ok = await CC.confirm('Завершить урок?', 'Сохраним посещаемость, чат, файлы и доску в папку отчётов, затем очистим чат и доску для следующего урока.', 'Завершить и сохранить');
-    if (!ok) return;
-    const dir = await api.lessonSave({ boardPng: board.strokes.length ? board.toPNG() : null });
-    socket.emit('lesson-reset');
-    if (dir) toast('Отчёт урока сохранён', { kind: 'positive', action: { label: 'Открыть', run: () => api.openPath(dir) } });
+    if (Recorder.active) { toast('Сначала остановите запись урока', { kind: 'warning', icon: 'record' }); return; }
+    const has = board.strokes.length || chat.list.querySelector('.msg:not(.msg--system)') || S.activity.polls.length || S.activity.collections.length;
+    const choice = await CC.dialog({
+      title: 'Завершить урок?',
+      sub: has ? 'Чат, доска, опросы, сданные работы и файлы сотрутся с этого компьютера. Сохраните их, если нужно, — в любую папку или на флешку.' : 'Ученики из дома выйдут, у следующего урока будет новая ссылка.',
+      actions: has
+        ? [{ label: 'Отмена', value: null }, { label: 'Не сохранять', value: 'drop' }, { label: 'Сохранить и завершить', kind: 'primary', primary: true, value: 'save' }]
+        : [{ label: 'Отмена', value: null }, { label: 'Завершить', kind: 'primary', primary: true, value: 'drop' }]
+    });
+    if (!choice) return;
+    if (Broadcast.active) Broadcast.stop();
+    if (B.shared) setBoardShared(false);
+    const r = await api.lessonEnd({ save: choice === 'save', boardPng: choice === 'save' && board.strokes.length ? board.toPNG() : null });
+    if (!r || !r.ok) return;   // отказались выбирать папку — урок продолжается
+    board.clear();
+    if (r.dir) toast('Материалы урока сохранены', { kind: 'positive', action: { label: 'Открыть', run: () => api.openFolder(r.dir) } });
+    startLesson();
   }
 
+  /** Новый урок: учитель представляется только на этот урок — учителя в кабинете меняются. */
+  async function startLesson() {
+    const name = el('input', { class: 'input input--lg', placeholder: 'Например: Анна Петровна', maxlength: 40 });
+    const ok = await CC.dialog({
+      title: 'Новый урок', sub: `${settings.roomName || 'Кабинет'}. Ученики увидят ваше имя в чате и на странице входа.`,
+      body: el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Как вас зовут' }), name),
+      actions: [{ label: 'Начать урок', kind: 'primary', primary: true, value: () => true }]
+    });
+    S.teacherName = (ok && name.value.trim()) || 'Учитель';
+    $('#teacher-name').textContent = S.teacherName === 'Учитель' ? '' : S.teacherName;
+    const code = await api.lessonStart({ teacherName: S.teacherName });
+    if (code) S.lessonCode = code;
+    socket.emit('register-teacher', { token: boot.token, name: S.teacherName });
+  }
+
+  /** Программу закрыли посреди урока: продолжить его, сохранить или начать с чистого листа. */
+  async function askPrevious(p) {
+    const when = new Date(p.startedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+    const what = [p.messages && `${p.messages} ${CC.plural(p.messages, 'сообщение', 'сообщения', 'сообщений')}`, p.strokes && p.strokes.length && 'доска', p.polls && `${p.polls} ${CC.plural(p.polls, 'опрос', 'опроса', 'опросов')}`, p.works && `${p.works} ${CC.plural(p.works, 'работа', 'работы', 'работ')}`].filter(Boolean).join(', ');
+    const choice = await CC.dialog({
+      title: 'Прошлый урок не был завершён',
+      sub: `${p.teacherName && p.teacherName !== 'Учитель' ? p.teacherName + ', ' : ''}начат ${when}. Осталось: ${what || 'немного данных'}.`,
+      actions: [{ label: 'Не сохранять', value: 'drop' }, { label: 'Сохранить…', value: 'save' }, { label: 'Продолжить урок', kind: 'primary', primary: true, value: 'resume' }]
+    });
+    if (choice === 'resume') {
+      await api.previousLesson({ action: 'resume' });
+      S.teacherName = p.teacherName || 'Учитель';
+      $('#teacher-name').textContent = S.teacherName === 'Учитель' ? '' : S.teacherName;
+      socket.emit('register-teacher', { token: boot.token, name: S.teacherName });
+      return;
+    }
+    const r = await api.previousLesson({ action: choice === 'save' ? 'save' : 'drop', boardPng: choice === 'save' && p.strokes && p.strokes.length ? CC.Board.toPNG(p.strokes) : null });
+    if (r && r.canceled) return askPrevious(p);
+    if (r && r.dir) toast('Материалы прошлого урока сохранены', { kind: 'positive', action: { label: 'Открыть', run: () => api.openFolder(r.dir) } });
+    startLesson();
+  }
+
+  // Настройки кабинета (не учителя): название кабинета, папки по умолчанию для сохранения
   async function openSettings() {
-    const name = el('input', { class: 'input', value: settings.teacherName || '' });
     const room = el('input', { class: 'input', value: settings.roomName || '' });
     const recDir = el('input', { class: 'input', value: settings.recordDir || '', readonly: true });
     const repDir = el('input', { class: 'input', value: settings.reportDir || '', readonly: true });
-    const rosterInput = el('textarea', { class: 'textarea', rows: 5, placeholder: 'Иванов Иван\nПетрова Мария' });
-    rosterInput.value = ((settings.rosters || {})[settings.roomName] || []).join('\n');
     const folder = (input) => el('div', { class: 'folder-field' }, input,
       el('button', { class: 'btn', type: 'button', text: 'Выбрать', onclick: async () => { const p = await api.pickFolder(input.value); if (p) input.value = p; } }));
     const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
-      el('div', { class: 'field-row' },
-        el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Как вас видят ученики' }), name),
-        el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Кабинет' }), room)),
-      el('p', { class: 'onboard__why', text: 'Компьютеры класса подключаются только к учителю своего кабинета. Если у двух учителей одинаковые названия, ПК могут попасть не к тому учителю.' }),
-      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Список класса (по желанию, один ученик в строке)' }), rosterInput),
-      el('p', { class: 'onboard__why', text: 'Ученики выбирают себя из списка вместо того, чтобы печатать имя, а в отчёте видно, кто отсутствовал.' }),
-      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Записи уроков' }), folder(recDir)),
-      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Отчёты уроков' }), folder(repDir)));
+      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Кабинет' }), room),
+      el('p', { class: 'onboard__why', text: 'Компьютеры класса подключаются только к учителю своего кабинета.' }),
+      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Куда предлагать сохранять записи' }), folder(recDir)),
+      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Куда предлагать сохранять материалы урока' }), folder(repDir)));
     const saved = await CC.dialog({
-      title: 'Настройки', body, wide: true,
+      title: 'Настройки кабинета', body, wide: true,
       actions: [{ label: 'Отмена', value: null }, { label: 'Сохранить', kind: 'primary', primary: true, value: () => true }]
     });
     if (!saved) return;
-    settings = await api.saveSettings({
-      teacherName: name.value.trim() || 'Учитель',
-      roomName: room.value.trim() || settings.roomName,
-      recordDir: recDir.value, reportDir: repDir.value,
-      rosters: { ...(settings.rosters || {}), [room.value.trim() || settings.roomName]: rosterInput.value.split('\n').map(x => x.trim()).filter(Boolean) }
-    }) || settings;
+    settings = await api.saveSettings({ roomName: room.value.trim() || settings.roomName, recordDir: recDir.value, reportDir: repDir.value }) || settings;
     $('#room-name').textContent = settings.roomName;
-    socket.emit('register-teacher', { token: boot.token, name: settings.teacherName });
     toast('Настройки сохранены', { kind: 'positive' });
   }
 
@@ -156,7 +193,7 @@
     $('#board-tools').classList.toggle('hidden', tab !== 'board');
     $('#studio').classList.toggle('is-compact', tab === 'board');
     syncMonitoring();
-    if (tab === 'board') requestAnimationFrame(() => board.fit());
+    if (tab === 'board') requestAnimationFrame(() => { board.resize(); syncView(); });
   }
   $('#tab-monitoring').addEventListener('click', () => setTab('monitoring'));
   $('#tab-board').addEventListener('click', () => setTab('board'));
@@ -1197,8 +1234,7 @@
 
   // ---------- Доска ----------
   const board = new CC.Board($('#board-stage'), $('#board'));
-  board.padding = 24;
-  board.fit();
+  window.__board = board;   // для проверок
   const COLORS = ['#111111', '#e5484d', '#f2a33a', '#2f9e6b', '#2f6fde', '#8e4ec6', '#ffffff'];
   const B = { tool: 'pen', color: COLORS[0], width: 4, drawing: false, last: null, sid: null, panning: false, space: false, shared: false };
 
@@ -1234,15 +1270,16 @@
   }
   $$('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
-  function normWidth() {
-    return B.tool === 'eraser' ? Math.max(24, B.width * 5) / 1920 : (B.width * 1.25) / 1920;
+  // Толщина — в единицах холста: при приближении линия выглядит толще, как в FigJam
+  function strokeWidth() {
+    return B.tool === 'eraser' ? Math.max(16, B.width * 4) : B.width * 1.25;
   }
   function boardPoint(e) {
-    const r = $('#board').getBoundingClientRect();
-    return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+    const r = bStage.getBoundingClientRect();
+    return board.screenToWorld(e.clientX - r.left, e.clientY - r.top);
   }
   function emitStroke(a, b) {
-    const s = { sid: B.sid, x0: a.x, y0: a.y, x1: b.x, y1: b.y, color: B.color, width: normWidth(), tool: B.tool === 'eraser' ? 'eraser' : 'pen' };
+    const s = { sid: B.sid, x0: a.x, y0: a.y, x1: b.x, y1: b.y, color: B.color, width: strokeWidth(), tool: B.tool === 'eraser' ? 'eraser' : 'pen' };
     board.add(s);
     socket.emit('draw', s);
   }
@@ -1250,32 +1287,30 @@
   const bStage = $('#board-stage');
   bStage.addEventListener('pointerdown', (e) => {
     if (e.button === 1 || B.tool === 'hand' || B.space) {
-      B.panning = { x: e.clientX, y: e.clientY, panX: board.transform.panX, panY: board.transform.panY };
+      B.panning = { x: e.clientX, y: e.clientY };
       bStage.classList.add('is-panning');
       bStage.setPointerCapture(e.pointerId);
       return;
     }
     if (e.button !== 0) return;
-    const start = boardPoint(e);
-    if (start.x < 0 || start.x > 1 || start.y < 0 || start.y > 1) return;
     B.drawing = true;
     B.sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    B.last = start;
-    emitStroke(B.last, { x: B.last.x + 0.0001, y: B.last.y + 0.0001 });
+    B.last = boardPoint(e);
+    emitStroke(B.last, { x: B.last.x + 0.01, y: B.last.y + 0.01 });
     bStage.setPointerCapture(e.pointerId);
   });
   bStage.addEventListener('pointermove', (e) => {
     if (B.panning) {
-      const t = board.transform;
-      board.setTransform({ zoom: t.zoom, panX: B.panning.panX + (e.clientX - B.panning.x) / board.cssW, panY: B.panning.panY + (e.clientY - B.panning.y) / board.cssH });
-      syncTransform();
+      board.panBy(e.clientX - B.panning.x, e.clientY - B.panning.y);
+      B.panning = { x: e.clientX, y: e.clientY };
+      syncView();
       return;
     }
     if (!B.drawing) return;
     const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (const ev of events) {
       const p = boardPoint(ev);
-      const dx = (p.x - B.last.x) * board.cssW, dy = (p.y - B.last.y) * board.cssH;
+      const dx = (p.x - B.last.x) * board.cam.zoom, dy = (p.y - B.last.y) * board.cam.zoom;
       if (dx * dx + dy * dy < 4) continue;
       emitStroke(B.last, p);
       B.last = p;
@@ -1287,28 +1322,29 @@
   };
   bStage.addEventListener('pointerup', endPointer);
   bStage.addEventListener('pointercancel', endPointer);
+  // Колесо — двигать холст, Ctrl+колесо или щипок на тачпаде — масштаб к курсору
   bStage.addEventListener('wheel', (e) => {
     e.preventDefault();
-    const t = board.transform;
-    if (e.ctrlKey || e.metaKey) {
-      const zoom = Math.min(5, Math.max(0.5, t.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
-      board.setTransform({ ...t, zoom });
-    } else {
-      board.setTransform({ zoom: t.zoom, panX: t.panX - e.deltaX / board.cssW, panY: t.panY - e.deltaY / board.cssH });
-    }
-    syncTransform();
+    const r = bStage.getBoundingClientRect();
+    if (e.ctrlKey || e.metaKey) board.zoomAt(e.clientX - r.left, e.clientY - r.top, board.cam.zoom * Math.exp(-e.deltaY * 0.0045));
+    else board.panBy(-e.deltaX, -e.deltaY);
+    syncView();
   }, { passive: false });
 
-  let transformQueued = false;
-  function syncTransform() {
-    $('#zoom-reset').textContent = Math.round(board.transform.zoom * 100) + '%';
-    if (transformQueued) return;
-    transformQueued = true;
-    requestAnimationFrame(() => { transformQueued = false; socket.emit('whiteboard-transform', board.transform); });
+  // Ученики видят ровно ту область холста, которую видит учитель
+  let viewQueued = false;
+  function syncView() {
+    $('#zoom-reset').textContent = Math.round(board.cam.zoom * 100) + '%';
+    if (viewQueued) return;
+    viewQueued = true;
+    requestAnimationFrame(() => { viewQueued = false; socket.emit('whiteboard-transform', board.visibleRect()); });
   }
-  $('#zoom-in').addEventListener('click', () => { board.setTransform({ ...board.transform, zoom: Math.min(5, board.transform.zoom * 1.2) }); syncTransform(); });
-  $('#zoom-out').addEventListener('click', () => { board.setTransform({ ...board.transform, zoom: Math.max(0.5, board.transform.zoom / 1.2) }); syncTransform(); });
-  $('#zoom-reset').addEventListener('click', () => { board.setTransform({ zoom: 1, panX: 0, panY: 0 }); syncTransform(); });
+  board.onResize = syncView;
+  const zoomCenter = (k) => { board.zoomAt(board.cssW / 2, board.cssH / 2, board.cam.zoom * k); syncView(); };
+  $('#zoom-in').addEventListener('click', () => zoomCenter(1.25));
+  $('#zoom-out').addEventListener('click', () => zoomCenter(1 / 1.25));
+  $('#zoom-reset').addEventListener('click', () => { board.zoomAt(board.cssW / 2, board.cssH / 2, 1); syncView(); });
+  $('#zoom-fit').addEventListener('click', () => { board.fitContent(); syncView(); });
 
   function undo() { socket.emit('board-undo'); }
   $('#board-undo').addEventListener('click', undo);
@@ -1389,11 +1425,11 @@
       const tracks = [...this.canvas.captureStream(30).getVideoTracks(), ...Mixer.toRecord.stream.getAudioTracks()];
       const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
       this.rec = new MediaRecorder(new MediaStream(tracks), { mimeType: mime, videoBitsPerSecond: 3_000_000 });
-      this.path = await api.recStart();
+      await api.recStart({ teacherName: S.teacherName && S.teacherName !== 'Учитель' ? S.teacherName : '' });
       this.rec.ondataavailable = async (e) => { if (e.data.size) api.recChunk(await e.data.arrayBuffer()); };
       this.rec.onstop = async () => {
         const p = await api.recStop();
-        if (p) toast('Запись сохранена', { kind: 'positive', action: { label: 'Показать', run: () => api.openPath(p) } });
+        if (p) toast('Запись урока сохранена', { kind: 'positive', action: { label: 'Показать', run: () => api.openPath(p) } });
       };
       this.rec.start(2000);
       this.active = true;
@@ -1408,14 +1444,9 @@
       ctx.drawImage(src, (1920 - dw) / 2, (1080 - dh) / 2, dw, dh);
     },
     drawBoard(ctx) {
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, 1920, 1080);
-      const t = board.transform;
-      ctx.save();
-      ctx.translate(960 + t.panX * 1920, 540 + t.panY * 1080);
-      ctx.scale(t.zoom, t.zoom);
-      ctx.drawImage(board.canvas, -960, -540, 1920, 1080);
-      ctx.restore();
+      // На записи — ровно то, что видит учитель (и ученики)
+      this.boardLayer = this.boardLayer || document.createElement('canvas');
+      CC.Board.renderTo(ctx, 1920, 1080, board.strokes, board.visibleRect(), { layer: this.boardLayer });
     },
     stop() {
       if (!this.active) return;
@@ -1695,49 +1726,25 @@
     if (ok) { socket.emit('bind-room'); toast('Компьютеры закреплены за кабинетом', { kind: 'positive', icon: 'lock' }); }
   }
 
-  async function onboarding() {
-    const name = el('input', { class: 'input input--lg', value: settings.teacherName && settings.teacherName !== 'Учитель' ? settings.teacherName : '', placeholder: 'Например: Анна Петровна', maxlength: 40 });
+  // Один раз для кабинета — название (по нему ПК находят своего учителя)
+  async function setupRoom() {
     const room = el('input', { class: 'input input--lg', value: settings.roomName || '', placeholder: 'Например: Кабинет 301', maxlength: 60 });
     const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
-      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Как вас видят ученики' }), name),
       el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Кабинет' }), room),
-      el('p', { class: 'onboard__why', text: 'Название кабинета нужно, чтобы компьютеры вашего класса не подключились к учителю из соседнего кабинета.' }));
-    let done = false;
-    while (!done) {
-      const ok = await CC.dialog({ title: 'Добро пожаловать в ClassControl', sub: 'Два вопроса перед первым уроком.', body, wide: true,
-        actions: [{ label: 'Готово', kind: 'primary', primary: true, value: () => true }] });
-      if (ok && room.value.trim()) done = true;
-      else if (ok) toast('Укажите кабинет', { kind: 'warning' });
-      else done = true;   // закрыли окно — спросим в следующий раз
+      el('p', { class: 'onboard__why', text: 'Настраивается один раз для этого компьютера. Компьютеры класса подключатся только к учителю своего кабинета, даже если в школе работают несколько учителей.' }));
+    while (!room.value.trim()) {
+      await CC.dialog({ title: 'Как называется этот кабинет?', body, wide: true, actions: [{ label: 'Готово', kind: 'primary', primary: true, value: () => true }] });
+      if (!room.value.trim()) toast('Укажите кабинет', { kind: 'warning' });
     }
-    if (!room.value.trim()) return;
-    settings = await api.saveSettings({ teacherName: name.value.trim() || 'Учитель', roomName: room.value.trim(), onboarded: true }) || settings;
+    settings = await api.saveSettings({ roomName: room.value.trim(), onboarded: true }) || settings;
     $('#room-name').textContent = settings.roomName;
-    socket.emit('register-teacher', { token: boot.token, name: settings.teacherName });
   }
-  if (!settings.onboarded || !settings.roomName) setTimeout(onboarding, 300);
 
-  // Прошлый урок (например, вчерашний) уже сохранён в отчёт — дорисуем картинку доски
-  if (boot.previousReport) {
-    const pr = boot.previousReport;
-    if (pr.strokes && pr.strokes.length) {
-      const c = document.createElement('canvas');
-      c.width = 1920; c.height = 1080;
-      const x = c.getContext('2d');
-      x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
-      const layer = document.createElement('canvas');
-      layer.width = c.width; layer.height = c.height;
-      const lx = layer.getContext('2d');
-      for (const st of pr.strokes) {
-        lx.globalCompositeOperation = st.tool === 'eraser' ? 'destination-out' : 'source-over';
-        lx.strokeStyle = st.color || '#111'; lx.lineWidth = Math.max(1, st.width * c.width); lx.lineCap = 'round'; lx.lineJoin = 'round';
-        lx.beginPath(); lx.moveTo(st.x0 * c.width, st.y0 * c.height); lx.lineTo(st.x1 * c.width, st.y1 * c.height); lx.stroke();
-      }
-      x.drawImage(layer, 0, 0);
-      api.reportBoard({ dir: pr.dir, png: c.toDataURL('image/png') });
-    }
-    setTimeout(() => toast('Прошлый урок сохранён в отчёт, начат новый', { kind: 'positive', icon: 'save', duration: 8000, action: { label: 'Открыть', run: () => api.openFolder(pr.dir) } }), 800);
-  }
+  setTimeout(async () => {
+    if (!settings.roomName) await setupRoom();
+    if (boot.previous) await askPrevious(boot.previous);
+    else await startLesson();
+  }, 300);
 
   // ---------- Мониторинг: скриншоты нужны, только когда их видно ----------
   function syncMonitoring() {
@@ -1763,7 +1770,7 @@
   async function assignSeat(agentId) {
     const a = S.agents.get(agentId);
     if (!a) return;
-    const names = [...new Set([...((settings.rosters || {})[settings.roomName] || []), ...[...S.agents.values()].map(x => x.student).filter(Boolean), ...[...S.online.values()].map(u => u.name)])];
+    const names = [...new Set([...[...S.agents.values()].map(x => x.student).filter(Boolean), ...[...S.online.values()].map(u => u.name)])];
     const input = el('input', { class: 'input input--lg', list: 'seat-names', placeholder: 'Имя ученика', value: a.student || '' });
     const list = el('datalist', { id: 'seat-names' }, ...names.map(n => el('option', { value: n })));
     const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },

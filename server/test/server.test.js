@@ -192,7 +192,18 @@ test('загрузка: SVG запрещён, файл без подключен
     assert.match(file.headers.get('content-disposition'), /attachment/);
 });
 
-test('снимок урока содержит посещаемость', async () => {
-    const snap = srv.getLessonSnapshot();
-    assert.ok(snap.attendance.some(a => a.name === 'Миша'));
+test('конец урока: всё стирается, у урока новый код, ученики из дома выходят', async () => {
+    const t = await teacher();
+    const { u } = await online('Последний');
+    const oldCode = srv.lessonCode;
+    t.emit('chat-message', { text: 'до свидания' });
+    const ended = once(u, 'lesson-ended');
+    t.emit('lesson-reset');
+    await ended;
+    assert.notEqual(srv.lessonCode, oldCode, 'новый код — старая ссылка не работает');
+    assert.equal(srv.getLessonSnapshot().chat.length, 0);
+    const late = client();
+    await once(late, 'connect');
+    late.emit('register-online-user', { name: 'Опоздал', code: oldCode });
+    assert.match(await once(late, 'join-error'), /код/);
 });

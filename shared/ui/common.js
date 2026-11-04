@@ -398,75 +398,193 @@
     }
   };
 
-  // ---------- Доска ----------
-  /** Рисует штрихи (координаты 0..1) на холсте 16:9, вписанном в контейнер. */
+  // ---------- Доска: бесконечный холст ----------
+  /**
+   * Холст без краёв, как в FigJam. Штрихи хранятся в «мировых» координатах.
+   * Учитель свободно двигает и масштабирует вид; ученики не управляют видом,
+   * а всегда показывают ровно ту область, которую видит учитель (follow).
+   *
+   *   const b = new CC.Board(container, canvas, { follow: true });
+   *   b.add(stroke); b.setStrokes(list); b.setView({ cx, cy, w, h });
+   */
+  const PAPER = '#fbfbf8', DOT = '#d9dcd6';
   class Board {
     constructor(container, canvas, opts = {}) {
       this.container = container;
       this.canvas = canvas;
       this.ctx = canvas.getContext('2d');
+      this.follow = Boolean(opts.follow);
       this.strokes = [];
-      this.transform = { zoom: 1, panX: 0, panY: 0 };
-      this.maxRes = opts.maxRes || 3840;
-      this.ro = new ResizeObserver(() => this.fit());
+      this.cam = { cx: 0, cy: 0, zoom: 1 };
+      this.view = null;                   // у учеников — область, которую видит учитель
+      this.cssW = 0; this.cssH = 0; this.dpr = 1;
+      this.dirty = true;
+      Object.assign(canvas.style, { position: 'absolute', left: '0', top: '0', width: '100%', height: '100%', transform: 'none' });
+      this.ro = new ResizeObserver(() => this.resize());
       this.ro.observe(container);
-      this.fit();
+      this.resize();
     }
-    fit() {
-      const rect = this.container.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
-      const pad = this.padding || 0;
-      const availW = rect.width - pad * 2, availH = rect.height - pad * 2;
-      let w = availW, h = w * 9 / 16;
-      if (h > availH) { h = availH; w = h * 16 / 9; }
-      w = Math.floor(w); h = Math.floor(h);
-      this.cssW = w; this.cssH = h;
-      Object.assign(this.canvas.style, {
-        width: w + 'px', height: h + 'px',
-        left: Math.floor((rect.width - w) / 2) + 'px',
-        top: Math.floor((rect.height - h) / 2) + 'px'
-      });
-      const scale = Math.min(this.maxRes / w, (window.devicePixelRatio || 1) * 1.5);
-      const pw = Math.round(w * scale), ph = Math.round(h * scale);
-      if (this.canvas.width !== pw || this.canvas.height !== ph) {
-        this.canvas.width = pw; this.canvas.height = ph;
-        this.redraw();
-      }
+
+    resize() {
+      const r = this.container.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      this.cssW = r.width; this.cssH = r.height;
+      this.dpr = Math.min(2, window.devicePixelRatio || 1);
+      const pw = Math.round(r.width * this.dpr), ph = Math.round(r.height * this.dpr);
+      if (this.canvas.width !== pw || this.canvas.height !== ph) { this.canvas.width = pw; this.canvas.height = ph; }
+      if (this.follow && this.view) this.fitView();
+      this.invalidate();
+      if (this.onResize) this.onResize();
+    }
+
+    // --- Камера ---
+    /** Область мира, видимая сейчас: центр и размеры. Её получают ученики. */
+    visibleRect() {
+      return { cx: this.cam.cx, cy: this.cam.cy, w: this.cssW / this.cam.zoom, h: this.cssH / this.cam.zoom };
+    }
+    setCamera(cam) {
+      this.cam = { cx: cam.cx, cy: cam.cy, zoom: Math.min(8, Math.max(0.1, cam.zoom)) };
+      this.invalidate();
+    }
+    /** Ученик: показать область учителя целиком, вписав её в свой экран. */
+    setView(v) {
+      if (!v || !(v.w > 0) || !(v.h > 0)) return;
+      this.view = { cx: v.cx, cy: v.cy, w: v.w, h: v.h };
+      this.fitView();
+    }
+    fitView() {
+      const v = this.view;
+      if (!v || !this.cssW) return;
+      this.cam = { cx: v.cx, cy: v.cy, zoom: Math.min(this.cssW / v.w, this.cssH / v.h) };
+      this.invalidate();
+    }
+    screenToWorld(sx, sy) {
+      return { x: this.cam.cx + (sx - this.cssW / 2) / this.cam.zoom, y: this.cam.cy + (sy - this.cssH / 2) / this.cam.zoom };
+    }
+    /** Масштаб с сохранением точки под курсором (как в Figma). */
+    zoomAt(sx, sy, zoom) {
+      const w = this.screenToWorld(sx, sy);
+      const z = Math.min(8, Math.max(0.1, zoom));
+      this.cam = { zoom: z, cx: w.x - (sx - this.cssW / 2) / z, cy: w.y - (sy - this.cssH / 2) / z };
+      this.invalidate();
+    }
+    panBy(dxScreen, dyScreen) {
+      this.cam.cx -= dxScreen / this.cam.zoom;
+      this.cam.cy -= dyScreen / this.cam.zoom;
+      this.invalidate();
+    }
+    /** Показать всё нарисованное. */
+    fitContent(pad = 60) {
+      const b = Board.bounds(this.strokes);
+      if (!b) { this.setCamera({ cx: 0, cy: 0, zoom: 1 }); return; }
+      const z = Math.min((this.cssW - pad * 2) / Math.max(1, b.w), (this.cssH - pad * 2) / Math.max(1, b.h), 2);
+      this.setCamera({ cx: b.x + b.w / 2, cy: b.y + b.h / 2, zoom: z });
+    }
+
+    // --- Штрихи ---
+    setStrokes(list) { this.strokes = list.slice(); this.invalidate(); }
+    add(s) {
+      this.strokes.push(s);
+      if (this.dirty) return;
+      // Новый штрих дорисовываем сразу, не перерисовывая весь холст
       this.applyTransform();
+      Board.drawSegment(this.ctx, s);
+      this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
-    setStrokes(list) { this.strokes = list.slice(); this.redraw(); }
-    add(s) { this.strokes.push(s); this.draw(s); }
-    clear() { this.strokes = []; this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height); }
-    redraw() {
-      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      for (const s of this.strokes) this.draw(s);
+    clear() { this.strokes = []; this.invalidate(); }
+
+    // --- Отрисовка ---
+    invalidate() {
+      this.dirty = true;
+      this.paintBackground();
+      if (this.raf) return;
+      this.raf = requestAnimationFrame(() => { this.raf = null; this.render(); });
     }
-    draw(s) {
-      const c = this.ctx, W = this.canvas.width, H = this.canvas.height;
-      c.save();
+    /** Сетка точек — фоном контейнера, двигается вместе с холстом. */
+    paintBackground() {
+      let step = 24 * this.cam.zoom;
+      while (step < 12) step *= 2;
+      while (step > 48) step /= 2;
+      const ox = (this.cssW / 2 - this.cam.cx * this.cam.zoom) % step;
+      const oy = (this.cssH / 2 - this.cam.cy * this.cam.zoom) % step;
+      const st = this.container.style;
+      st.backgroundColor = PAPER;
+      st.backgroundImage = `radial-gradient(circle at 1px 1px, ${DOT} 1.1px, transparent 0)`;
+      st.backgroundSize = `${step}px ${step}px`;
+      st.backgroundPosition = `${ox}px ${oy}px`;
+    }
+    applyTransform() {
+      const k = this.dpr * this.cam.zoom;
+      this.ctx.setTransform(k, 0, 0, k, this.dpr * (this.cssW / 2 - this.cam.cx * this.cam.zoom), this.dpr * (this.cssH / 2 - this.cam.cy * this.cam.zoom));
+    }
+    render() {
+      const c = this.ctx;
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.applyTransform();
+      const v = this.visibleRect();
+      const x0 = v.cx - v.w / 2, x1 = v.cx + v.w / 2, y0 = v.cy - v.h / 2, y1 = v.cy + v.h / 2;
+      for (const s of this.strokes) {
+        const m = s.width;
+        if (Math.max(s.x0, s.x1) < x0 - m || Math.min(s.x0, s.x1) > x1 + m || Math.max(s.y0, s.y1) < y0 - m || Math.min(s.y0, s.y1) > y1 + m) continue;
+        Board.drawSegment(c, s);
+      }
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      this.dirty = false;
+      if (this.onRender) this.onRender();
+    }
+
+    static drawSegment(c, s) {
       c.globalCompositeOperation = s.tool === 'eraser' ? 'destination-out' : 'source-over';
       c.strokeStyle = s.color || '#111';
-      c.lineWidth = Math.max(1, s.width * W);
+      c.lineWidth = s.width;
       c.lineCap = 'round'; c.lineJoin = 'round';
       c.beginPath();
-      c.moveTo(s.x0 * W, s.y0 * H);
-      c.lineTo(s.x1 * W, s.y1 * H);
+      c.moveTo(s.x0, s.y0);
+      c.lineTo(s.x1, s.y1);
       c.stroke();
-      c.restore();
+      c.globalCompositeOperation = 'source-over';
     }
-    setTransform(t) { this.transform = { zoom: t.zoom || 1, panX: t.panX || 0, panY: t.panY || 0 }; this.applyTransform(); }
-    applyTransform() {
-      const t = this.transform;
-      this.canvas.style.transform = `translate(${t.panX * (this.cssW || 0)}px, ${t.panY * (this.cssH || 0)}px) scale(${t.zoom})`;
+    static bounds(strokes) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const s of strokes) {
+        if (s.tool === 'eraser') continue;
+        const m = s.width / 2;
+        minX = Math.min(minX, s.x0 - m, s.x1 - m); maxX = Math.max(maxX, s.x0 + m, s.x1 + m);
+        minY = Math.min(minY, s.y0 - m, s.y1 - m); maxY = Math.max(maxY, s.y0 + m, s.y1 + m);
+      }
+      return isFinite(minX) ? { x: minX, y: minY, w: maxX - minX, h: maxY - minY } : null;
     }
-    toPNG() {
+    /** Нарисовать область мира на любом холсте (запись урока, картинка доски). */
+    static renderTo(ctx, w, h, strokes, rect, opts = {}) {
+      const z = Math.min(w / rect.w, h / rect.h);
+      ctx.save();
+      ctx.fillStyle = PAPER;
+      ctx.fillRect(0, 0, w, h);
+      // Штрихи (с ластиком) — на отдельном слое, чтобы ластик не стирал фон
+      const layer = opts.layer || document.createElement('canvas');
+      if (layer.width !== w || layer.height !== h) { layer.width = w; layer.height = h; }
+      const lc = layer.getContext('2d');
+      lc.setTransform(1, 0, 0, 1, 0, 0);
+      lc.clearRect(0, 0, w, h);
+      lc.setTransform(z, 0, 0, z, w / 2 - rect.cx * z, h / 2 - rect.cy * z);
+      for (const s of strokes) Board.drawSegment(lc, s);
+      ctx.drawImage(layer, 0, 0);
+      ctx.restore();
+    }
+    /** Картинка всего нарисованного (для сохранения и материалов урока). */
+    static toPNG(strokes, maxSide = 2400) {
+      const b = Board.bounds(strokes);
+      if (!b) return null;
+      const pad = 48;
+      const rect = { cx: b.x + b.w / 2, cy: b.y + b.h / 2, w: b.w + pad * 2, h: b.h + pad * 2 };
+      const k = Math.min(2, maxSide / Math.max(rect.w, rect.h));
       const out = document.createElement('canvas');
-      out.width = this.canvas.width; out.height = this.canvas.height;
-      const c = out.getContext('2d');
-      c.fillStyle = '#fff'; c.fillRect(0, 0, out.width, out.height);
-      c.drawImage(this.canvas, 0, 0);
+      out.width = Math.max(1, Math.round(rect.w * k)); out.height = Math.max(1, Math.round(rect.h * k));
+      Board.renderTo(out.getContext('2d'), out.width, out.height, strokes, rect);
       return out.toDataURL('image/png');
     }
+    toPNG() { return Board.toPNG(this.strokes); }
   }
   CC.Board = Board;
 
