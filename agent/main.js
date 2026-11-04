@@ -1,344 +1,565 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, desktopCapturer, Notification } = require('electron');
+'use strict';
+/**
+ * ClassControl Agent — работает на компьютере ученика в классе.
+ * Иконка в трее с одним пунктом «Открыть беседу». Настройки — только через
+ * «Пуск → ClassControl → Настройки агента» и под паролем администратора.
+ */
+const {
+  app, BrowserWindow, Tray, Menu, ipcMain, desktopCapturer, Notification,
+  powerMonitor, screen, shell, session, nativeImage
+} = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const dgram = require('dgram');
+const crypto = require('crypto');
+const { execFile } = require('child_process');
 
-let tray = null;
-let hiddenWindow = null;  // Фоновое окно (скриншоты, WebRTC)
-let chatWindow = null;    // Окно чата
-let demoWindow = null;    // Окно демонстрации (fullscreen)
-let serverAddress = null; // 'http://IP:PORT'
+const RES = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
+const SHARED_DIR = path.join(RES, 'shared');
+const WANT_CONFIG = process.argv.includes('--config');
 
-// --- Настройки агента (с сохранением в файл) ---
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+
+// Агент общается только с компьютером учителя в локальной сети — школьный прокси ему не нужен
+// (сайты по команде учителя открываются в обычном браузере ученика).
+app.commandLine.appendSwitch('no-proxy-server');
+
+// ---------- Настройки ----------
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'agent-settings.json');
-
-const DEFAULT_SETTINGS = {
-  showExitButton: false,      // Скрыта по умолчанию (чтобы ученики не вырубали)
-  autoStartWithOS: true,      // Автозапуск с Windows
-  showNotifications: true,    // Показывать уведомления в трее
-  screenshotInterval: 1000,   // Интервал скриншотов (мс)
-  networkMode: 'auto'         // 'auto' = LAN Discovery, 'localhost' = только localhost
+const DEFAULTS = {
+  pcName: os.hostname(),
+  serverMode: 'auto',          // 'auto' — найти учителя в сети, 'manual' — адрес вручную
+  serverAddress: '',
+  autoStart: true,
+  notifications: true,
+  passwordHash: '',
+  passwordSalt: '',
+  lastServer: ''
 };
-
-let settings = { ...DEFAULT_SETTINGS };
-
-function loadSettings() {
-  try {
-    if (fs.existsSync(SETTINGS_PATH)) {
-      const data = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
-      settings = { ...DEFAULT_SETTINGS, ...data };
-    }
-  } catch (err) {
-    console.error('[AGENT] Ошибка загрузки настроек:', err.message);
-    settings = { ...DEFAULT_SETTINGS };
-  }
-}
-
+let settings = { ...DEFAULTS };
+try {
+  if (fs.existsSync(SETTINGS_PATH)) settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8')) };
+} catch (e) {}
 function saveSettings() {
-  try {
-    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('[AGENT] Ошибка сохранения настроек:', err.message);
-  }
+  try { fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2)); } catch (e) {}
 }
-
+function hashPassword(pw, salt) {
+  return crypto.scryptSync(String(pw), salt, 32).toString('hex');
+}
 function applyAutoStart() {
-  app.setLoginItemSettings({
-    openAtLogin: settings.autoStartWithOS,
-    path: app.getPath('exe'),
-    args: ['--hidden']
-  });
+  if (process.platform === 'linux') return;
+  app.setLoginItemSettings({ openAtLogin: settings.autoStart, path: app.getPath('exe'), args: ['--hidden'] });
 }
 
-// --- Трей и контекстное меню ---
+// ---------- Окна ----------
+let tray = null;
+let bgWindow = null;        // невидимое окно: связь с сервером, скриншоты, показ экрана
+let chatWindow = null;
+let demoWindow = null;
+let configWindow = null;
+let banner = null;          // «Учитель смотрит экран»
+let lockWindows = [];
+let serverAddress = null;
+let connected = false;
+let teacherName = 'Учитель';
+let agentSocketId = null;
+let broadcastState = { active: false, allowExit: false };
 
-function buildTrayMenu() {
-  const menuItems = [
-    { label: 'Открыть беседу', click: () => openChatWindow() },
-    { type: 'separator' },
-    {
-      label: 'Настройки',
-      submenu: [
-        {
-          label: 'Режим сети: LAN Discovery',
-          type: 'radio',
-          checked: settings.networkMode !== 'localhost',
-          click: () => {
-            settings.networkMode = 'auto';
-            saveSettings();
-            rebuildTrayMenu();
-          }
-        },
-        {
-          label: 'Режим сети: Только localhost',
-          type: 'radio',
-          checked: settings.networkMode === 'localhost',
-          click: () => {
-            settings.networkMode = 'localhost';
-            saveSettings();
-            rebuildTrayMenu();
-          }
-        },
-        { type: 'separator' },
-        {
-          label: 'Показывать кнопку "Выход"',
-          type: 'checkbox',
-          checked: settings.showExitButton,
-          click: (menuItem) => {
-            settings.showExitButton = menuItem.checked;
-            saveSettings();
-            rebuildTrayMenu();
-          }
-        },
-        {
-          label: 'Автозапуск с Windows',
-          type: 'checkbox',
-          checked: settings.autoStartWithOS,
-          click: (menuItem) => {
-            settings.autoStartWithOS = menuItem.checked;
-            saveSettings();
-            applyAutoStart();
-          }
-        },
-        {
-          label: 'Показывать уведомления',
-          type: 'checkbox',
-          checked: settings.showNotifications,
-          click: (menuItem) => {
-            settings.showNotifications = menuItem.checked;
-            saveSettings();
-          }
-        }
-      ]
-    }
-  ];
+const webPrefs = () => ({
+  preload: path.join(__dirname, 'preload.js'),
+  contextIsolation: true,
+  nodeIntegration: false,
+  sandbox: true,
+  backgroundThrottling: false
+});
 
-  if (settings.showExitButton) {
-    menuItems.push({ type: 'separator' });
-    menuItems.push({
-      label: 'Выход',
-      click: () => { app.isQuitting = true; app.quit(); }
-    });
-  }
-
-  return Menu.buildFromTemplate(menuItems);
+function page(name) {
+  return path.join(__dirname, 'renderer', name);
 }
 
-function rebuildTrayMenu() {
-  if (tray && !tray.isDestroyed()) {
-    tray.setContextMenu(buildTrayMenu());
+function sendAll(channel, payload) {
+  for (const w of [bgWindow, chatWindow, demoWindow, configWindow]) {
+    if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
   }
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, 'assets', 'icon.png');
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray.png'));
   try {
-    tray = new Tray(iconPath);
+    tray = new Tray(icon);
   } catch (err) {
-    console.error('[AGENT] Ошибка создания трея (icon.png не найден?):', err.message);
+    console.error('[AGENT] Трей недоступен:', err.message);
     return;
   }
-  tray.setToolTip('ClassControl Agent');
-  tray.setContextMenu(buildTrayMenu());
+  tray.setToolTip('ClassControl — урок');
+  tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Открыть беседу', click: openChat }]));
+  tray.on('double-click', openChat);
 }
 
-function createHiddenWindow() {
-  hiddenWindow = new BrowserWindow({
-    show: false,           // СКРЫТОЕ!
-    width: 400,
-    height: 300,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false
-    }
-  });
-  hiddenWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  
-  // Отладка
-  hiddenWindow.webContents.on('console-message', (event, level, message) => {
-    console.log('[HIDDEN LOG]', message);
-  });
-
-  hiddenWindow.webContents.on('did-finish-load', () => {
-    if (serverAddress) {
-      hiddenWindow.webContents.send('server-address', serverAddress);
-    }
-  });
+function createBackground() {
+  bgWindow = new BrowserWindow({ show: false, width: 320, height: 200, webPreferences: webPrefs() });
+  bgWindow.loadFile(page('index.html'));
+  bgWindow.webContents.on('did-finish-load', () => { if (serverAddress) bgWindow.webContents.send('server-address', serverAddress); });
+  bgWindow.webContents.on('render-process-gone', () => setTimeout(createBackground, 2000));
 }
 
-function openChatWindow() {
-  if (chatWindow && !chatWindow.isDestroyed()) {
-    chatWindow.focus();
-    return;
-  }
+function openChat() {
+  if (chatWindow && !chatWindow.isDestroyed()) { chatWindow.show(); chatWindow.focus(); return; }
+  const { workArea } = screen.getPrimaryDisplay();
   chatWindow = new BrowserWindow({
-    width: 400,
-    height: 600,
-    title: 'ClassControl — Чат',
-    resizable: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false
-    }
+    width: 380, height: 560, minWidth: 320, minHeight: 400,
+    x: workArea.x + workArea.width - 400, y: workArea.y + workArea.height - 580,
+    title: 'Беседа урока', backgroundColor: '#0b0b0c', autoHideMenuBar: true,
+    webPreferences: webPrefs()
   });
   chatWindow.setMenuBarVisibility(false);
-  chatWindow.loadFile(path.join(__dirname, 'renderer', 'chat.html'));
-  
-  chatWindow.webContents.on('console-message', (event, level, message) => {
-    console.log('[CHAT LOG]', message);
-  });
-  
-  // Передать адрес сервера если он уже найден
-  chatWindow.webContents.on('did-finish-load', () => {
-    if (serverAddress) {
-      chatWindow.webContents.send('server-address', serverAddress);
-    }
-  });
+  chatWindow.loadFile(page('chat.html'));
 }
 
-function openDemoWindow() {
+function openDemo() {
   if (demoWindow && !demoWindow.isDestroyed()) return;
   demoWindow = new BrowserWindow({
-    fullscreen: true,
-    alwaysOnTop: true,
-    frame: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false
-    }
+    fullscreen: true, frame: false, alwaysOnTop: true, skipTaskbar: true,
+    backgroundColor: '#000000', webPreferences: webPrefs()
   });
-  demoWindow.loadFile(path.join(__dirname, 'renderer', 'demo.html'));
-  // Передать адрес сервера после загрузки
-  demoWindow.webContents.on('did-finish-load', () => {
-    if (serverAddress) {
-      demoWindow.webContents.send('server-address', serverAddress);
+  demoWindow.setAlwaysOnTop(true, 'screen-saver');
+  demoWindow.loadFile(page('demo.html'));
+  demoWindow.on('close', (e) => {
+    if (broadcastState.active && !broadcastState.allowExit && !app.isQuitting && !demoWindow.allowClose) e.preventDefault();
+  });
+  demoWindow.on('closed', () => { demoWindow = null; });
+}
+
+function closeDemo(force) {
+  if (!demoWindow || demoWindow.isDestroyed()) return;
+  if (!force && broadcastState.active && !broadcastState.allowExit) return;
+  demoWindow.allowClose = true;
+  demoWindow.close();
+}
+
+function openConfig() {
+  if (configWindow && !configWindow.isDestroyed()) { configWindow.show(); configWindow.focus(); return; }
+  configWindow = new BrowserWindow({
+    width: 460, height: 620, resizable: false, title: 'ClassControl — настройки агента',
+    backgroundColor: '#0b0b0c', autoHideMenuBar: true, webPreferences: webPrefs()
+  });
+  configWindow.setMenuBarVisibility(false);
+  configWindow.loadFile(page('config.html'));
+}
+
+function showBanner(text) {
+  if (banner && !banner.isDestroyed()) { banner.webContents.send('banner-text', text); return; }
+  const { workArea } = screen.getPrimaryDisplay();
+  banner = new BrowserWindow({
+    width: 340, height: 40, x: Math.round(workArea.x + workArea.width / 2 - 170), y: workArea.y + 8,
+    frame: false, transparent: true, resizable: false, movable: false, focusable: false,
+    skipTaskbar: true, alwaysOnTop: true, hasShadow: false, webPreferences: webPrefs()
+  });
+  banner.setAlwaysOnTop(true, 'screen-saver');
+  banner.setIgnoreMouseEvents(true);
+  banner.loadFile(page('banner.html'));
+  banner.webContents.on('did-finish-load', () => banner.webContents.send('banner-text', text));
+}
+function hideBanner() {
+  if (banner && !banner.isDestroyed()) banner.close();
+  banner = null;
+}
+
+// ---------- Блокировка экранов ----------
+let lockText = '';
+function lockScreens(text) {
+  lockText = text || 'Внимание на учителя';
+  if (lockWindows.length) { lockWindows.forEach(w => !w.isDestroyed() && w.webContents.send('lock-text', lockText)); return; }
+  for (const d of screen.getAllDisplays()) {
+    const w = new BrowserWindow({
+      x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
+      frame: false, fullscreen: true, kiosk: true, alwaysOnTop: true, skipTaskbar: true,
+      movable: false, resizable: false, minimizable: false, closable: false,
+      backgroundColor: '#0b0b0c', webPreferences: webPrefs()
+    });
+    w.setAlwaysOnTop(true, 'screen-saver');
+    w.loadFile(page('lock.html'));
+    w.webContents.on('did-finish-load', () => w.webContents.send('lock-text', lockText));
+    w.on('close', (e) => { if (!w.allowClose && !app.isQuitting) e.preventDefault(); });
+    w.on('blur', () => { if (!w.isDestroyed()) { w.focus(); w.moveTop(); } });
+    lockWindows.push(w);
+  }
+  reportStatus();
+}
+function unlockScreens() {
+  lockWindows.forEach(w => { if (!w.isDestroyed()) { w.allowClose = true; w.setClosable(true); w.close(); } });
+  lockWindows = [];
+  reportStatus();
+}
+function reportStatus() {
+  if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('agent-status', { locked: lockWindows.length > 0 });
+}
+
+function showMessage(text) {
+  const { workArea } = screen.getPrimaryDisplay();
+  const w = new BrowserWindow({
+    width: 420, height: 220, x: Math.round(workArea.x + workArea.width / 2 - 210), y: Math.round(workArea.y + workArea.height / 3 - 110),
+    frame: false, resizable: false, alwaysOnTop: true, skipTaskbar: false, backgroundColor: '#131315',
+    title: 'Сообщение от учителя', webPreferences: webPrefs()
+  });
+  w.setAlwaysOnTop(true, 'screen-saver');
+  w.loadFile(page('message.html'));
+  w.webContents.on('did-finish-load', () => w.webContents.send('message', { text, from: teacherName }));
+}
+
+// ---------- Удалённое управление (nut-js) ----------
+let nut = null;
+let nutError = null;
+function loadNut() {
+  if (nut || nutError) return nut;
+  try {
+    nut = require('@nut-tree-fork/nut-js');
+    nut.mouse.config.autoDelayMs = 0;
+    nut.mouse.config.mouseSpeed = 100000;
+    nut.keyboard.config.autoDelayMs = 0;
+  } catch (e) {
+    nutError = e.message;
+    console.error('[AGENT] nut-js недоступен:', e.message);
+  }
+  return nut;
+}
+
+const KEYMAP = {
+  Enter: 'Enter', NumpadEnter: 'Enter', Backspace: 'Backspace', Tab: 'Tab', Escape: 'Escape', Space: 'Space',
+  ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+  Delete: 'Delete', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown', Insert: 'Insert',
+  ShiftLeft: 'LeftShift', ShiftRight: 'RightShift', ControlLeft: 'LeftControl', ControlRight: 'RightControl',
+  AltLeft: 'LeftAlt', AltRight: 'RightAlt', MetaLeft: 'LeftSuper', MetaRight: 'RightSuper', CapsLock: 'CapsLock',
+  Minus: 'Minus', Equal: 'Equal', BracketLeft: 'LeftBracket', BracketRight: 'RightBracket', Backslash: 'Backslash',
+  Semicolon: 'Semicolon', Quote: 'Quote', Comma: 'Comma', Period: 'Period', Slash: 'Slash', Backquote: 'Grave',
+  PrintScreen: 'Print', ContextMenu: 'Menu'
+};
+function nutKey(code) {
+  const K = nut.Key;
+  let name = KEYMAP[code];
+  if (!name && /^Key[A-Z]$/.test(code)) name = code.slice(3);
+  if (!name && /^Digit\d$/.test(code)) name = 'Num' + code.slice(5);
+  if (!name && /^F\d{1,2}$/.test(code)) name = code;
+  if (!name && /^Numpad\d$/.test(code)) name = 'NumPad' + code.slice(6);
+  if (name && K[name] !== undefined) return K[name];
+  if (name === 'LeftSuper' && K.LeftWin !== undefined) return K.LeftWin;
+  if (name === 'RightSuper' && K.RightWin !== undefined) return K.RightWin;
+  return undefined;
+}
+const BUTTONS = ['LEFT', 'MIDDLE', 'RIGHT'];
+let remoteActive = false;
+let inputChain = Promise.resolve();
+
+function handleInput(d) {
+  if (!remoteActive) return;
+  if (!loadNut()) return;
+  inputChain = inputChain.then(async () => {
+    const { mouse, keyboard, Point, Button } = nut;
+    try {
+      if (d.type === 'move' || d.type === 'down' || d.type === 'up') {
+        const w = await nut.screen.width(), h = await nut.screen.height();
+        const x = Math.round(Math.min(1, Math.max(0, d.x)) * (w - 1));
+        const y = Math.round(Math.min(1, Math.max(0, d.y)) * (h - 1));
+        await mouse.setPosition(new Point(x, y));
+        const btn = Button[BUTTONS[d.button] || 'LEFT'];
+        if (d.type === 'down') await mouse.pressButton(btn);
+        if (d.type === 'up') await mouse.releaseButton(btn);
+      } else if (d.type === 'wheel') {
+        if (d.dy > 0) await mouse.scrollDown(d.dy * 3);
+        if (d.dy < 0) await mouse.scrollUp(-d.dy * 3);
+        if (d.dx > 0) await mouse.scrollRight(d.dx * 3);
+        if (d.dx < 0) await mouse.scrollLeft(-d.dx * 3);
+      } else if (d.type === 'key') {
+        const printable = typeof d.key === 'string' && [...d.key].length === 1 && !d.ctrl && !d.alt && !d.meta;
+        if (printable) {
+          if (d.down) await keyboard.type(d.key);
+          return;
+        }
+        const k = nutKey(String(d.code || ''));
+        if (k === undefined) return;
+        if (d.down) await keyboard.pressKey(k); else await keyboard.releaseKey(k);
+      }
+    } catch (err) {
+      console.error('[AGENT] input', err.message);
     }
   });
 }
 
-function closeDemoWindow() {
-  if (demoWindow && !demoWindow.isDestroyed()) {
-    demoWindow.close();
-    demoWindow = null;
+// ---------- Программы и питание ----------
+const PROTECTED = new Set(['explorer.exe', 'csrss.exe', 'winlogon.exe', 'lsass.exe', 'services.exe', 'svchost.exe', 'dwm.exe', 'smss.exe', 'wininit.exe', 'system']);
+
+function listProcesses() {
+  return new Promise((resolve) => {
+    if (process.platform === 'win32') {
+      const ps = "Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object Id,ProcessName,MainWindowTitle | ConvertTo-Json -Compress";
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 8000, maxBuffer: 4e6 }, (err, out) => {
+        if (err) return resolve([]);
+        try {
+          let list = JSON.parse(out || '[]');
+          if (!Array.isArray(list)) list = [list];
+          resolve(list
+            .filter(p => p.Id !== process.pid)
+            .map(p => ({ pid: p.Id, name: p.ProcessName + '.exe', title: p.MainWindowTitle })));
+        } catch (e) { resolve([]); }
+      });
+    } else {
+      execFile('ps', ['-u', String(os.userInfo().uid), '-o', 'pid=,comm='], { timeout: 5000 }, (err, out) => {
+        if (err) return resolve([]);
+        resolve(String(out).trim().split('\n').map(l => l.trim().split(/\s+/)).filter(p => p.length >= 2 && Number(p[0]) !== process.pid)
+          .map(p => ({ pid: Number(p[0]), name: p[1], title: '' })).slice(0, 150));
+      });
+    }
+  });
+}
+
+function killProcess({ pid, name }) {
+  return new Promise((resolve) => {
+    const lname = String(name || '').toLowerCase();
+    if (PROTECTED.has(lname) || pid === process.pid || pid === process.ppid) return resolve({ ok: false, message: 'Эту программу закрыть нельзя' });
+    if (process.platform === 'win32') {
+      const args = pid ? ['/PID', String(pid), '/T', '/F'] : ['/IM', lname, '/T', '/F'];
+      execFile('taskkill', args, { windowsHide: true }, (err) => resolve({ ok: !err, message: err ? 'Не удалось закрыть программу' : '' }));
+    } else {
+      try { process.kill(pid, 'SIGTERM'); resolve({ ok: true }); } catch (e) { resolve({ ok: false, message: e.message }); }
+    }
+  });
+}
+
+function power(mode) {
+  const win = {
+    shutdown: ['shutdown', ['/s', '/t', '15', '/c', 'Учитель выключает компьютер. Сохраните работу.']],
+    restart: ['shutdown', ['/r', '/t', '15', '/c', 'Учитель перезагружает компьютер. Сохраните работу.']],
+    logoff: ['shutdown', ['/l']]
+  };
+  const nix = { shutdown: ['systemctl', ['poweroff']], restart: ['systemctl', ['reboot']], logoff: ['loginctl', ['terminate-user', os.userInfo().username]] };
+  const cmd = (process.platform === 'win32' ? win : nix)[mode];
+  if (!cmd) return;
+  execFile(cmd[0], cmd[1], { windowsHide: true }, () => {});
+}
+
+async function handleControl({ action, data }) {
+  const reply = (ok, message) => bgWindow && !bgWindow.isDestroyed() && bgWindow.webContents.send('control-result', { action, ok, message });
+  switch (action) {
+    case 'input': handleInput(data || {}); break;
+    case 'lock': lockScreens(data && data.text); break;
+    case 'unlock': unlockScreens(); break;
+    case 'message': showMessage(String((data && data.text) || '')); break;
+    case 'open-url':
+      if (data && /^https?:\/\//i.test(data.url)) shell.openExternal(data.url).catch(() => reply(false, 'Не удалось открыть сайт'));
+      break;
+    case 'list-processes': {
+      const list = await listProcesses();
+      if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('processes', list);
+      break;
+    }
+    case 'kill': {
+      const r = await killProcess(data || {});
+      if (!r.ok) reply(false, r.message);
+      break;
+    }
+    case 'power': power(data && data.mode); break;
   }
 }
 
-ipcMain.on('server-found', (event, address) => {
+// ---------- Скриншоты для мониторинга ----------
+let lastHash = '';
+let lastSent = 0;
+async function takeScreenshot() {
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 640, height: 360 } });
+  const primary = sources.find(s => String(s.display_id) === String(screen.getPrimaryDisplay().id)) || sources[0];
+  if (!primary) return null;
+  const jpeg = primary.thumbnail.toJPEG(62);
+  const hash = crypto.createHash('md5').update(jpeg).digest('hex');
+  const now = Date.now();
+  const idle = powerMonitor.getSystemIdleTime();
+  // Экран не менялся — шлём не чаще раза в 5 секунд (как «пульс» и для времени бездействия)
+  if (hash === lastHash && now - lastSent < 5000) return { image: null, idle };
+  lastHash = hash;
+  lastSent = now;
+  return { image: jpeg, idle };
+}
+
+// ---------- Поиск учителя в сети ----------
+let discoverTimer = null;
+let queryClient = null;
+let listener = null;
+
+function setServer(address) {
+  if (!address || address === serverAddress) return;
   serverAddress = address;
-  console.log('[AGENT] Сервер найден:', address);
+  console.log('[AGENT] Сервер урока:', address);
+  sendAll('server-address', address);
+}
+
+function startDiscovery() {
+  if (settings.serverMode === 'manual' && settings.serverAddress) {
+    const a = settings.serverAddress.trim();
+    setServer(/^https?:\/\//.test(a) ? a : `http://${a.includes(':') ? a : a + ':3000'}`);
+    return;
+  }
+  if (!listener) {
+    listener = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    listener.on('message', (msg) => onAnnounce(String(msg)));
+    listener.on('error', () => {});
+    try { listener.bind(41235); } catch (e) {}
+  }
+  if (!queryClient) {
+    queryClient = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    queryClient.on('message', (msg) => onAnnounce(String(msg)));
+    queryClient.on('error', () => {});
+    queryClient.bind(() => { try { queryClient.setBroadcast(true); } catch (e) {} });
+  }
+  const ask = () => {
+    if (connected) return;
+    const msg = Buffer.from('CLASSCONTROL_DISCOVER');
+    try { queryClient.send(msg, 41234, '255.255.255.255'); } catch (e) {}
+  };
+  clearInterval(discoverTimer);
+  discoverTimer = setInterval(ask, 3000);
+  setTimeout(ask, 300);
+}
+
+const discovered = new Map(); // адрес -> время последнего ответа (для окна настроек)
+let chosenAt = 0;
+function onAnnounce(text) {
+  if (!text.startsWith('CLASSCONTROL_SERVER:')) return;
+  const [, ip, port] = text.split(':');
+  if (!ip || !port) return;
+  const address = `http://${ip}:${port}`;
+  discovered.set(address, Date.now());
+  if (settings.serverMode === 'manual') return;
+  if (connected && serverAddress) return;
+  const now = Date.now();
+  // В одной сети может быть несколько кабинетов. Не прыгаем между учителями:
+  // предпочитаем того, с кем были на связи в прошлый раз, а выбранного держим 15 секунд.
+  if (settings.lastServer && address !== settings.lastServer && discovered.has(settings.lastServer) &&
+      now - discovered.get(settings.lastServer) < 10000) return;
+  if (serverAddress && serverAddress !== address && now - chosenAt < 15000 && address !== settings.lastServer) return;
+  if (serverAddress !== address) chosenAt = now;
+  setServer(address);
+}
+
+// ---------- IPC ----------
+ipcMain.handle('agent-info', () => ({
+  pcName: settings.pcName || os.hostname(),
+  hostname: os.hostname(),
+  platform: process.platform,
+  serverAddress,
+  connected,
+  teacherName,
+  socketId: agentSocketId,
+  broadcast: broadcastState
+}));
+ipcMain.handle('take-screenshot', takeScreenshot);
+ipcMain.on('connection-state', (e, s) => {
+  connected = Boolean(s.connected);
+  if (connected && serverAddress && settings.lastServer !== serverAddress) {
+    settings.lastServer = serverAddress;
+    saveSettings();
+  }
+  agentSocketId = s.socketId || null;
+  if (s.teacherName) teacherName = s.teacherName;
+  if (tray) tray.setToolTip(connected ? `ClassControl — на связи с ${teacherName}` : 'ClassControl — ищу учителя…');
+  sendAll('connection-state', { connected, teacherName, socketId: agentSocketId });
+});
+ipcMain.on('control', (e, cmd) => handleControl(cmd));
+ipcMain.on('remote-session', (e, on) => {
+  remoteActive = Boolean(on);
+  if (on) { loadNut(); showBanner('Учитель подключился к вашему экрану'); } else hideBanner();
+});
+ipcMain.on('broadcast', (e, st) => {
+  broadcastState = { active: Boolean(st.active), allowExit: Boolean(st.allowExit) };
+  if (broadcastState.active) openDemo(); else closeDemo(true);
+  if (demoWindow && !demoWindow.isDestroyed()) demoWindow.webContents.send('broadcast-state', broadcastState);
+});
+ipcMain.on('close-demo', () => closeDemo(false));
+ipcMain.on('open-chat', openChat);
+ipcMain.on('notify', (e, { title, body }) => {
+  if (!settings.notifications || !Notification.isSupported()) return;
+  if (chatWindow && !chatWindow.isDestroyed() && chatWindow.isFocused()) return;
+  const n = new Notification({ title, body, silent: false });
+  n.on('click', openChat);
+  n.show();
+});
+// Чат идёт через подключение фонового окна: от имени этого компьютера
+ipcMain.on('chat-send', (e, msg) => { if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('chat-send', msg); });
+ipcMain.on('chat-event', (e, ev) => { if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('chat-event', ev); });
+ipcMain.on('chat-request-history', () => { if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.send('chat-request-history'); });
+ipcMain.on('message-close', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });
+
+// Настройки под паролем
+let configUnlocked = false;
+ipcMain.handle('config-state', () => ({ hasPassword: Boolean(settings.passwordHash), unlocked: configUnlocked }));
+ipcMain.handle('config-unlock', (e, pw) => {
+  if (!settings.passwordHash) {
+    if (!pw || String(pw).length < 4) return { ok: false, error: 'Пароль — минимум 4 символа' };
+    settings.passwordSalt = crypto.randomBytes(16).toString('hex');
+    settings.passwordHash = hashPassword(pw, settings.passwordSalt);
+    saveSettings();
+    configUnlocked = true;
+    return { ok: true };
+  }
+  const ok = crypto.timingSafeEqual(Buffer.from(hashPassword(pw, settings.passwordSalt), 'hex'), Buffer.from(settings.passwordHash, 'hex'));
+  configUnlocked = ok;
+  return ok ? { ok: true } : { ok: false, error: 'Неверный пароль' };
+});
+ipcMain.handle('config-get', () => {
+  if (!configUnlocked) return null;
+  const { passwordHash, passwordSalt, ...rest } = settings;
+  const now = Date.now();
+  const found = [...discovered].filter(([, t]) => now - t < 15000).map(([a]) => a);
+  return { ...rest, hostname: os.hostname(), serverAddressNow: serverAddress, connected, found };
+});
+ipcMain.handle('config-save', (e, patch) => {
+  if (!configUnlocked) return false;
+  for (const k of ['pcName', 'serverMode', 'serverAddress', 'autoStart', 'notifications']) {
+    if (patch[k] !== undefined) settings[k] = patch[k];
+  }
+  settings.pcName = String(settings.pcName || '').trim().slice(0, 40) || os.hostname();
+  saveSettings();
+  applyAutoStart();
+  serverAddress = null;
+  connected = false;
+  startDiscovery();
+  if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.reload();
+  return true;
+});
+ipcMain.handle('config-quit', () => {
+  if (!configUnlocked) return false;
+  app.isQuitting = true;
+  unlockScreens();
+  app.quit();
+  return true;
+});
+ipcMain.on('config-lock', () => { configUnlocked = false; });
+
+// ---------- Жизненный цикл ----------
+app.on('second-instance', (e, argv) => {
+  if (argv.includes('--config')) openConfig(); else openChat();
 });
 
-ipcMain.on('open-demo', () => openDemoWindow());
-ipcMain.on('close-demo', () => closeDemoWindow());
-ipcMain.on('open-chat', () => openChatWindow());
-
-ipcMain.on('show-notification', (event, { title, body }) => {
-  if (!settings.showNotifications) return;
-  new Notification({ title, body }).show();
-});
-
-// Для скриншотов
-ipcMain.handle('take-screenshot', async () => {
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: 320, height: 180 }
-  });
-  return sources[0]?.thumbnail.toJPEG(60).toString('base64');
-});
-
-// Для WebRTC стрима экрана (удалённое управление)
-ipcMain.handle('get-screen-stream-source', async () => {
-  const sources = await desktopCapturer.getSources({ types: ['screen'] });
-  return sources[0]?.id || null;
-});
-
-// Жизненный цикл
 app.whenReady().then(() => {
-  loadSettings();
+  // Показ экрана учителю: всегда весь основной экран, без системного окна выбора
+  session.defaultSession.setDisplayMediaRequestHandler(async (req, cb) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      const primary = sources.find(s => String(s.display_id) === String(screen.getPrimaryDisplay().id)) || sources[0];
+      cb({ video: primary });
+    } catch (e) { cb({}); }
+  });
+  session.defaultSession.setPermissionRequestHandler((wc, perm, cb) => cb(['media', 'display-capture', 'notifications', 'fullscreen'].includes(perm)));
+
   applyAutoStart();
   createTray();
-  createHiddenWindow();
-
-  if (settings.networkMode === 'localhost') {
-    serverAddress = 'http://localhost:3000';
-    console.log('[AGENT] Режим: localhost');
-    notifyWindows();
-  } else {
-    console.log('[AGENT] Режим: LAN Discovery');
-    setTimeout(discoverServer, 1000);
-    // Fallback на localhost через 10 секунд, если сервер не найден
-    setTimeout(() => {
-      if (!serverAddress) {
-        serverAddress = 'http://localhost:3000';
-        console.log('[AGENT] LAN Discovery не нашёл сервер, fallback на localhost');
-        notifyWindows();
-      }
-    }, 10000);
-  }
+  createBackground();
+  startDiscovery();
+  if (WANT_CONFIG) openConfig();
 });
 
-function notifyWindows() {
-  if (hiddenWindow && !hiddenWindow.isDestroyed()) {
-    hiddenWindow.webContents.send('server-address', serverAddress);
-  }
-  if (chatWindow && !chatWindow.isDestroyed()) {
-    chatWindow.webContents.send('server-address', serverAddress);
-  }
-  if (demoWindow && !demoWindow.isDestroyed()) {
-    demoWindow.webContents.send('server-address', serverAddress);
-  }
-}
+app.on('window-all-closed', () => { /* остаёмся в трее */ });
+app.on('before-quit', () => { app.isQuitting = true; });
 
-// НЕ закрывать приложение при закрытии всех окон — остаёмся в трее
-app.on('window-all-closed', () => {
-  if (app.isQuitting) {
-    app.quit();
-  }
-});
-
-// LAN Discovery (встроен в main.js)
-function discoverServer() {
-  const client = dgram.createSocket('udp4');
-  
-  // Нужно сделать bind перед setBroadcast
-  client.bind(() => {
-    client.setBroadcast(true);
-    const msg = Buffer.from('CLASSCONTROL_DISCOVER');
-
-    const tryDiscover = () => {
-      client.send(msg, 0, msg.length, 41234, '255.255.255.255', (err) => {
-        if (err) console.error('[AGENT] UDP send error:', err);
-      });
-    };
-
-    client.on('message', (data) => {
-      const response = data.toString();
-      if (response.startsWith('CLASSCONTROL_SERVER:')) {
-        const parts = response.split(':');
-        serverAddress = `http://${parts[1]}:${parts[2]}`;
-        console.log('[AGENT] Сервер обнаружен:', serverAddress);
-        // Сообщить скрытому окну
-        if (hiddenWindow && !hiddenWindow.isDestroyed()) {
-            hiddenWindow.webContents.send('server-address', serverAddress);
-        }
-        if (chatWindow && !chatWindow.isDestroyed()) {
-            chatWindow.webContents.send('server-address', serverAddress);
-        }
-        client.close();
-      }
-    });
-
-    // Попытка каждые 3 секунды, пока не найдём
-    tryDiscover();
-    const interval = setInterval(() => {
-      if (serverAddress) { clearInterval(interval); return; }
-      tryDiscover();
-    }, 3000);
-  });
-}
+module.exports = { SHARED_DIR };

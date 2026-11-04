@@ -2,133 +2,130 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ClassControl — Онлайн-участник</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0b0c">
+  <title>ClassControl — урок</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="stylesheet" href="/ui/theme.css">
   <link rel="stylesheet" href="style.css">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 
-  <!-- ============ ЭКРАН ВХОДА ============ -->
-  <div id="login-screen" class="login-screen">
-    <div class="login-backdrop">
-      <div class="blob blob-1"></div>
-      <div class="blob blob-2"></div>
-      <div class="blob blob-3"></div>
-    </div>
-
-    <div class="login-card">
-      <div class="login-brand">
-        <div class="brand-icon">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="3" width="20" height="14" rx="2"/>
-            <path d="M8 21h8M12 17v4"/>
-          </svg>
-        </div>
-        <h1 class="brand-name">ClassControl</h1>
-        <p class="brand-tagline">Подключитесь к уроку онлайн</p>
+  <!-- ===== Вход ===== -->
+  <main class="join" id="join">
+    <form class="join__card" id="join-form" autocomplete="on">
+      <div class="brand">
+        <span class="brand__mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span>
+        <span class="brand__name">ClassControl</span>
       </div>
-
-      <div class="login-form">
-        <div class="form-field">
-          <label for="name-input">Ваше имя</label>
-          <div class="input-wrapper">
-            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <input type="text" id="name-input" placeholder="Введите ваше имя..." maxlength="30" autocomplete="off">
-          </div>
-        </div>
-
-        <button id="join-btn" class="login-submit">
-          <span>Войти в класс</span>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        </button>
+      <div class="join__text">
+        <h1 class="join__title">Вход на урок</h1>
+        <p class="join__lesson" id="join-lesson"><span class="dot dot--warning dot--pulse"></span><span>Подключаюсь к классу…</span></p>
       </div>
-    </div>
-  </div>
+      <label class="field">
+        <span class="field__label">Как вас зовут</span>
+        <input class="input input--lg" id="name" name="name" maxlength="40" placeholder="Имя и фамилия" autocomplete="name" required>
+      </label>
+      <p class="error" id="join-error" role="alert"></p>
+      <button class="btn btn--primary btn--lg btn--block" type="submit" id="join-btn">Войти на урок</button>
+      <p class="join__hint">Учитель увидит ваше имя. Камера не нужна — микрофон включается, только когда учитель даст слово.</p>
+    </form>
+  </main>
 
-  <!-- ============ ТОСТЫ ============ -->
-  <div id="toast-container" class="toast-container"></div>
-
-  <!-- ============ ОСНОВНОЙ ЭКРАН ============ -->
-  <div id="main-screen" class="hidden">
-
-    <!-- Хедер -->
-    <header class="app-header">
-      <div class="app-header__left">
-        <div class="app-logo">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-        </div>
-        <span class="app-header__title">ClassControl</span>
-        <span class="app-header__divider"></span>
-        <div class="status-pill status-pill--online">
-          <span class="status-pill__dot"></span>
-          <span>Онлайн</span>
-        </div>
+  <!-- ===== Урок ===== -->
+  <div class="lesson hidden" id="lesson">
+    <header class="bar">
+      <div class="brand">
+        <span class="brand__mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span>
+        <span class="brand__name bar__product">ClassControl</span>
       </div>
-      <div class="app-header__right">
-        <span id="user-name-display" class="app-header__user"></span>
-        <button id="leave-btn" class="btn-leave">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-          <span>Выйти</span>
-        </button>
+      <span class="bar__sep" aria-hidden="true"></span>
+      <div class="bar__lesson">
+        <span class="dot" id="teacher-dot"></span>
+        <span class="truncate" id="teacher-line">Учитель</span>
+      </div>
+      <div class="bar__right">
+        <span class="bar__me"><span id="me-avatar"></span><span class="truncate" id="me-name"></span></span>
+        <button class="btn btn--sm btn--ghost" id="leave" type="button"><svg class="i i-sm"><use href="#i-door"/></svg><span>Выйти</span></button>
       </div>
     </header>
 
-    <!-- Контент -->
-    <div class="app-body">
-
-      <!-- Левая часть: Видео + Панель -->
-      <div class="app-body__main">
-        <div class="media-card">
-          <div id="video-area" class="media-card__viewport">
-            <video id="teacher-video" autoplay playsinline></video>
-            <canvas id="teacher-canvas"></canvas>
-            <div id="waiting-msg" class="media-card__placeholder">
-              <div class="placeholder-icon">
-                <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-              </div>
-              <span>Ожидание демонстрации учителя...</span>
+    <div class="room">
+      <section class="stage-col">
+        <div class="stage-wrap" id="stage-wrap">
+          <div class="stage" id="stage">
+            <video class="stage__video" id="video" autoplay playsinline></video>
+            <img class="stage__relay hidden" id="relay" alt="">
+            <canvas class="board-canvas hidden" id="board"></canvas>
+            <div class="stage__empty" id="empty">
+              <svg class="i i-xl"><use href="#i-cast"/></svg>
+              <span class="stage__empty-title" id="empty-title">Учитель ещё не начал показ</span>
+              <span class="stage__empty-text" id="empty-text">Экран учителя или доска появятся здесь автоматически.</span>
             </div>
+            <div class="stage__chips">
+              <span class="badge badge--live hidden" id="live-chip"><span class="dot dot--live dot--pulse"></span>Эфир</span>
+              <span class="badge badge--warning hidden" id="relay-chip" title="Прямое соединение не установилось — картинка идёт через компьютер учителя, без звука">Запасной режим</span>
+            </div>
+            <button class="btn btn--primary stage__unmute hidden" id="unmute" type="button"><svg class="i i-sm"><use href="#i-volume"/></svg>Включить звук</button>
           </div>
         </div>
 
-        <div id="share-bar" class="share-toolbar">
-          <button id="share-screen-btn" class="btn-share">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M12 7v4M10 9h4"/></svg>
-            <span>Показать мой экран</span>
+        <div class="controls" role="toolbar" aria-label="Управление">
+          <button class="ctl" id="hand-btn" type="button" aria-pressed="false">
+            <svg class="i"><use href="#i-raise"/></svg><span>Поднять руку</span>
           </button>
-          <span id="share-timer" class="share-toolbar__timer hidden">05:00</span>
-          <button id="stop-share-btn" class="btn-stop hidden">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-            <span>Остановить</span>
+          <button class="ctl" id="mic-btn" type="button" disabled title="Учитель включит микрофон, когда даст слово">
+            <svg class="i"><use href="#i-mic-off"/></svg><span>Микрофон</span>
+          </button>
+          <button class="ctl" id="share-btn" type="button">
+            <svg class="i"><use href="#i-share"/></svg><span id="share-label">Показать экран</span>
+          </button>
+          <button class="ctl ctl--icon" id="full-btn" type="button" title="Во весь экран" aria-label="Во весь экран">
+            <svg class="i"><use href="#i-expand"/></svg>
           </button>
         </div>
-      </div>
+      </section>
 
-      <!-- Правая часть: Чат -->
-      <aside class="chat-sidebar">
-        <div class="chat-sidebar__header">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-          <span>Чат урока</span>
+      <aside class="panel side-chat">
+        <div class="panel__head">
+          <h2 class="panel__title">Чат урока</h2>
+          <span class="panel__actions">
+            <button class="btn btn--sm btn--ghost" id="whisper-btn" type="button" title="Написать учителю лично"><svg class="i i-sm"><use href="#i-lock"/></svg><span>Учителю</span></button>
+          </span>
         </div>
-
-        <div id="chat-messages" class="chat-sidebar__messages"></div>
-
-        <div id="chat-input-area" class="chat-sidebar__input">
-          <button id="attach-btn" class="chat-icon-btn" title="Прикрепить файл">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-          </button>
-          <input type="file" id="file-input" class="hidden">
-          <input type="text" id="msg-input" placeholder="Написать сообщение..." autocomplete="off">
-          <button id="send-btn" class="chat-send-btn" title="Отправить">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
-          </button>
+        <div class="chat" id="chat">
+          <div class="chat__list" aria-live="polite"></div>
+          <div class="composer">
+            <div class="composer__to hidden"></div>
+            <div class="composer__box">
+              <button class="icon-btn icon-btn--sm composer__attach" type="button" title="Отправить файл" aria-label="Отправить файл"><svg class="i"><use href="#i-clip"/></svg></button>
+              <input type="file" class="composer__file hidden">
+              <textarea class="composer__input" rows="1" placeholder="Сообщение для всех…" aria-label="Сообщение"></textarea>
+              <button class="icon-btn icon-btn--sm composer__send" type="button" aria-label="Отправить" disabled><svg class="i i-sm"><use href="#i-send"/></svg></button>
+            </div>
+          </div>
         </div>
       </aside>
-
     </div>
   </div>
 
+  <!-- ===== Сообщение о завершении ===== -->
+  <main class="join hidden" id="gone">
+    <div class="join__card">
+      <div class="brand">
+        <span class="brand__mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span>
+        <span class="brand__name">ClassControl</span>
+      </div>
+      <div class="join__text">
+        <h1 class="join__title" id="gone-title">Вы вышли с урока</h1>
+        <p class="join__hint" id="gone-text">Чтобы вернуться, войдите снова.</p>
+      </div>
+      <button class="btn btn--primary btn--lg btn--block" type="button" id="rejoin">Вернуться на урок</button>
+    </div>
+  </main>
+
+  <script src="/ui/icons.js"></script>
+  <script src="/ui/common.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="script.js"></script>
 </body>

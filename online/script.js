@@ -1,493 +1,382 @@
-const socket = io();
-let myName = '';
-let shareStream = null;
-let shareTimerInterval = null;
-let sharePC = null; // WebRTC PeerConnection for sending screen share to teacher
-let teacherPC = null; // WebRTC PeerConnection for receiving teacher broadcast
-const iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+/* ClassControl — ученик на уроке через браузер (из дома, с ноутбука или телефона). */
+(function () {
+  'use strict';
+  const { $, toast } = CC;
+  const socket = io({ transports: ['websocket', 'polling'] });
 
-function showToast(text, type) {
-    const container = document.getElementById('toast-container');
-    const toast = document.createElement('div');
-    toast.className = 'toast' + (type === 'info' ? ' info' : '');
-    toast.textContent = text;
-    container.appendChild(toast);
-    setTimeout(() => toast.remove(), 5000);
-}
+  const me = { id: null, name: localStorage.getItem('cc-name') || '', joined: false, hand: false };
+  const lesson = { teacherName: 'Учитель', teacherOnline: false, broadcasting: false, board: false };
+  let shareLimitMs = 5 * 60 * 1000;
 
-// ВХОД
-document.getElementById('join-btn').addEventListener('click', () => {
-    myName = document.getElementById('name-input').value.trim();
-    if (!myName) return alert('Введите имя');
-    socket.emit('register-online-user', myName);
-    document.getElementById('login-screen').classList.add('hidden');
-    document.getElementById('main-screen').classList.remove('hidden');
-    document.getElementById('user-name-display').textContent = myName;
-    resizeCanvas();
-});
+  // ---------- Вход ----------
+  $('#name').value = me.name;
+  if (!me.name) $('#name').focus();
 
-// Выход
-document.getElementById('leave-btn').addEventListener('click', () => {
-    window.location.reload();
-});
+  function renderJoinLesson() {
+    const line = $('#join-lesson');
+    line.replaceChildren(
+      CC.el('span', { class: 'dot ' + (!socket.connected ? 'dot--warning dot--pulse' : lesson.teacherOnline ? 'dot--positive' : '') }),
+      CC.el('span', { text: !socket.connected ? 'Подключаюсь к классу…'
+        : lesson.teacherOnline ? `${lesson.teacherName} · урок идёт` : 'Учитель ещё не начал урок — можно войти и подождать' }));
+  }
 
-// --- ЧАТ ---
-const chatInput = document.getElementById('msg-input');
-const chatSendBtn = document.getElementById('send-btn');
-const chatMessages = document.getElementById('chat-messages');
-const attachBtn = document.getElementById('attach-btn');
-const fileInput = document.getElementById('file-input');
-
-chatSendBtn.addEventListener('click', sendMessage);
-chatInput.addEventListener('keypress', (e) => { 
-    if (e.key === 'Enter') sendMessage(); 
-});
-
-function sendMessage() {
-    const text = chatInput.value.trim();
-    if (!text) return;
-    socket.emit('chat-message', { sender: myName, text });
-    chatInput.value = '';
-}
-
-attachBtn.addEventListener('click', () => {
-    fileInput.click();
-});
-
-fileInput.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('sender', myName);
-    
-    try {
-        await fetch(window.location.origin + '/upload', { 
-            method: 'POST', 
-            body: formData 
-        });
-    } catch (err) {
-        console.error('[ONLINE] File upload failed', err);
+  socket.on('lesson-info', (info) => {
+    Object.assign(lesson, { teacherName: info.teacherName, teacherOnline: info.teacherOnline, broadcasting: info.broadcasting });
+    renderJoinLesson();
+  });
+  socket.on('connect', () => {
+    renderJoinLesson();
+    if (me.joined) socket.emit('register-online-user', { name: me.name });
+  });
+  socket.on('disconnect', () => {
+    renderJoinLesson();
+    if (me.joined) {
+      setTeacherLine('Связь потеряна, переподключаюсь…', 'warning');
+      resetMedia();
     }
-    
-    e.target.value = '';
-});
+  });
 
-socket.on('chat-message', (msg) => renderChatMessage(msg));
-socket.on('chat-file', (msg) => renderChatFile(msg));
-socket.on('chat-history', (history) => {
-    chatMessages.innerHTML = '';
-    history.forEach(m => m.type === 'file' ? renderChatFile(m) : renderChatMessage(m));
-});
-
-// Палитра цветов для учеников
-const STUDENT_COLORS = [
-    '#f472b6', '#fb923c', '#facc15', '#4ade80',
-    '#2dd4bf', '#38bdf8', '#818cf8', '#c084fc',
-    '#e879f9', '#f87171', '#a3e635', '#22d3ee'
-];
-const studentColorMap = {};
-let knownTeacherName = 'Учитель';
-
-socket.on('teacher-name', (name) => { knownTeacherName = name; });
-
-function getStudentColor(name) {
-    if (studentColorMap[name]) return studentColorMap[name];
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    const idx = Math.abs(hash) % STUDENT_COLORS.length;
-    studentColorMap[name] = STUDENT_COLORS[idx];
-    return STUDENT_COLORS[idx];
-}
-
-function isTeacherMsg(sender) {
-    return sender === knownTeacherName;
-}
-
-function renderChatMessage(msg) {
-    const div = document.createElement('div');
-    const teacher = isTeacherMsg(msg.sender);
-    div.className = 'chat-msg' + (teacher ? ' chat-msg--teacher' : ' chat-msg--student');
-
-    const senderSpan = document.createElement('span');
-    senderSpan.className = 'sender';
-
-    if (!teacher) {
-        const badge = document.createElement('span');
-        badge.className = 'sender-badge';
-        badge.style.background = getStudentColor(msg.sender);
-        senderSpan.appendChild(badge);
-    }
-
-    senderSpan.appendChild(document.createTextNode(msg.sender + ':'));
-    if (!teacher) senderSpan.style.color = getStudentColor(msg.sender);
-
-    div.appendChild(senderSpan);
-    div.appendChild(document.createTextNode(' ' + msg.text));
-    chatMessages.appendChild(div);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-function renderChatFile(msg) {
-    const div = document.createElement('div');
-    const teacher = isTeacherMsg(msg.sender);
-    div.className = 'chat-msg file' + (teacher ? ' chat-msg--teacher' : ' chat-msg--student');
-    const sizeMB = (msg.size / 1024 / 1024).toFixed(1);
-    const senderSpan = document.createElement('span');
-    senderSpan.className = 'sender';
-
-    if (!teacher) {
-        const badge = document.createElement('span');
-        badge.className = 'sender-badge';
-        badge.style.background = getStudentColor(msg.sender);
-        senderSpan.appendChild(badge);
-    }
-
-    senderSpan.appendChild(document.createTextNode(msg.sender + ':'));
-    if (!teacher) senderSpan.style.color = getStudentColor(msg.sender);
-
-    div.appendChild(senderSpan);
-    div.appendChild(document.createTextNode(' '));
-    const link = document.createElement('a');
-    link.href = `${window.location.origin}${msg.url}`;
-    link.target = '_blank';
-    link.download = msg.filename;
-    link.textContent = msg.filename;
-    div.appendChild(link);
-    div.appendChild(document.createTextNode(` (${sizeMB} MB)`));
-    chatMessages.appendChild(div);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-// --- ПРИЕМ ДЕМОНСТРАЦИИ УЧИТЕЛЯ (WebRTC) ---
-socket.on('broadcast-started', () => {
-    console.log('[ONLINE] Broadcast started');
-    document.querySelector('#waiting-msg span').textContent = 'Подключение к трансляции...';
-    showToast('Учитель начал трансляцию', 'info');
-});
-
-socket.on('broadcast-stopped', () => {
-    console.log('[ONLINE] Broadcast stopped');
-    if (teacherPC) {
-        teacherPC.close();
-        teacherPC = null;
-    }
-    document.getElementById('teacher-video').srcObject = null;
-    document.querySelector('#waiting-msg span').textContent = 'Ожидание демонстрации учителя...';
-    document.getElementById('waiting-msg').classList.remove('hidden');
-    showToast('Трансляция учителя остановлена', 'info');
-});
-
-socket.on('teacher-disconnected', () => {
-    console.log('[ONLINE] Учитель отключился');
-    document.querySelector('#waiting-msg span').textContent = 'Учитель отключился. Ожидание переподключения...';
-    document.getElementById('waiting-msg').classList.remove('hidden');
-    showToast('Учитель отключился');
-});
-
-// WebRTC: receive offer from teacher, create answer
-socket.on('offer', async ({ source, sdp, connectionType }) => {
-    if (connectionType && connectionType !== 'broadcast') return;
-    console.log('[ONLINE] Received offer from', source);
-    
-    try {
-        if (teacherPC) {
-            teacherPC.close();
-        }
-        
-        teacherPC = new RTCPeerConnection(iceConfig);
-        
-        teacherPC.ontrack = (e) => {
-            console.log('[ONLINE] Got media track:', e.track.kind);
-            document.getElementById('teacher-video').srcObject = e.streams[0]; 
-            document.getElementById('waiting-msg').classList.add('hidden');
-        };
-        
-        teacherPC.onicecandidate = (e) => { 
-            if (e.candidate) {
-                socket.emit('ice-candidate', { target: source, candidate: e.candidate, connectionType: 'broadcast' }); 
-            }
-        };
-
-        teacherPC.onconnectionstatechange = () => {
-            console.log('[ONLINE] Connection state:', teacherPC.connectionState);
-        };
-        
-        await teacherPC.setRemoteDescription(new RTCSessionDescription(sdp));
-        const answer = await teacherPC.createAnswer();
-        await teacherPC.setLocalDescription(answer);
-        socket.emit('answer', { target: source, sdp: teacherPC.localDescription, connectionType: 'broadcast' });
-    } catch (err) {
-        console.error('[ONLINE] WebRTC error:', err);
-    }
-});
-
-// WebRTC: handle ICE candidates from teacher
-socket.on('ice-candidate', async ({ source, candidate, connectionType }) => {
-    console.log('[ONLINE] Received ICE candidate from', source, 'type:', connectionType);
-    if (connectionType === 'share' && sharePC) {
-        try {
-            await sharePC.addIceCandidate(candidate);
-        } catch (err) {
-            console.error('[ONLINE] ICE error (sharePC):', err);
-        }
-    } else if (connectionType === 'broadcast' && teacherPC) {
-        try {
-            await teacherPC.addIceCandidate(candidate);
-        } catch (err) {
-            console.error('[ONLINE] ICE error (teacherPC):', err);
-        }
-    } else {
-        // Fallback: try both
-        if (sharePC) { try { await sharePC.addIceCandidate(candidate); } catch(e) {} }
-        if (teacherPC) { try { await teacherPC.addIceCandidate(candidate); } catch(e) {} }
-    }
-});
-
-// --- ДОСКА ---
-const canvas = document.getElementById('teacher-canvas');
-const ctx = canvas.getContext('2d');
-let savedWhiteboardImage = null;
-
-// Zoom & Pan
-let zoomLevel = 1;
-let panX = 0, panY = 0;
-let isPanning = false;
-let panStartX = 0, panStartY = 0;
-const MIN_ZOOM = 1;
-const MAX_ZOOM = 5;
-const videoArea = document.getElementById('video-area');
-
-function applyTransform() {
-    const content = videoArea.querySelector('video');
-    const transforms = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
-    if (content) {
-        content.style.transform = transforms;
-        content.style.transformOrigin = 'center center';
-    }
-    canvas.style.transform = transforms;
-    canvas.style.transformOrigin = 'center center';
-}
-
-videoArea.addEventListener('wheel', (e) => {
+  $('#join-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.15 : 0.15;
-    const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomLevel + delta));
-    if (newZoom === MIN_ZOOM) {
-        panX = 0;
-        panY = 0;
+    const name = $('#name').value.trim();
+    if (!name) { $('#join-error').textContent = 'Введите имя'; return; }
+    $('#join-error').textContent = '';
+    me.name = name;
+    localStorage.setItem('cc-name', name);
+    $('#join-btn').disabled = true;
+    socket.emit('register-online-user', { name });
+    setTimeout(() => { $('#join-btn').disabled = false; }, 3000);
+  });
+  socket.on('join-error', (m) => { $('#join-error').textContent = m; $('#join-btn').disabled = false; });
+
+  socket.on('welcome', (w) => {
+    me.id = w.id;
+    me.name = w.name;
+    me.joined = true;
+    shareLimitMs = w.shareLimitMs || shareLimitMs;
+    Object.assign(lesson, { teacherName: w.teacherName, teacherOnline: w.teacherOnline, broadcasting: w.broadcast.active, board: w.board.active });
+    chat.opts.meId = w.id;
+    chat.setHistory(w.chat || []);
+    board.setStrokes(w.board.strokes || []);
+    board.setTransform(w.board.transform || {});
+    $('#join').classList.add('hidden');
+    $('#gone').classList.add('hidden');
+    $('#lesson').classList.remove('hidden');
+    $('#me-name').textContent = w.name;
+    $('#me-avatar').replaceChildren(CC.avatar(w.name, { sm: true }));
+    document.title = `Урок · ${w.teacherName}`;
+    renderTeacher();
+    renderStage();
+    board.fit();
+    if (lesson.broadcasting) armRelayFallback();
+  });
+
+  $('#leave').addEventListener('click', () => leave('Вы вышли с урока', 'Чтобы вернуться, войдите снова.'));
+  $('#rejoin').addEventListener('click', () => {
+    $('#gone').classList.add('hidden');
+    $('#join').classList.remove('hidden');
+    if (!socket.connected) socket.connect();
+  });
+
+  function leave(title, text) {
+    me.joined = false;
+    stopShare(true);
+    stopVoice();
+    resetMedia();
+    socket.disconnect();
+    $('#lesson').classList.add('hidden');
+    $('#gone-title').textContent = title;
+    $('#gone-text').textContent = text;
+    $('#gone').classList.remove('hidden');
+  }
+  socket.on('kicked', () => leave('Учитель отключил вас от урока', 'Если это ошибка — войдите снова или напишите учителю.'));
+
+  // ---------- Учитель ----------
+  function setTeacherLine(text, kind) {
+    $('#teacher-dot').className = 'dot ' + (kind === 'ok' ? 'dot--positive' : kind === 'warning' ? 'dot--warning dot--pulse' : '');
+    $('#teacher-line').textContent = text;
+  }
+  function renderTeacher() {
+    setTeacherLine(lesson.teacherOnline ? `${lesson.teacherName} · на связи` : `${lesson.teacherName} · не в сети`, lesson.teacherOnline ? 'ok' : '');
+  }
+  socket.on('teacher-online', ({ name }) => { lesson.teacherOnline = true; lesson.teacherName = name; renderTeacher(); renderJoinLesson(); });
+  socket.on('teacher-disconnected', () => {
+    lesson.teacherOnline = false; lesson.broadcasting = false; lesson.board = false;
+    renderTeacher(); renderJoinLesson(); resetMedia(); renderStage();
+    if (me.joined) toast('Учитель отключился. Ждём, когда вернётся.', { kind: 'warning' });
+  });
+
+  // ---------- Сцена: эфир и доска ----------
+  const video = $('#video');
+  const board = new CC.Board($('#stage'), $('#board'));
+  let peer = null;
+  let gotTrack = false;
+  let relayTimer = null;
+  let relayOn = false;
+  let relayUrl = null;
+
+  function renderStage() {
+    const hasVideo = Boolean(video.srcObject) || relayOn;
+    $('#board').classList.toggle('hidden', !lesson.board);
+    $('#live-chip').classList.toggle('hidden', !(lesson.broadcasting && (hasVideo || lesson.board)));
+    const empty = !hasVideo && !lesson.board;
+    $('#empty').classList.toggle('hidden', !empty);
+    if (empty) {
+      $('#empty-title').textContent = !lesson.teacherOnline ? 'Учитель пока не в сети'
+        : lesson.broadcasting ? 'Подключаюсь к эфиру…' : 'Учитель ещё не начал показ';
+      $('#empty-text').textContent = lesson.broadcasting ? 'Обычно это занимает пару секунд.' : 'Экран учителя или доска появятся здесь автоматически.';
     }
-    zoomLevel = newZoom;
-    applyTransform();
-}, { passive: false });
+    if (lesson.board) board.fit();
+  }
 
-videoArea.addEventListener('mousedown', (e) => {
-    if (zoomLevel <= 1) return;
-    isPanning = true;
-    panStartX = e.clientX - panX;
-    panStartY = e.clientY - panY;
-    videoArea.style.cursor = 'grabbing';
-});
+  socket.on('broadcast-started', () => {
+    lesson.broadcasting = true;
+    renderStage();
+    toast('Учитель начал эфир', { kind: 'live', icon: 'live' });
+    armRelayFallback();
+  });
+  socket.on('broadcast-stopped', () => {
+    lesson.broadcasting = false;
+    resetMedia();
+    renderStage();
+  });
 
-videoArea.addEventListener('mousemove', (e) => {
-    if (!isPanning) return;
-    panX = e.clientX - panStartX;
-    panY = e.clientY - panStartY;
-    applyTransform();
-});
+  function resetMedia() {
+    if (peer) { peer.close(); peer = null; }
+    gotTrack = false;
+    video.srcObject = null;
+    stopRelay();
+    clearTimeout(relayTimer);
+    $('#unmute').classList.add('hidden');
+  }
 
-videoArea.addEventListener('mouseup', () => {
-    isPanning = false;
-    videoArea.style.cursor = zoomLevel > 1 ? 'grab' : 'default';
-});
-
-videoArea.addEventListener('mouseleave', () => {
-    isPanning = false;
-    videoArea.style.cursor = 'default';
-});
-
-function resizeCanvas() {
-    const rect = document.getElementById('video-area').getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-
-    // Fixed 16:9 aspect ratio to match teacher's canvas
-    const ASPECT = 16 / 9;
-    let w = rect.width;
-    let h = w / ASPECT;
-    if (h > rect.height) {
-        h = rect.height;
-        w = h * ASPECT;
-    }
-    canvas.width = Math.floor(w);
-    canvas.height = Math.floor(h);
-    // Center canvas within video-area
-    canvas.style.left = Math.floor((rect.width - canvas.width) / 2) + 'px';
-    canvas.style.top = Math.floor((rect.height - canvas.height) / 2) + 'px';
-    canvas.style.width = canvas.width + 'px';
-    canvas.style.height = canvas.height + 'px';
-}
-window.addEventListener('resize', resizeCanvas);
-
-// Whiteboard mode toggle from teacher
-socket.on('whiteboard-mode', (active) => {
-    console.log('[ONLINE] Whiteboard mode:', active);
-    if (active) {
-        document.getElementById('waiting-msg').classList.add('hidden');
-        canvas.style.background = 'white';
-        canvas.style.pointerEvents = 'none';
-        resizeCanvas();
-        // Restore saved whiteboard drawing if available
-        if (savedWhiteboardImage) {
-            const img = new Image();
-            img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            img.src = savedWhiteboardImage;
-        }
-    } else {
-        // Save whiteboard drawing before hiding
-        if (canvas.width > 0 && canvas.height > 0) {
-            savedWhiteboardImage = canvas.toDataURL();
-        }
-        canvas.style.background = 'transparent';
-        if (!document.getElementById('teacher-video').srcObject) {
-            document.getElementById('waiting-msg').classList.remove('hidden');
-        }
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
-});
-
-function drawStroke(data) {
-    const x0 = data.x0 * canvas.width;
-    const y0 = data.y0 * canvas.height;
-    const x1 = data.x1 * canvas.width;
-    const y1 = data.y1 * canvas.height;
-
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x1, y1);
-    
-    if (data.tool === 'eraser') {
-        ctx.globalCompositeOperation = 'destination-out';
-    } else {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.strokeStyle = data.color;
-    }
-    
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = data.width * canvas.width;
-    ctx.stroke();
-}
-
-socket.on('draw', drawStroke);
-
-socket.on('canvas-history', (history) => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    history.forEach(drawStroke);
-});
-
-socket.on('clear-canvas', () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    savedWhiteboardImage = null;
-});
-
-socket.on('whiteboard-transform', (data) => {
-    zoomLevel = data.zoom || 1;
-    panX = (data.panX || 0) * canvas.offsetWidth;
-    panY = (data.panY || 0) * canvas.offsetHeight;
-    applyTransform();
-});
-
-// --- ПОКАЗ СВОЕГО ЭКРАНА (5 минут) ---
-document.getElementById('share-screen-btn').addEventListener('click', async () => {
+  socket.on('signal', async ({ source, kind, type, payload }) => {
     try {
-        shareStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-    } catch (e) { 
-        console.error('Screen sharing canceled or failed', e);
-        return; 
+      if (kind === 'broadcast') {
+        if (type === 'offer') {
+          if (peer) peer.close();
+          gotTrack = false;
+          peer = CC.answerPeer({
+            socket, source, kind: 'broadcast',
+            onTrack: (stream) => {
+              if (video.srcObject !== stream) video.srcObject = stream;
+              gotTrack = true;
+              stopRelay();
+              video.play().catch(() => {
+                video.muted = true;
+                video.play().catch(() => {});
+                if (stream.getAudioTracks().length) $('#unmute').classList.remove('hidden');
+              });
+              renderStage();
+            },
+            onState: (st) => { if (st === 'failed') startRelay(); }
+          });
+          await peer.offer(payload);
+          armRelayFallback();
+        } else if (type === 'ice' && peer) {
+          await peer.ice(payload);
+        }
+      } else if (kind === 'share' && sharePeer) {
+        if (type === 'answer') await sharePeer.answer(payload);
+        if (type === 'ice') await sharePeer.ice(payload);
+      } else if (kind === 'voice' && voice && voice.peer) {
+        if (type === 'answer') await voice.peer.answer(payload);
+        if (type === 'ice') await voice.peer.ice(payload);
+      }
+    } catch (err) {
+      console.error('[ONLINE] signal', kind, type, err);
     }
+  });
 
+  $('#unmute').addEventListener('click', () => {
+    video.muted = false;
+    video.play();
+    $('#unmute').classList.add('hidden');
+  });
+
+  // Запасной режим: если за 12 секунд видео не пошло — получаем кадры через сервер учителя
+  function armRelayFallback() {
+    clearTimeout(relayTimer);
+    relayTimer = setTimeout(() => {
+      if (lesson.broadcasting && !gotTrack && me.joined) startRelay();
+    }, 12000);
+  }
+  function startRelay() {
+    if (relayOn) return;
+    relayOn = true;
+    socket.emit('relay-join');
+    $('#relay-chip').classList.remove('hidden');
+    renderStage();
+  }
+  function stopRelay() {
+    if (!relayOn) return;
+    relayOn = false;
+    socket.emit('relay-leave');
+    $('#relay').classList.add('hidden');
+    $('#relay-chip').classList.add('hidden');
+    if (relayUrl) { URL.revokeObjectURL(relayUrl); relayUrl = null; }
+    renderStage();
+  }
+  socket.on('relay-frame', (buf) => {
+    if (!relayOn) return;
+    const url = URL.createObjectURL(new Blob([buf], { type: 'image/jpeg' }));
+    const img = $('#relay');
+    img.onload = () => { if (relayUrl && relayUrl !== url) URL.revokeObjectURL(relayUrl); relayUrl = url; };
+    img.src = url;
+    img.classList.remove('hidden');
+    $('#empty').classList.add('hidden');
+  });
+
+  // Доска
+  socket.on('whiteboard-mode', (on) => { lesson.board = on; renderStage(); });
+  socket.on('draw', (s) => board.add(s));
+  socket.on('board-strokes', (l) => board.setStrokes(l));
+  socket.on('clear-canvas', () => board.clear());
+  socket.on('whiteboard-transform', (t) => board.setTransform(t));
+
+  // Во весь экран
+  $('#full-btn').addEventListener('click', () => {
+    const st = $('#stage');
+    if (document.fullscreenElement) document.exitFullscreen();
+    else (st.requestFullscreen || st.webkitRequestFullscreen).call(st);
+  });
+  document.addEventListener('fullscreenchange', () => {
+    $('#full-btn use').setAttribute('href', document.fullscreenElement ? '#i-shrink' : '#i-expand');
+    setTimeout(() => board.fit(), 50);
+  });
+
+  // ---------- Рука ----------
+  function renderHand() {
+    const b = $('#hand-btn');
+    b.classList.toggle('is-on', me.hand);
+    b.setAttribute('aria-pressed', me.hand);
+    b.querySelector('span').textContent = me.hand ? 'Опустить руку' : 'Поднять руку';
+  }
+  $('#hand-btn').addEventListener('click', () => {
+    me.hand = !me.hand;
+    socket.emit('raise-hand', me.hand);
+    renderHand();
+    if (me.hand) toast('Учитель видит, что вы подняли руку', { kind: 'accent', icon: 'raise' });
+  });
+
+  // ---------- Голос (когда учитель дал слово) ----------
+  let voice = null; // { stream, peer, muted }
+  socket.on('voice-granted', async () => {
+    me.hand = false; renderHand();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      voice = { stream, peer: null, muted: false };
+      voice.peer = await CC.offerPeer({ socket, target: 'teacher', kind: 'voice', stream });
+      renderMic();
+      toast('Учитель дал вам слово — микрофон включён', { kind: 'positive', icon: 'mic' });
+    } catch (e) {
+      toast('Не удалось включить микрофон: разрешите доступ в браузере', { kind: 'warning', icon: 'mic-off' });
+    }
+  });
+  socket.on('voice-revoked', () => { stopVoice(); toast('Учитель выключил ваш микрофон', { icon: 'mic-off' }); });
+
+  function stopVoice() {
+    if (!voice) return;
+    if (voice.peer) voice.peer.close();
+    voice.stream.getTracks().forEach(t => t.stop());
+    voice = null;
+    renderMic();
+  }
+  function renderMic() {
+    const b = $('#mic-btn');
+    b.disabled = !voice;
+    b.classList.toggle('is-mic', Boolean(voice && !voice.muted));
+    b.querySelector('use').setAttribute('href', voice && !voice.muted ? '#i-mic' : '#i-mic-off');
+    b.querySelector('span').textContent = !voice ? 'Микрофон' : voice.muted ? 'Включить микрофон' : 'Выключить микрофон';
+    b.title = voice ? '' : 'Учитель включит микрофон, когда даст слово';
+  }
+  $('#mic-btn').addEventListener('click', () => {
+    if (!voice) return;
+    voice.muted = !voice.muted;
+    voice.stream.getAudioTracks().forEach(t => { t.enabled = !voice.muted; });
+    renderMic();
+  });
+
+  // ---------- Показ своего экрана (до 5 минут) ----------
+  let shareStream = null;
+  let sharePeer = null;
+  let shareTimer = null;
+  let shareEndsAt = 0;
+
+  $('#share-btn').addEventListener('click', async () => {
+    if (shareStream) { stopShare(); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      toast('Показ экрана не поддерживается на этом устройстве', { kind: 'warning' });
+      return;
+    }
+    try {
+      shareStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false });
+    } catch (e) {
+      return; // пользователь передумал
+    }
+    shareStream.getVideoTracks()[0].onended = () => stopShare();
     socket.emit('online-user-share-screen');
+    shareEndsAt = Date.now() + shareLimitMs;
+    shareTimer = setInterval(renderShare, 500);
+    renderShare();
+    toast('Учитель получил запрос и скоро откроет ваш экран', { kind: 'accent', icon: 'share' });
+  });
 
-    document.getElementById('share-screen-btn').classList.add('hidden');
-    document.getElementById('stop-share-btn').classList.remove('hidden');
-    document.getElementById('share-timer').classList.remove('hidden');
-
-    let remaining = 300;
-    document.getElementById('share-timer').textContent = '05:00';
-
-    shareTimerInterval = setInterval(() => {
-        remaining--;
-        const min = String(Math.floor(remaining/60)).padStart(2,'0');
-        const sec = String(remaining%60).padStart(2,'0');
-        document.getElementById('share-timer').textContent = `${min}:${sec}`;
-        if (remaining <= 0) stopSharing();
-    }, 1000);
-
-    shareStream.getVideoTracks()[0].onended = () => {
-        stopSharing();
-    };
-});
-
-// Учитель принял демонстрацию — создаём WebRTC и отправляем поток
-socket.on('share-accepted', async ({ teacherId }) => {
+  socket.on('share-accepted', async () => {
     if (!shareStream) return;
-    console.log('[ONLINE] Учитель принял демонстрацию, создаём WebRTC...');
+    if (sharePeer) sharePeer.close();
+    sharePeer = await CC.offerPeer({
+      socket, target: 'teacher', kind: 'share', stream: shareStream,
+      onState: (st) => { if (st === 'failed') stopShare(); }
+    });
+    CC.limitBitrate(sharePeer.pc, 2500);
+  });
+  socket.on('force-stop-sharing', (d) => {
+    stopShare(true);
+    toast(d && d.reason === 'time' ? 'Пять минут показа закончились' : 'Учитель закрыл показ вашего экрана');
+  });
 
-    if (sharePC) sharePC.close();
-    sharePC = new RTCPeerConnection(iceConfig);
-
-    shareStream.getTracks().forEach(track => sharePC.addTrack(track, shareStream));
-
-    sharePC.onicecandidate = (e) => {
-        if (e.candidate) {
-            socket.emit('ice-candidate', { target: teacherId, candidate: e.candidate, connectionType: 'share' });
-        }
-    };
-
-    sharePC.onconnectionstatechange = () => {
-        console.log('[ONLINE] Share connection:', sharePC.connectionState);
-        if (sharePC.connectionState === 'failed' || sharePC.connectionState === 'disconnected') {
-            stopSharing();
-        }
-    };
-
-    const offer = await sharePC.createOffer();
-    await sharePC.setLocalDescription(offer);
-    socket.emit('offer', { target: teacherId, sdp: sharePC.localDescription, connectionType: 'share' });
-});
-
-// Обработка answer от учителя для нашего share PC
-socket.on('answer', async ({ source, sdp }) => {
-    if (sharePC) {
-        try {
-            await sharePC.setRemoteDescription(new RTCSessionDescription(sdp));
-        } catch (err) {
-            console.error('[ONLINE] Error setting answer:', err);
-        }
+  function stopShare(silent) {
+    if (!shareStream) return;
+    shareStream.getTracks().forEach(t => t.stop());
+    shareStream = null;
+    if (sharePeer) { sharePeer.close(); sharePeer = null; }
+    clearInterval(shareTimer);
+    if (!silent && socket.connected) socket.emit('online-user-stop-share');
+    renderShare();
+  }
+  function renderShare() {
+    const b = $('#share-btn');
+    const on = Boolean(shareStream);
+    b.classList.toggle('is-live', on);
+    const label = $('#share-label');
+    if (on) {
+      const left = Math.max(0, shareEndsAt - Date.now());
+      label.textContent = `Остановить · ${CC.duration(left)}`;
+      label.classList.add('ctl__timer');
+      if (left <= 0) stopShare();
+    } else {
+      label.textContent = 'Показать экран';
+      label.classList.remove('ctl__timer');
     }
-});
+    b.querySelector('use').setAttribute('href', on ? '#i-stop' : '#i-share');
+  }
 
-document.getElementById('stop-share-btn').addEventListener('click', stopSharing);
+  // ---------- Чат ----------
+  const chat = new CC.Chat($('#chat'), {
+    meId: null,
+    emptyText: 'Здесь пишут учитель и весь класс. Кнопка «Учителю» — личное сообщение.',
+    onSend: (text, to) => socket.emit('chat-message', { text, to }),
+    onFile: (file, to) => CC.uploadFile('', socket.id, file, to)
+  });
+  socket.on('chat-message', (m) => chat.add(m));
+  socket.on('chat-history', (l) => chat.setHistory(l));
+  $('#whisper-btn').addEventListener('click', () => {
+    chat.setRecipient(chat.to ? null : { id: 'teacher', name: lesson.teacherName });
+  });
 
-function stopSharing() {
-    if (shareTimerInterval) {
-        clearInterval(shareTimerInterval);
-        shareTimerInterval = null;
-    }
-    if (shareStream) {
-        shareStream.getTracks().forEach(t => t.stop());
-        shareStream = null;
-    }
-    if (sharePC) {
-        sharePC.close();
-        sharePC = null;
-    }
-    
-    socket.emit('online-user-stop-share');
-
-    document.getElementById('share-screen-btn').classList.remove('hidden');
-    document.getElementById('stop-share-btn').classList.add('hidden');
-    document.getElementById('share-timer').classList.add('hidden');
-}
-
-socket.on('force-stop-sharing', stopSharing);
+  window.addEventListener('beforeunload', () => { if (shareStream) socket.emit('online-user-stop-share'); });
+  renderJoinLesson();
+  renderHand();
+  renderMic();
+})();

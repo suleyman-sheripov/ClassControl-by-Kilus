@@ -1,6 +1,12 @@
 node_modules/
-cloudflared.exe
-agent/node_modules/
-server/uploads/
-*.tmp
 dist/
+*.tmp
+*.log
+
+# Данные урока и загруженные файлы при запуске сервера отдельно
+server/data/
+server/uploads/
+
+# cloudflared кладётся вручную (необязательно) — в репозиторий не коммитим
+bin/cloudflared*
+cloudflared.exe

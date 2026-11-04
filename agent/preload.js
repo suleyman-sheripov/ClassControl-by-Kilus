@@ -1,27 +1,48 @@
+'use strict';
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('electronAPI', {
+const on = (channel) => (cb) => ipcRenderer.on(channel, (e, data) => cb(data));
+
+contextBridge.exposeInMainWorld('agentAPI', {
+  info: () => ipcRenderer.invoke('agent-info'),
   takeScreenshot: () => ipcRenderer.invoke('take-screenshot'),
-  getScreenStream: () => ipcRenderer.invoke('get-screen-stream-source').then(async (sourceId) => {
-    if (!sourceId) return null;
-    return navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: sourceId,
-          maxWidth: 1920,
-          maxHeight: 1080,
-          maxFrameRate: 15
-        }
-      }
-    });
-  }),
-  onServerAddress: (callback) => ipcRenderer.on('server-address', (e, addr) => callback(addr)),
-  openDemo: () => ipcRenderer.send('open-demo'),
-  closeDemo: () => ipcRenderer.send('close-demo'),
+  onServerAddress: on('server-address'),
+  onConnection: on('connection-state'),
+  connectionState: (s) => ipcRenderer.send('connection-state', s),
+
+  // Фоновое окно
+  control: (cmd) => ipcRenderer.send('control', cmd),
+  remoteSession: (on) => ipcRenderer.send('remote-session', on),
+  broadcast: (st) => ipcRenderer.send('broadcast', st),
+  onAgentStatus: on('agent-status'),
+  onProcesses: on('processes'),
+  onControlResult: on('control-result'),
+  notify: (title, body) => ipcRenderer.send('notify', { title, body }),
+
+  // Чат (окно беседы ⇄ фоновое окно)
+  chatSend: (msg) => ipcRenderer.send('chat-send', msg),
+  onChatSend: on('chat-send'),
+  chatEvent: (ev) => ipcRenderer.send('chat-event', ev),
+  onChatEvent: on('chat-event'),
+  chatRequestHistory: () => ipcRenderer.send('chat-request-history'),
+  onChatRequestHistory: on('chat-request-history'),
   openChat: () => ipcRenderer.send('open-chat'),
-  showNotification: (title, body) => ipcRenderer.send('show-notification', { title, body }),
-  platform: process.platform,
-  hostname: require('os').hostname()
+
+  // Демонстрация
+  closeDemo: () => ipcRenderer.send('close-demo'),
+  onBroadcastState: on('broadcast-state'),
+
+  // Служебные окна
+  onLockText: on('lock-text'),
+  onMessage: on('message'),
+  closeMessage: () => ipcRenderer.send('message-close'),
+  onBannerText: on('banner-text'),
+
+  // Настройки
+  configState: () => ipcRenderer.invoke('config-state'),
+  configUnlock: (pw) => ipcRenderer.invoke('config-unlock', pw),
+  configGet: () => ipcRenderer.invoke('config-get'),
+  configSave: (patch) => ipcRenderer.invoke('config-save', patch),
+  configQuit: () => ipcRenderer.invoke('config-quit'),
+  configLock: () => ipcRenderer.send('config-lock')
 });

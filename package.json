@@ -1,17 +1,17 @@
 {
   "name": "classcontrol",
-  "version": "1.0.0",
-  "main": "server/server.js",
+  "version": "2.0.0",
+  "private": true,
+  "description": "ClassControl — управление компьютерным классом и уроки онлайн без аренды серверов",
   "scripts": {
-    "start": "node server/server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "setup": "npm --prefix server install && npm --prefix teacher install && npm --prefix agent install",
+    "server": "node server/server.js",
+    "teacher": "npm --prefix teacher start",
+    "agent": "npm --prefix agent start",
+    "agent:config": "npm --prefix agent run config",
+    "test": "npm --prefix server test",
+    "build:teacher": "npm --prefix teacher run build",
+    "build:agent": "npm --prefix agent run build"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "dependencies": {
-    "express": "^4.18.0",
-    "socket.io": "^4.8.1"
-  }
+  "license": "ISC"
 }

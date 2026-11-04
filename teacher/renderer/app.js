@@ -1,0 +1,1363 @@
+/* ClassControl — окно учителя. */
+(async function () {
+  'use strict';
+  const { $, $$, el, icon, toast } = CC;
+
+  // В обычном браузере (для проверки вёрстки) окна Electron нет — подставляем заглушку
+  const api = window.teacherAPI || browserStub();
+  function browserStub() {
+    const q = new URLSearchParams(location.search);
+    const store = {};
+    return {
+      boot: async () => ({ port: Number(q.get('port')) || 3000, token: q.get('token') || '', settings: { teacherName: 'Учитель', roomName: 'Кабинет 301', quality: '1280x720', fps: 15, recordDir: '~/Видео/ClassControl', reportDir: '~/Документы/ClassControl' }, tunnel: { state: 'off' } }),
+      saveSettings: async (p) => Object.assign(store, p),
+      getSources: async () => [], setShareSource: async () => {}, ownWindowSource: async () => null,
+      keepAwake: async () => {}, openPath: async () => {}, openExternal: async (u) => window.open(u),
+      recStart: async () => null, recChunk: () => {}, recStop: async () => null,
+      lessonSave: async () => null, saveBoard: async () => null,
+      tunnel: async () => ({ state: 'off' }), onTunnel: () => {}, pickFolder: async () => null
+    };
+  }
+
+  const boot = await api.boot();
+  let settings = boot.settings;
+  const BASE = `http://localhost:${boot.port || 3000}`;
+
+  // ---------- Состояние ----------
+  const S = {
+    agents: new Map(),
+    online: new Map(),
+    selected: new Set(),
+    shots: new Map(),            // agentId -> objectURL
+    filter: '',
+    peopleTab: 'class',
+    tab: 'monitoring',
+    links: [],
+    tunnel: boot.tunnel || { state: 'off' },
+    lessonStartedAt: Date.now(),
+    connected: false
+  };
+
+  // ---------- Подключение к серверу урока ----------
+  setServerStatus('wait', boot.serverError ? 'Сервер не запустился: ' + boot.serverError : 'Подключение к серверу урока…');
+  try {
+    await loadScript(`${BASE}/socket.io/socket.io.js`);
+  } catch (e) {
+    setServerStatus('error', 'Сервер урока недоступен');
+    return;
+  }
+  const socket = io(BASE, { transports: ['websocket'] });
+
+  function loadScript(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = src; s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  socket.on('connect', () => {
+    socket.emit('register-teacher', { token: boot.token, name: settings.teacherName });
+  });
+  socket.on('disconnect', () => { S.connected = false; setServerStatus('wait', 'Переподключение к серверу…'); });
+  socket.on('auth-error', (m) => setServerStatus('error', m));
+
+  socket.on('teacher-ready', (st) => {
+    S.connected = true;
+    setServerStatus('ok', `Сервер урока работает · порт ${boot.port}`);
+    S.lessonStartedAt = st.lessonStartedAt;
+    S.links = st.links || [];
+    applyRoster({ agents: st.agents, online: st.online });
+    chat.setHistory(st.chat);
+    board.setStrokes(st.board.strokes || []);
+    renderLinks();
+    socket.emit('monitoring-active', S.tab === 'monitoring');
+    if (Broadcast.active) socket.emit('start-broadcast', { allowExit: $('#opt-exit').checked });
+    if (S.tab === 'board') socket.emit('whiteboard-mode', $('#board-share').checked);
+  });
+
+  socket.on('roster', applyRoster);
+  socket.on('links', (l) => { S.links = l; renderLinks(); });
+  socket.on('lesson-started', (d) => { S.lessonStartedAt = d.lessonStartedAt; });
+
+  // ---------- Верхняя панель: урок ----------
+  $('#room-name').textContent = settings.roomName || 'Кабинет';
+  setInterval(() => { $('#lesson-time').textContent = CC.duration(Date.now() - S.lessonStartedAt); }, 1000);
+  $('#lesson-chip').addEventListener('click', () => openLessonMenu($('#lesson-chip')));
+  $('#menu-btn').addEventListener('click', () => openLessonMenu($('#menu-btn'), true));
+
+  function openLessonMenu(anchor, right) {
+    CC.menu(anchor, [
+      { icon: 'save', label: 'Завершить урок и сохранить отчёт', run: endLesson },
+      { icon: 'folder', label: 'Папка с отчётами', run: () => api.openPath(settings.reportDir) },
+      { icon: 'record', label: 'Папка с записями', run: () => api.openPath(settings.recordDir) },
+      '-',
+      { icon: 'settings', label: 'Настройки', run: openSettings }
+    ], { alignRight: right });
+  }
+
+  async function endLesson() {
+    const ok = await CC.confirm('Завершить урок?', 'Сохраним посещаемость, чат, файлы и доску в папку отчётов, затем очистим чат и доску для следующего урока.', 'Завершить и сохранить');
+    if (!ok) return;
+    const dir = await api.lessonSave({ boardPng: board.strokes.length ? board.toPNG() : null });
+    socket.emit('lesson-reset');
+    if (dir) toast('Отчёт урока сохранён', { kind: 'positive', action: { label: 'Открыть', run: () => api.openPath(dir) } });
+  }
+
+  async function openSettings() {
+    const name = el('input', { class: 'input', value: settings.teacherName || '' });
+    const room = el('input', { class: 'input', value: settings.roomName || '' });
+    const recDir = el('input', { class: 'input', value: settings.recordDir || '', readonly: true });
+    const repDir = el('input', { class: 'input', value: settings.reportDir || '', readonly: true });
+    const folder = (input) => el('div', { class: 'folder-field' }, input,
+      el('button', { class: 'btn', type: 'button', text: 'Выбрать', onclick: async () => { const p = await api.pickFolder(input.value); if (p) input.value = p; } }));
+    const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
+      el('div', { class: 'field-row' },
+        el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Как вас видят ученики' }), name),
+        el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Кабинет или класс' }), room)),
+      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Записи уроков' }), folder(recDir)),
+      el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Отчёты уроков' }), folder(repDir)));
+    const saved = await CC.dialog({
+      title: 'Настройки', body, wide: true,
+      actions: [{ label: 'Отмена', value: null }, { label: 'Сохранить', kind: 'primary', primary: true, value: () => true }]
+    });
+    if (!saved) return;
+    settings = await api.saveSettings({
+      teacherName: name.value.trim() || 'Учитель',
+      roomName: room.value.trim() || 'Кабинет',
+      recordDir: recDir.value, reportDir: repDir.value
+    }) || settings;
+    $('#room-name').textContent = settings.roomName;
+    socket.emit('register-teacher', { token: boot.token, name: settings.teacherName });
+    toast('Настройки сохранены', { kind: 'positive' });
+  }
+
+  // ---------- Переключение режимов ----------
+  function setTab(tab) {
+    S.tab = tab;
+    $('#tab-monitoring').setAttribute('aria-selected', tab === 'monitoring');
+    $('#tab-board').setAttribute('aria-selected', tab === 'board');
+    $('#view-monitoring').classList.toggle('hidden', tab !== 'monitoring');
+    $('#view-board').classList.toggle('hidden', tab !== 'board');
+    $('#board-tools').classList.toggle('hidden', tab !== 'board');
+    $('#studio').classList.toggle('is-compact', tab === 'board');
+    socket.emit('monitoring-active', tab === 'monitoring');
+    socket.emit('whiteboard-mode', tab === 'board' && $('#board-share').checked);
+    if (tab === 'board') requestAnimationFrame(() => board.fit());
+  }
+  $('#tab-monitoring').addEventListener('click', () => setTab('monitoring'));
+  $('#tab-board').addEventListener('click', () => setTab('board'));
+
+  // Боковые панели на узком окне
+  $('#toggle-left').addEventListener('click', () => { $('#app').classList.toggle('show-left'); $('#app').classList.remove('show-right'); });
+  $('#toggle-right').addEventListener('click', () => { $('#app').classList.toggle('show-right'); $('#app').classList.remove('show-left'); chat.markSeen(); updateRightBadge(); });
+  $('#center').addEventListener('mousedown', () => $('#app').classList.remove('show-left', 'show-right'));
+
+  // ---------- Строка состояния ----------
+  function setServerStatus(kind, text) {
+    $('#server-dot').className = 'dot ' + (kind === 'ok' ? 'dot--positive' : kind === 'error' ? 'dot--live' : 'dot--warning dot--pulse');
+    $('#server-text').textContent = text;
+  }
+
+  function lanLink() { return (S.links.find(l => l.kind === 'lan') || {}).url; }
+  function publicLink() { return (S.links.find(l => l.kind === 'public') || {}).url; }
+
+  function renderLinks() {
+    const lan = lanLink();
+    $('#lan-text').textContent = lan ? lan.replace('http://', '') : 'нет сети';
+    const pub = publicLink();
+    const home = $('#status-home');
+    home.classList.toggle('is-on', Boolean(pub));
+    const st = S.tunnel.state;
+    $('#home-text').textContent = pub ? 'Из дома: ' + pub.replace('https://', '')
+      : st === 'starting' ? 'Включаю доступ из дома…'
+      : st === 'downloading' ? `Скачиваю модуль доступа… ${S.tunnel.progress || 0}%`
+      : st === 'error' ? 'Доступ из дома: ошибка'
+      : 'Доступ из дома выключен';
+  }
+  $('#status-lan').addEventListener('click', async () => { const l = lanLink(); if (l && await CC.copy(l)) toast('Адрес в локальной сети скопирован', { kind: 'positive', icon: 'copy' }); });
+  $('#status-home').addEventListener('click', openInvite);
+  api.onTunnel((t) => {
+    const was = S.tunnel.state;
+    S.tunnel = t;
+    renderLinks();
+    renderInvite();
+    if (t.state === 'on' && was !== 'on') toast('Доступ из дома включён', { kind: 'positive', icon: 'globe' });
+    if (t.state === 'error' && t.error) toast(t.error, { kind: 'warning' });
+  });
+
+  function updateCounts() {
+    const n = S.agents.size, m = S.online.size;
+    $('#status-counts').textContent = `${n} ПК · ${m} онлайн`;
+    $('#tab-pc-count').textContent = n;
+    $('#count-class').textContent = n;
+    $('#count-home').textContent = m;
+  }
+
+  // ---------- Приглашение ----------
+  let inviteRefs = null;
+  function openInvite() {
+    const qr = el('div', { class: 'invite__qr' });
+    const linkText = el('span', { class: 'link-box__url' });
+    const copyBtn = el('button', { class: 'btn btn--sm', type: 'button' }, icon('copy', 'i-sm'), 'Копировать');
+    const openBtn = el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Открыть в браузере', 'aria-label': 'Открыть' }, icon('expand', 'i-sm'));
+    const tunnelSwitch = el('input', { type: 'checkbox' });
+    tunnelSwitch.checked = S.tunnel.state !== 'off';
+    const tunnelHint = el('span', { class: 'switch__hint' });
+    const note = el('div', { class: 'note' });
+    const lanLine = el('span', { class: 'mono' });
+
+    copyBtn.addEventListener('click', async () => { if (await CC.copy(inviteRefs.current)) toast('Ссылка скопирована', { kind: 'positive', icon: 'copy' }); });
+    openBtn.addEventListener('click', () => api.openExternal(inviteRefs.current));
+    tunnelSwitch.addEventListener('change', async () => { S.tunnel = await api.tunnel(tunnelSwitch.checked); renderLinks(); renderInvite(); });
+
+    const body = el('div', { class: 'invite' },
+      el('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px', minWidth: '0' } },
+        el('div', { class: 'field' }, el('span', { class: 'field__label', text: 'Ссылка на урок' }),
+          el('div', { class: 'link-box' }, linkText, openBtn, copyBtn)),
+        el('label', { class: 'switch' },
+          el('span', { class: 'switch__text' }, el('span', { class: 'switch__label', text: 'Доступ из дома через интернет' }), tunnelHint),
+          tunnelSwitch, el('span', { class: 'switch__track' })),
+        note,
+        el('div', { class: 'field__hint' }, 'В классе по Wi-Fi: ', lanLine)),
+      qr);
+    inviteRefs = { qr, linkText, tunnelHint, note, lanLine, current: '' };
+    renderInvite();
+    CC.dialog({ title: 'Пригласить на урок', sub: 'Ученики открывают ссылку в браузере и вводят имя — ничего устанавливать не нужно.', body, wide: true })
+      .then(() => { inviteRefs = null; });
+  }
+
+  function renderInvite() {
+    if (!inviteRefs) return;
+    const pub = publicLink(), lan = lanLink();
+    const url = pub || lan || BASE;
+    inviteRefs.current = url;
+    inviteRefs.linkText.textContent = url;
+    inviteRefs.lanLine.textContent = lan || '—';
+    const st = S.tunnel.state;
+    inviteRefs.tunnelHint.textContent = st === 'on' ? 'Включён — ссылка работает из любой сети'
+      : st === 'starting' ? 'Подключаюсь…'
+      : st === 'downloading' ? `Скачиваю модуль доступа (≈30 МБ, один раз)… ${S.tunnel.progress || 0}%`
+      : st === 'error' ? (S.tunnel.error || 'Ошибка')
+      : 'Бесплатно, без регистрации и аренды серверов';
+    inviteRefs.note.className = 'note' + (st === 'error' ? ' note--warning' : '');
+    inviteRefs.note.replaceChildren(icon(st === 'error' ? 'alert' : 'info', 'i-sm'), el('span', {
+      text: pub ? 'Ссылка новая при каждом включении. Видео идёт напрямую между компьютерами; если сеть ученика не пускает — автоматически включится запасной режим.'
+        : 'Сейчас ссылка открывается только в сети школы. Включите переключатель — появится ссылка, которая работает из любой сети, пока открыто приложение.'
+    }));
+    inviteRefs.qr.replaceChildren();
+    inviteRefs.qr.classList.remove('is-empty');
+    try {
+      const q = qrcode(0, 'M');
+      q.addData(url);
+      q.make();
+      inviteRefs.qr.innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+    } catch (e) {
+      inviteRefs.qr.classList.add('is-empty');
+      inviteRefs.qr.textContent = 'QR-код недоступен';
+    }
+  }
+  $('#invite-btn').addEventListener('click', openInvite);
+
+  // ---------- Участники ----------
+  function applyRoster({ agents, online }) {
+    const prevAgents = S.agents;
+    S.agents = new Map(agents.map(a => [a.id, a]));
+    S.online = new Map(online.map(u => [u.id, u]));
+    for (const id of [...S.selected]) if (!S.agents.has(id)) S.selected.delete(id);
+    for (const [id, url] of S.shots) if (!S.agents.has(id)) { URL.revokeObjectURL(url); S.shots.delete(id); }
+    if (prevAgents.size && agents.length > prevAgents.size) {
+      const fresh = agents.filter(a => !prevAgents.has(a.id));
+      if (fresh.length === 1) toast(`${fresh[0].name} подключился`, { icon: 'monitor' });
+    }
+    renderGrid();
+    renderPeople();
+    updateCounts();
+    Broadcast.syncViewers();
+  }
+
+  $$('[data-people]').forEach(b => b.addEventListener('click', () => {
+    S.peopleTab = b.dataset.people;
+    $$('[data-people]').forEach(x => x.classList.toggle('is-active', x === b));
+    renderPeople();
+  }));
+
+  function renderPeople() {
+    const list = $('#people-list');
+    list.replaceChildren();
+    const hands = [...S.online.values()].filter(u => u.hand);
+    $('#hands-badge').classList.toggle('hidden', !hands.length);
+    $('#hands-count').textContent = hands.length;
+    updateRightBadge();
+
+    if (S.peopleTab === 'class') {
+      const agents = [...S.agents.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
+      if (!agents.length) {
+        list.appendChild(el('li', { class: 'empty' }, el('div', { class: 'empty__text', text: 'Пока ни один компьютер класса не подключён.' })));
+        return;
+      }
+      agents.forEach(a => list.appendChild(el('li', { class: 'row person' },
+        el('span', { class: 'avatar', style: { '--av-bg': 'var(--active)', '--av-ink': 'var(--muted)' } }, icon('monitor', 'i-sm')),
+        el('div', { class: 'row__main' },
+          el('span', { class: 'row__title', text: a.name }),
+          el('span', { class: 'row__sub' }, el('span', { class: 'dot ' + (a.locked ? 'dot--warning' : a.idle >= 180 ? '' : 'dot--positive') }),
+            a.locked ? 'заблокирован' : CC.idleText(a.idle || 0))),
+        el('div', { class: 'row__actions' },
+          el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Подключиться', 'aria-label': 'Подключиться', onclick: () => openViewer(a.id) }, icon('pointer', 'i-sm')),
+          el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Написать лично', 'aria-label': 'Написать лично', onclick: () => chat.setRecipient({ id: a.id, name: a.name }) }, icon('chat', 'i-sm'))))));
+      return;
+    }
+
+    const users = [...S.online.values()].sort((a, b) => (b.hand - a.hand) || a.name.localeCompare(b.name, 'ru'));
+    if (!users.length) {
+      list.appendChild(el('li', { class: 'empty' },
+        el('div', { class: 'empty__text', text: 'Ученики из дома появятся здесь, когда откроют ссылку на урок.' }),
+        el('button', { class: 'btn btn--sm', type: 'button', onclick: openInvite }, icon('link', 'i-sm'), 'Пригласить')));
+      return;
+    }
+    users.forEach(u => {
+      const sub = u.hand ? [icon('raise', 'i-sm person__hand'), 'поднял руку']
+        : u.voice ? [icon('mic', 'i-sm'), 'говорит']
+        : u.sharing ? [icon('share', 'i-sm'), 'показывает экран']
+        : [u.remote ? 'из дома' : 'в сети школы'];
+      const voiceBtn = el('button', {
+        class: 'icon-btn icon-btn--sm' + (u.voice ? ' is-on' : ''), type: 'button',
+        title: u.voice ? 'Выключить микрофон ученика' : 'Дать слово', 'aria-label': 'Микрофон',
+        onclick: () => socket.emit('teacher-voice', { userId: u.id, on: !u.voice })
+      }, icon(u.voice ? 'mic' : 'mic-off', 'i-sm'));
+      const actions = el('div', { class: 'row__actions' + (u.hand || u.voice || u.sharing ? ' is-pinned' : '') },
+        u.sharing ? el('button', { class: 'btn btn--sm btn--accent', type: 'button', onclick: () => openShareViewer(u.id) }, icon('eye', 'i-sm'), 'Смотреть') : null,
+        voiceBtn,
+        el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Ещё', 'aria-label': 'Ещё', onclick: (e) => CC.menu(e.currentTarget, [
+          { icon: 'chat', label: 'Написать лично', run: () => chat.setRecipient({ id: u.id, name: u.name }) },
+          u.hand ? { icon: 'raise', label: 'Опустить руку', run: () => socket.emit('teacher-voice', { userId: u.id, on: false }) } : null,
+          '-',
+          { icon: 'door', label: 'Отключить от урока', danger: true, run: async () => { if (await CC.confirm(`Отключить ${u.name}?`, 'Ученик сможет зайти снова по ссылке.', 'Отключить', 'danger')) socket.emit('teacher-kick', { userId: u.id }); } }
+        ], { alignRight: true }) }, icon('more', 'i-sm')));
+      list.appendChild(el('li', { class: 'row person' + (u.hand ? ' is-hand' : '') },
+        CC.avatar(u.name),
+        el('div', { class: 'row__main' }, el('span', { class: 'row__title', text: u.name }), el('span', { class: 'row__sub' }, ...sub)),
+        actions));
+    });
+  }
+
+  socket.on('hand-raised', ({ id, name }) => {
+    toast(`${name} поднял руку`, { kind: 'accent', icon: 'raise', action: { label: 'Дать слово', run: () => socket.emit('teacher-voice', { userId: id, on: true }) } });
+  });
+
+  function updateRightBadge() {
+    const hands = [...S.online.values()].filter(u => u.hand).length;
+    const n = hands + (chat ? chat.unseen : 0);
+    const b = $('#right-badge');
+    b.textContent = n;
+    b.classList.toggle('hidden', !n || $('#app').classList.contains('show-right'));
+  }
+
+  // ---------- Мониторинг ----------
+  $$('[data-size]').forEach(b => b.addEventListener('click', () => {
+    $$('[data-size]').forEach(x => x.classList.toggle('is-active', x === b));
+    $('#pc-grid').dataset.size = b.dataset.size;
+  }));
+  $('#pc-search').addEventListener('input', (e) => { S.filter = e.target.value.trim().toLowerCase(); renderGrid(); });
+  $('#search-btn').addEventListener('click', () => { $('#search').classList.add('is-open'); $('#pc-search').focus(); });
+  $('#pc-search').addEventListener('blur', () => { if (!$('#pc-search').value) $('#search').classList.remove('is-open'); });
+  $('#pc-search').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; S.filter = ''; renderGrid(); e.target.blur(); } });
+
+  function visibleAgents() {
+    return [...S.agents.values()]
+      .filter(a => !S.filter || a.name.toLowerCase().includes(S.filter) || (a.host || '').toLowerCase().includes(S.filter))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
+  }
+
+  function renderGrid() {
+    const grid = $('#pc-grid');
+    const list = visibleAgents();
+    $('#pc-empty').classList.toggle('hidden', S.agents.size > 0);
+    const keep = new Set(list.map(a => a.id));
+    $$('.pc', grid).forEach(card => { if (!keep.has(card.dataset.id)) card.remove(); });
+    list.forEach((a, i) => {
+      let card = grid.querySelector(`.pc[data-id="${CSS.escape(a.id)}"]`);
+      if (!card) card = buildCard(a);
+      updateCard(card, a);
+      if (grid.children[i] !== card) grid.insertBefore(card, grid.children[i] || null);
+    });
+    updateSelectionUi();
+  }
+
+  function buildCard(a) {
+    const check = el('input', { type: 'checkbox', 'aria-label': 'Выбрать ' + a.name });
+    check.addEventListener('change', () => { toggleSelect(a.id, check.checked); });
+    const card = el('article', { class: 'pc', 'data-id': a.id },
+      el('div', { class: 'pc__screen', title: 'Открыть экран' },
+        el('img', { alt: '', draggable: 'false', class: 'hidden' }),
+        el('div', { class: 'empty' }, icon('monitor'), el('span', { class: 'empty__text', text: 'Жду изображение…' })),
+        el('label', { class: 'check pc__check', onclick: (e) => e.stopPropagation() }, check, el('span', { class: 'check__box' }, icon('check', 'i-sm'))),
+        el('div', { class: 'pc__hover' },
+          el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Заблокировать / разблокировать', 'aria-label': 'Блокировка', 'data-lock': '', onclick: (e) => { e.stopPropagation(); const ag = S.agents.get(a.id); control([a.id], ag && ag.locked ? 'unlock' : 'lock'); } }, icon('lock', 'i-sm')),
+          el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Ещё', 'aria-label': 'Ещё', onclick: (e) => { e.stopPropagation(); cardMenu(e.currentTarget, a.id); } }, icon('more', 'i-sm')))),
+      el('div', { class: 'pc__foot' },
+        el('div', { class: 'pc__meta' },
+          el('span', { class: 'pc__name' }),
+          el('span', { class: 'pc__status' }, el('span', { class: 'dot' }), el('span', { class: 'pc__status-text' }))),
+        el('button', { class: 'icon-btn icon-btn--sm pc__go', type: 'button', title: 'Подключиться и управлять', 'aria-label': 'Управлять ' + a.name, onclick: () => openViewer(a.id) }, icon('pointer', 'i-sm'))));
+    card.querySelector('.pc__screen').addEventListener('click', (e) => {
+      if (e.ctrlKey || e.metaKey || e.shiftKey) { toggleSelect(a.id, !S.selected.has(a.id)); return; }
+      openViewer(a.id);
+    });
+    return card;
+  }
+
+  function updateCard(card, a) {
+    card.querySelector('.pc__name').textContent = a.name;
+    card.querySelector('.pc__name').title = a.host && a.host !== a.name ? `${a.host} · ${a.ip}` : a.ip;
+    const idle = a.idle || 0;
+    card.querySelector('.pc__status .dot').className = 'dot ' + (a.locked ? 'dot--warning' : idle >= 180 ? '' : 'dot--positive');
+    card.querySelector('.pc__status-text').textContent = a.locked ? 'заблокирован' : CC.idleText(idle);
+    card.classList.toggle('is-selected', S.selected.has(a.id));
+    card.querySelector('.pc__check input').checked = S.selected.has(a.id);
+    let veil = card.querySelector('.pc__veil');
+    if (a.locked && !veil) card.querySelector('.pc__screen').appendChild(el('div', { class: 'pc__veil' }, icon('lock', 'i-sm'), 'Экран заблокирован'));
+    if (!a.locked && veil) veil.remove();
+    const lockBtn = card.querySelector('[data-lock] use');
+    if (lockBtn) lockBtn.setAttribute('href', a.locked ? '#i-unlock' : '#i-lock');
+  }
+
+  socket.on('agent-screenshot', ({ agentId, image, idle }) => {
+    const a = S.agents.get(agentId);
+    if (!a) return;
+    const prevIdle = a.idle;
+    a.idle = idle;
+    const card = document.querySelector(`.pc[data-id="${CSS.escape(agentId)}"]`);
+    if (!card) return;
+    const blob = new Blob([image], { type: 'image/jpeg' });
+    const url = URL.createObjectURL(blob);
+    const img = card.querySelector('.pc__screen img');
+    img.onload = () => { const old = S.shots.get(agentId); if (old && old !== url) URL.revokeObjectURL(old); S.shots.set(agentId, url); };
+    img.src = url;
+    img.classList.remove('hidden');
+    card.querySelector('.pc__screen .empty')?.remove();
+    if ((prevIdle >= 60) !== (idle >= 60) || Math.floor(prevIdle / 60) !== Math.floor(idle / 60)) updateCard(card, a);
+  });
+
+  function toggleSelect(id, on) {
+    if (on) S.selected.add(id); else S.selected.delete(id);
+    const card = document.querySelector(`.pc[data-id="${CSS.escape(id)}"]`);
+    if (card) { card.classList.toggle('is-selected', on); card.querySelector('.pc__check input').checked = on; }
+    updateSelectionUi();
+  }
+
+  $('#select-all').addEventListener('change', (e) => {
+    const on = e.target.checked;
+    visibleAgents().forEach(a => toggleSelect(a.id, on));
+  });
+
+  function targets() { return S.selected.size ? [...S.selected] : [...S.agents.keys()]; }
+
+  function updateSelectionUi() {
+    const n = S.selected.size, total = S.agents.size;
+    const all = $('#select-all');
+    all.checked = n > 0 && n === total;
+    all.indeterminate = n > 0 && n < total;
+    $('#selection-label').textContent = n ? `Выбрано ${n} из ${total}` : total ? `Все компьютеры · ${total}` : 'Компьютеры класса';
+    $('#pc-actions').classList.toggle('is-idle', total === 0);
+    $('#pc-grid').classList.toggle('has-selection', n > 0);
+    const lockAllBtn = $('[data-act="lock"]');
+    lockAllBtn.title = n ? 'Заблокировать выбранные' : 'Заблокировать все';
+  }
+
+  function control(ids, action, data) {
+    if (!ids.length) return;
+    socket.emit('agent-control', { agentIds: ids, action, data: data || {} });
+  }
+
+  function who(ids) {
+    if (ids.length === 1) return (S.agents.get(ids[0]) || {}).name || '1 компьютер';
+    return `${ids.length} ${CC.plural(ids.length, 'компьютер', 'компьютера', 'компьютеров')}`;
+  }
+
+  async function actMessage(ids) {
+    const text = await CC.prompt({ title: 'Сообщение на экран', sub: who(ids), label: 'Текст', placeholder: 'Например: сохраните работу, через 5 минут проверка', multiline: true, okLabel: 'Отправить' });
+    if (text) { control(ids, 'message', { text }); toast('Сообщение отправлено', { kind: 'positive', icon: 'bell' }); }
+  }
+
+  async function actOpenUrl(ids) {
+    let url = await CC.prompt({ title: 'Открыть сайт у учеников', sub: who(ids), label: 'Адрес', placeholder: 'https://…', okLabel: 'Открыть' });
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    control(ids, 'open-url', { url });
+    toast('Сайт открывается у учеников', { kind: 'positive', icon: 'globe' });
+  }
+
+  async function actLock(ids) {
+    control(ids, 'lock', { text: 'Внимание на учителя' });
+  }
+
+  async function actPower(ids, mode) {
+    const label = { shutdown: 'Выключить', restart: 'Перезагрузить', logoff: 'Завершить сеанс' }[mode];
+    const ok = await CC.confirm(`${label}: ${who(ids)}?`, 'Несохранённая работа учеников может пропасть.', label, 'danger');
+    if (ok) control(ids, 'power', { mode });
+  }
+
+  $$('#pc-actions [data-act]').forEach(b => b.addEventListener('click', (e) => {
+    const ids = targets();
+    const act = b.dataset.act;
+    if (act === 'lock') actLock(ids);
+    if (act === 'unlock') control(ids, 'unlock');
+    if (act === 'message') actMessage(ids);
+    if (act === 'open-url') actOpenUrl(ids);
+    if (act === 'more') CC.menu(e.currentTarget, [
+      { icon: 'power', label: 'Выключить', danger: true, run: () => actPower(ids, 'shutdown') },
+      { icon: 'restart', label: 'Перезагрузить', run: () => actPower(ids, 'restart') },
+      { icon: 'logout', label: 'Завершить сеанс', run: () => actPower(ids, 'logoff') }
+    ], { alignRight: true });
+  }));
+
+  function cardMenu(anchor, id) {
+    const a = S.agents.get(id);
+    if (!a) return;
+    CC.menu(anchor, [
+      { icon: 'pointer', label: 'Подключиться к экрану', run: () => openViewer(id) },
+      { icon: 'list', label: 'Запущенные программы', run: () => openProcesses(id) },
+      { icon: 'bell', label: 'Сообщение на экран', run: () => actMessage([id]) },
+      { icon: 'chat', label: 'Написать в чат лично', run: () => chat.setRecipient({ id, name: a.name }) },
+      { icon: 'globe', label: 'Открыть сайт', run: () => actOpenUrl([id]) },
+      '-',
+      { icon: 'restart', label: 'Перезагрузить', run: () => actPower([id], 'restart') },
+      { icon: 'power', label: 'Выключить', danger: true, run: () => actPower([id], 'shutdown') }
+    ], { alignRight: true });
+  }
+
+  socket.on('agent-control-result', (r) => {
+    if (!r.ok) toast(`${(S.agents.get(r.agentId) || {}).name || 'ПК'}: ${r.message || 'команда не выполнена'}`, { kind: 'warning' });
+  });
+
+  // ---------- Запущенные программы ----------
+  let procWaiter = null;
+  socket.on('agent-processes', (d) => { if (procWaiter && procWaiter.id === d.agentId) procWaiter.render(d.list); });
+
+  function openProcesses(id) {
+    const a = S.agents.get(id);
+    if (!a) return;
+    const list = el('ul', { class: 'procs' }, el('li', null, el('span', { class: 'spinner' }), el('span', { class: 'muted', text: 'Получаю список…' })));
+    const render = (items) => {
+      list.replaceChildren();
+      if (!items.length) { list.appendChild(el('li', null, el('span', { class: 'muted', text: 'Открытых программ нет' }))); return; }
+      items.forEach(p => {
+        const li = el('li', null,
+          el('div', { class: 'procs__main' }, el('span', { class: 'procs__title', text: p.title || p.name }), el('span', { class: 'procs__name', text: p.name + (p.pid ? ' · ' + p.pid : '') })),
+          el('button', { class: 'btn btn--sm btn--danger', type: 'button', onclick: async () => {
+            control([id], 'kill', { pid: p.pid, name: p.name });
+            li.style.opacity = '.4';
+            setTimeout(() => control([id], 'list-processes'), 900);
+          } }, 'Закрыть'));
+        list.appendChild(li);
+      });
+    };
+    procWaiter = { id, render };
+    control([id], 'list-processes');
+    const refresh = el('button', { class: 'btn btn--sm', type: 'button', onclick: () => control([id], 'list-processes') }, icon('restart', 'i-sm'), 'Обновить');
+    CC.dialog({ title: 'Программы на ' + a.name, sub: 'Окна, открытые у ученика. «Закрыть» завершает программу сразу.', body: el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, list, el('div', null, refresh)), wide: true })
+      .then(() => { procWaiter = null; });
+  }
+
+  // ---------- Просмотр экрана: компьютер класса или ученик из дома ----------
+  const Viewer = { mode: null, id: null, peer: null, stream: null, control: false };
+
+  function openViewer(agentId) {
+    const a = S.agents.get(agentId);
+    if (!a) return;
+    closeViewer(true);
+    Object.assign(Viewer, { mode: 'remote', id: agentId, control: false });
+    $('#viewer-name').textContent = a.name;
+    $('#viewer-state').textContent = 'Подключение…';
+    $('#viewer-control').checked = false;
+    $('#viewer-control-wrap').classList.remove('hidden');
+    $('#viewer-procs').classList.remove('hidden');
+    $('#viewer-lock').classList.remove('hidden');
+    $('#viewer-lock span').textContent = a.locked ? 'Разблокировать' : 'Заблокировать';
+    $('#viewer-wait').classList.remove('hidden');
+    $('#viewer-wait-text').textContent = 'Подключаюсь к экрану…';
+    $('#viewer-video').srcObject = null;
+    $('#viewer').classList.remove('hidden');
+    setControl(false);
+    socket.emit('remote-start', { agentId, quality: 'high' });
+    Viewer.timeout = setTimeout(() => {
+      if (!Viewer.stream) $('#viewer-wait-text').textContent = 'Компьютер не отвечает. Проверьте, что агент запущен.';
+    }, 8000);
+  }
+
+  function openShareViewer(userId) {
+    const u = S.online.get(userId);
+    if (!u) return;
+    closeViewer(true);
+    Object.assign(Viewer, { mode: 'share', id: userId, control: false });
+    $('#viewer-name').textContent = u.name;
+    $('#viewer-state').textContent = 'Показывает свой экран';
+    $('#viewer-control-wrap').classList.add('hidden');
+    $('#viewer-procs').classList.add('hidden');
+    $('#viewer-lock').classList.add('hidden');
+    $('#viewer-wait').classList.remove('hidden');
+    $('#viewer-wait-text').textContent = 'Жду изображение от ученика…';
+    $('#viewer-video').srcObject = null;
+    $('#viewer').classList.remove('hidden');
+    setControl(false);
+    let showAll = $('#viewer-showall');
+    if (!showAll) {
+      showAll = el('button', { class: 'btn btn--sm', id: 'viewer-showall', type: 'button' }, icon('cast', 'i-sm'), el('span', { text: 'Показать всем' }));
+      $('#viewer-actions').insertBefore(showAll, $('#viewer-close'));
+      showAll.addEventListener('click', () => {
+        if (!Viewer.stream) return;
+        Broadcast.showExternal(Viewer.stream, Viewer.id);
+        showAll.classList.add('is-on');
+        showAll.querySelector('span').textContent = 'Показывается всем';
+      });
+    }
+    showAll.classList.remove('hidden', 'is-on');
+    showAll.querySelector('span').textContent = 'Показать всем';
+    socket.emit('teacher-accept-share', { userId });
+  }
+
+  function closeViewer(silent) {
+    clearTimeout(Viewer.timeout);
+    if (Viewer.mode === 'remote' && Viewer.id) socket.emit('remote-stop', { agentId: Viewer.id });
+    if (Viewer.mode === 'share' && Viewer.id && !silent) socket.emit('teacher-close-share', { userId: Viewer.id });
+    if (Viewer.mode === 'share' && Broadcast.externalFrom === Viewer.id) Broadcast.restoreOwn();
+    if (Viewer.peer) Viewer.peer.close();
+    Object.assign(Viewer, { mode: null, id: null, peer: null, stream: null });
+    setControl(false);
+    $('#viewer-video').srcObject = null;
+    $('#viewer').classList.add('hidden');
+    $('#viewer-showall')?.classList.add('hidden');
+  }
+  $('#viewer-close').addEventListener('click', () => closeViewer(false));
+  $('#viewer-back').addEventListener('click', () => closeViewer(false));
+  $('#viewer-procs').addEventListener('click', () => Viewer.id && openProcesses(Viewer.id));
+  $('#viewer-lock').addEventListener('click', () => {
+    const a = S.agents.get(Viewer.id);
+    if (!a) return;
+    control([a.id], a.locked ? 'unlock' : 'lock', { text: 'Внимание на учителя' });
+  });
+  $('#viewer-control').addEventListener('change', (e) => setControl(e.target.checked));
+
+  function setControl(on) {
+    Viewer.control = on && Viewer.mode === 'remote';
+    $('#viewer-control').checked = Viewer.control;
+    $('#viewer-stage').classList.toggle('is-control', Viewer.control);
+    $('#viewer-hint').classList.toggle('hidden', !Viewer.control);
+    if (Viewer.control) $('#viewer-stage').focus();
+  }
+
+  // Ввод: координаты считаем по реальной картинке внутри видео (без чёрных полей)
+  function videoPoint(e) {
+    const v = $('#viewer-video');
+    const r = v.getBoundingClientRect();
+    const vw = v.videoWidth || 16, vh = v.videoHeight || 9;
+    const scale = Math.min(r.width / vw, r.height / vh);
+    const w = vw * scale, h = vh * scale;
+    const x = (e.clientX - r.left - (r.width - w) / 2) / w;
+    const y = (e.clientY - r.top - (r.height - h) / 2) / h;
+    return { x, y, inside: x >= 0 && x <= 1 && y >= 0 && y <= 1 };
+  }
+  function sendInput(data) {
+    if (Viewer.control && Viewer.id) socket.emit('agent-control', { agentIds: [Viewer.id], action: 'input', data });
+  }
+  let moveQueued = null;
+  const stage = $('#viewer-stage');
+  stage.addEventListener('pointermove', (e) => {
+    if (!Viewer.control) return;
+    const p = videoPoint(e);
+    if (!p.inside) return;
+    if (!moveQueued) requestAnimationFrame(() => { sendInput({ type: 'move', x: moveQueued.x, y: moveQueued.y }); moveQueued = null; });
+    moveQueued = p;
+  });
+  stage.addEventListener('pointerdown', (e) => {
+    if (!Viewer.control) return;
+    const p = videoPoint(e);
+    if (!p.inside) return;
+    e.preventDefault();
+    stage.focus();
+    sendInput({ type: 'down', x: p.x, y: p.y, button: e.button });
+  });
+  stage.addEventListener('pointerup', (e) => {
+    if (!Viewer.control) return;
+    const p = videoPoint(e);
+    sendInput({ type: 'up', x: Math.min(1, Math.max(0, p.x)), y: Math.min(1, Math.max(0, p.y)), button: e.button });
+  });
+  stage.addEventListener('contextmenu', (e) => { if (Viewer.control) e.preventDefault(); });
+  stage.addEventListener('wheel', (e) => {
+    if (!Viewer.control) return;
+    e.preventDefault();
+    sendInput({ type: 'wheel', dx: Math.sign(e.deltaX) * Math.min(10, Math.ceil(Math.abs(e.deltaX) / 40)), dy: Math.sign(e.deltaY) * Math.min(10, Math.ceil(Math.abs(e.deltaY) / 40)) });
+  }, { passive: false });
+  const keyHandler = (down) => (e) => {
+    if (!Viewer.control) return;
+    if (e.key === 'Escape' && down && !e.ctrlKey && !e.altKey) { setControl(false); return; }
+    e.preventDefault();
+    sendInput({ type: 'key', down, code: e.code, key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey });
+  };
+  stage.addEventListener('keydown', keyHandler(true));
+  stage.addEventListener('keyup', keyHandler(false));
+
+  // ---------- WebRTC: входящие сигналы ----------
+  const voicePeers = new Map(); // userId -> { peer, audio, node }
+
+  socket.on('signal', async ({ source, kind, type, payload }) => {
+    try {
+      if (kind === 'broadcast') return Broadcast.onSignal(source, type, payload);
+      if (kind === 'remote' || kind === 'share') {
+        if (source !== Viewer.id) return;
+        if (type === 'offer') {
+          if (Viewer.peer) Viewer.peer.close();
+          Viewer.peer = CC.answerPeer({
+            socket, source, kind,
+            onTrack: (stream) => {
+              Viewer.stream = stream;
+              $('#viewer-video').srcObject = stream;
+              $('#viewer-wait').classList.add('hidden');
+              if (kind === 'remote') $('#viewer-state').textContent = 'На связи';
+            },
+            onState: (st) => {
+              if (st === 'failed' || st === 'disconnected') {
+                $('#viewer-wait').classList.remove('hidden');
+                $('#viewer-wait-text').textContent = 'Связь прервалась…';
+              }
+            }
+          });
+          await Viewer.peer.offer(payload);
+        } else if (type === 'ice' && Viewer.peer) {
+          await Viewer.peer.ice(payload);
+        }
+        return;
+      }
+      if (kind === 'voice') {
+        if (type === 'offer') {
+          const old = voicePeers.get(source);
+          if (old) { old.peer.close(); Mixer.remove(old.node); }
+          const entry = { peer: null, audio: new Audio(), node: null };
+          entry.peer = CC.answerPeer({
+            socket, source, kind: 'voice',
+            onTrack: (stream) => {
+              entry.audio.srcObject = stream;
+              entry.audio.play().catch(() => {});
+              entry.node = Mixer.addRemote(stream);
+            }
+          });
+          voicePeers.set(source, entry);
+          await entry.peer.offer(payload);
+        } else if (type === 'ice') {
+          const v = voicePeers.get(source);
+          if (v) await v.peer.ice(payload);
+        }
+      }
+    } catch (err) {
+      console.error('[TEACHER] signal', kind, type, err);
+    }
+  });
+
+  function dropVoice(id) {
+    const v = voicePeers.get(id);
+    if (!v) return;
+    v.peer.close();
+    v.audio.srcObject = null;
+    Mixer.remove(v.node);
+    voicePeers.delete(id);
+  }
+
+  socket.on('online-user-sharing', ({ userId, name }) => {
+    toast(`${name} хочет показать экран`, { kind: 'accent', icon: 'share', duration: 10000, action: { label: 'Смотреть', run: () => openShareViewer(userId) } });
+  });
+  socket.on('online-user-stopped-sharing', ({ userId }) => {
+    if (Viewer.mode === 'share' && Viewer.id === userId) {
+      if (Broadcast.externalFrom === userId) Broadcast.restoreOwn();
+      closeViewer(true);
+      toast('Ученик закончил показ экрана');
+    }
+  });
+
+  // ---------- Звук: микшер эфира ----------
+  // Ученикам в классе — только звук компьютера (без эха микрофона в кабинете),
+  // ученикам из дома — звук компьютера, микрофон учителя и голоса тех, кому дали слово.
+  const Mixer = {
+    ctx: null,
+    init() {
+      if (this.ctx) return;
+      this.ctx = new AudioContext();
+      this.toClass = this.ctx.createMediaStreamDestination();
+      this.toHome = this.ctx.createMediaStreamDestination();
+      this.toRecord = this.ctx.createMediaStreamDestination();
+      // Тихий источник, чтобы дорожки существовали всегда
+      const silent = this.ctx.createConstantSource();
+      silent.offset.value = 0;
+      silent.connect(this.toClass); silent.connect(this.toHome); silent.connect(this.toRecord);
+      silent.start();
+    },
+    connect(stream, targets) {
+      this.init();
+      if (!stream || !stream.getAudioTracks().length) return null;
+      const node = this.ctx.createMediaStreamSource(stream);
+      targets.forEach(t => node.connect(this[t]));
+      return node;
+    },
+    addRemote(stream) { return this.connect(stream, ['toHome', 'toRecord']); },
+    remove(node) { if (node) { try { node.disconnect(); } catch (e) {} } },
+
+    // Один микрофон на всё: в эфир (если включён переключатель) и в запись (пока она идёт)
+    async updateMic() {
+      this.init();
+      const home = $('#opt-mic').checked && Broadcast.active;
+      const rec = Recorder.active;
+      if ((home || rec) && !this.micStream) {
+        try {
+          this.micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+          this.micSrc = this.ctx.createMediaStreamSource(this.micStream);
+          this.gHome = this.ctx.createGain();
+          this.gRec = this.ctx.createGain();
+          this.micSrc.connect(this.gHome).connect(this.toHome);
+          this.micSrc.connect(this.gRec).connect(this.toRecord);
+        } catch (e) {
+          toast('Микрофон недоступен', { kind: 'warning', icon: 'mic-off' });
+          if (home) $('#opt-mic').checked = false;
+          return;
+        }
+      }
+      if (!this.micStream) return;
+      this.gHome.gain.value = home ? 1 : 0;
+      this.gRec.gain.value = rec ? 1 : 0;
+      if (!home && !rec) {
+        this.micStream.getTracks().forEach(t => t.stop());
+        [this.micSrc, this.gHome, this.gRec].forEach(n => this.remove(n));
+        this.micStream = null;
+      }
+    }
+  };
+
+  // ---------- Эфир ----------
+  const Broadcast = {
+    active: false,
+    stream: null,          // захват экрана
+    videoTrack: null,      // что сейчас уходит в эфир
+    systemNode: null,
+    peers: new Map(),      // viewerId -> peer
+    startedAt: 0,
+    sourceId: null,
+    sourceName: 'Весь экран',
+    externalFrom: null,
+
+    async start() {
+      const [w, h] = $('#quality').value.split('x').map(Number);
+      const fps = Number($('#fps').value);
+      try {
+        await api.setShareSource(this.sourceId);
+        this.stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { width: { ideal: w, max: w }, height: { ideal: h, max: h }, frameRate: { ideal: fps, max: fps } },
+          audio: $('#opt-audio').checked
+        });
+      } catch (err) {
+        toast('Не удалось захватить экран: ' + (err.message || err.name), { kind: 'warning' });
+        return;
+      }
+      Mixer.init();
+      if (Mixer.ctx.state === 'suspended') Mixer.ctx.resume();
+      this.videoTrack = this.stream.getVideoTracks()[0];
+      this.videoTrack.contentHint = fps <= 15 ? 'detail' : 'motion';
+      this.videoTrack.onended = () => this.stop();
+      this.systemNode = Mixer.connect(this.stream, ['toClass', 'toHome', 'toRecord']);
+      this.active = true;
+      this.startedAt = Date.now();
+      await Mixer.updateMic();
+      $('#preview-video').srcObject = new MediaStream([this.videoTrack]);
+      socket.emit('start-broadcast', { allowExit: $('#opt-exit').checked });
+      api.keepAwake(true);
+      this.render();
+      toast('Эфир начался', { kind: 'live', icon: 'live' });
+    },
+
+    stop() {
+      if (!this.active) return;
+      this.active = false;
+      for (const p of this.peers.values()) p.close();
+      this.peers.clear();
+      if (this.stream) this.stream.getTracks().forEach(t => t.stop());
+      Mixer.remove(this.systemNode);
+      this.stream = null; this.videoTrack = null; this.systemNode = null; this.externalFrom = null;
+      Mixer.updateMic();
+      $('#preview-video').srcObject = null;
+      socket.emit('stop-broadcast');
+      api.keepAwake(false);
+      Relay.stop();
+      this.render();
+    },
+
+    streamFor(viewerId) {
+      const audio = (S.online.has(viewerId) ? Mixer.toHome : Mixer.toClass).stream.getAudioTracks()[0];
+      return new MediaStream([this.videoTrack, audio]);
+    },
+
+    bitrate() {
+      const n = Math.max(1, this.peers.size);
+      const [w] = $('#quality').value.split('x').map(Number);
+      const top = w >= 1920 ? 4500 : w >= 1280 ? 2500 : w >= 854 ? 1200 : 700;
+      // Ноутбук учителя кодирует поток для каждого зрителя: делим бюджет
+      return Math.round(Math.max(350, Math.min(top, 40000 / n)));
+    },
+
+    async connect(ids) {
+      if (!this.active) return;
+      for (const id of ids) {
+        if (this.peers.has(id)) this.peers.get(id).close();
+        try {
+          const peer = await CC.offerPeer({
+            socket, target: id, kind: 'broadcast', stream: this.streamFor(id),
+            onState: (st) => { if (st === 'failed') { this.peers.get(id)?.close(); this.peers.delete(id); this.render(); } }
+          });
+          this.peers.set(id, peer);
+        } catch (e) {
+          console.error('[TEACHER] peer', e);
+        }
+      }
+      const kbps = this.bitrate();
+      for (const p of this.peers.values()) CC.limitBitrate(p.pc, kbps);
+      this.render();
+    },
+
+    async onSignal(source, type, payload) {
+      const peer = this.peers.get(source);
+      if (!peer) return;
+      if (type === 'answer') await peer.answer(payload);
+      else if (type === 'ice') await peer.ice(payload);
+    },
+
+    drop(id) {
+      const p = this.peers.get(id);
+      if (p) { p.close(); this.peers.delete(id); this.render(); }
+    },
+
+    syncViewers() { this.render(); },
+
+    async replaceVideo(track) {
+      this.videoTrack = track;
+      for (const p of this.peers.values()) {
+        const sender = p.pc.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) await sender.replaceTrack(track).catch(() => {});
+      }
+      $('#preview-video').srcObject = new MediaStream([track]);
+    },
+
+    async showExternal(stream, fromId) {
+      const track = stream.getVideoTracks()[0];
+      if (!track) return;
+      if (!this.active) {
+        // Эфира ещё нет — начинаем его сразу с экраном ученика
+        Mixer.init();
+        this.active = true;
+        this.startedAt = Date.now();
+        this.ownTrack = null;
+        this.videoTrack = track;
+        $('#preview-video').srcObject = new MediaStream([track]);
+        socket.emit('start-broadcast', { allowExit: $('#opt-exit').checked });
+        api.keepAwake(true);
+      } else {
+        this.ownTrack = this.stream ? this.stream.getVideoTracks()[0] : null;
+        await this.replaceVideo(track);
+      }
+      this.externalFrom = fromId;
+      this.render();
+    },
+
+    async restoreOwn() {
+      this.externalFrom = null;
+      if (this.ownTrack && this.ownTrack.readyState === 'live') await this.replaceVideo(this.ownTrack);
+      else if (!this.stream) this.stop();
+      this.render();
+    },
+
+    render() {
+      const live = this.active;
+      const btn = $('#broadcast-btn');
+      btn.className = 'btn btn--lg btn--block ' + (live ? 'btn--live' : 'btn--primary');
+      btn.querySelector('use').setAttribute('href', live ? '#i-stop' : '#i-play');
+      btn.querySelector('span').textContent = live ? 'Остановить эфир' : 'Начать эфир';
+      $('#preview-empty').classList.toggle('hidden', live);
+      $('#preview-live').classList.toggle('hidden', !live);
+      $('#live-badge').classList.toggle('hidden', !live);
+      const n = this.peers.size;
+      $('#viewers-meta').textContent = live ? `${n} ${CC.plural(n, 'зритель', 'зрителя', 'зрителей')}` : '';
+      $('#quality').disabled = live; $('#fps').disabled = live; $('#opt-audio').disabled = live;
+    }
+  };
+
+  socket.on('peer-request', ({ ids }) => Broadcast.connect(ids));
+  socket.on('peer-gone', ({ id }) => { Broadcast.drop(id); dropVoice(id); });
+
+  setInterval(() => { if (Broadcast.active) $('#live-time').textContent = CC.duration(Date.now() - Broadcast.startedAt); }, 1000);
+
+  $('#broadcast-btn').addEventListener('click', () => (Broadcast.active ? Broadcast.stop() : Broadcast.start()));
+  $('#opt-mic').addEventListener('change', (e) => {
+    api.saveSettings({ shareMic: e.target.checked });
+    Mixer.updateMic();
+  });
+  $('#opt-exit').addEventListener('change', (e) => { api.saveSettings({ allowExit: e.target.checked }); if (Broadcast.active) socket.emit('start-broadcast', { allowExit: e.target.checked }); });
+  $('#opt-audio').addEventListener('change', (e) => api.saveSettings({ shareAudio: e.target.checked }));
+  $('#quality').addEventListener('change', (e) => api.saveSettings({ quality: e.target.value }));
+  $('#fps').addEventListener('change', (e) => api.saveSettings({ fps: Number(e.target.value) }));
+
+  $('#quality').value = settings.quality || '1280x720';
+  $('#fps').value = String(settings.fps || 15);
+  $('#opt-audio').checked = settings.shareAudio !== false && boot.platform === 'win32';
+  if (boot.platform && boot.platform !== 'win32') { $('#opt-audio').disabled = true; $('#opt-audio').closest('.switch').title = 'Звук компьютера передаётся только в Windows'; }
+  $('#opt-mic').checked = Boolean(settings.shareMic);
+  $('#opt-exit').checked = Boolean(settings.allowExit);
+
+  // Выбор источника
+  async function pickSource() {
+    const sources = await api.getSources();
+    if (!sources.length) {
+      toast(window.teacherAPI ? 'Не нашёл экранов и окон для показа' : 'Выбор источника доступен в приложении', { kind: 'warning' });
+      return;
+    }
+    const grid = el('div', { class: 'sources' });
+    let chosen = null;
+    const groups = [['screen', 'Экраны'], ['window', 'Окна программ']];
+    groups.forEach(([kind, label]) => {
+      const items = sources.filter(s => s.kind === kind);
+      if (!items.length) return;
+      grid.appendChild(el('div', { class: 'sources__group', text: label }));
+      items.forEach((s, idx) => {
+        const name = kind === 'screen' ? (items.length > 1 ? `Экран ${idx + 1}` : 'Весь экран') : s.name;
+        const node = el('button', { class: 'source' + (s.id === Broadcast.sourceId ? ' is-active' : ''), type: 'button' },
+          el('span', { class: 'source__thumb' }, s.thumbnail ? el('img', { src: s.thumbnail, alt: '' }) : icon('monitor')),
+          el('span', { class: 'source__name' }, s.icon ? el('img', { src: s.icon, alt: '' }) : null, el('span', { class: 'truncate', text: name })));
+        node.addEventListener('click', () => {
+          $$('.source', grid).forEach(x => x.classList.remove('is-active'));
+          node.classList.add('is-active');
+          chosen = { ...s, label: name };
+        });
+        node.addEventListener('dblclick', () => { chosen = { ...s, label: name }; $('.overlay .btn--primary')?.click(); });
+        grid.appendChild(node);
+      });
+    });
+    const ok = await CC.dialog({
+      title: 'Что показать ученикам', sub: 'Выберите экран целиком или одно окно — например, презентацию.', body: grid, wide: true,
+      actions: [{ label: 'Отмена', value: false }, { label: Broadcast.active ? 'Переключить' : 'Выбрать', kind: 'primary', primary: true, value: () => true }]
+    });
+    if (!ok || !chosen) return;
+    Broadcast.sourceId = chosen.id;
+    Broadcast.sourceName = chosen.label;
+    $('#source-name').textContent = chosen.label;
+    $('#source-thumb').replaceChildren(chosen.thumbnail ? el('img', { src: chosen.thumbnail, alt: '' }) : icon('monitor'));
+    if (Broadcast.active && !Broadcast.externalFrom) {
+      // Переключаем источник на лету, не прерывая эфир
+      try {
+        await api.setShareSource(chosen.id);
+        const [w, h] = $('#quality').value.split('x').map(Number);
+        const fps = Number($('#fps').value);
+        const fresh = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: w, max: w }, height: { ideal: h, max: h }, frameRate: { ideal: fps, max: fps } }, audio: false });
+        const track = fresh.getVideoTracks()[0];
+        const old = Broadcast.videoTrack;
+        track.onended = () => Broadcast.stop();
+        await Broadcast.replaceVideo(track);
+        if (old) { old.onended = null; old.stop(); }
+        if (Broadcast.stream) Broadcast.stream.getVideoTracks().forEach(t => Broadcast.stream.removeTrack(t));
+        if (Broadcast.stream) Broadcast.stream.addTrack(track);
+        toast('Источник переключён', { kind: 'positive', icon: 'cast' });
+      } catch (e) {
+        toast('Не удалось переключить источник', { kind: 'warning' });
+      }
+    }
+  }
+  $('#source-btn').addEventListener('click', pickSource);
+  $('#preview-empty').addEventListener('click', pickSource);
+
+  // ---------- Запасной режим: кадры через сервер, если WebRTC из дома не пробился ----------
+  const Relay = {
+    timer: null, canvas: document.createElement('canvas'), count: 0,
+    start() {
+      if (this.timer) return;
+      this.timer = setInterval(() => this.frame(), 250);
+    },
+    stop() { clearInterval(this.timer); this.timer = null; },
+    frame() {
+      const v = $('#preview-video');
+      if (!Broadcast.active || !v.videoWidth) return;
+      const w = Math.min(1280, v.videoWidth), h = Math.round(w * v.videoHeight / v.videoWidth);
+      if (this.canvas.width !== w) { this.canvas.width = w; this.canvas.height = h; }
+      this.canvas.getContext('2d').drawImage(v, 0, 0, w, h);
+      this.canvas.toBlob(async (b) => { if (b) socket.emit('relay-frame', await b.arrayBuffer()); }, 'image/jpeg', 0.6);
+    }
+  };
+  socket.on('relay-count', ({ count }) => { Relay.count = count; if (count > 0) Relay.start(); else Relay.stop(); });
+
+  // ---------- Доска ----------
+  const board = new CC.Board($('#board-stage'), $('#board'));
+  board.padding = 24;
+  board.fit();
+  const COLORS = ['#111111', '#e5484d', '#f2a33a', '#2f9e6b', '#2f6fde', '#8e4ec6', '#ffffff'];
+  const B = { tool: 'pen', color: COLORS[0], width: 4, drawing: false, last: null, sid: null, panning: false, space: false };
+
+  const sw = $('#swatches');
+  COLORS.forEach(c => {
+    const b = el('button', { class: 'swatch' + (c === B.color ? ' is-active' : ''), type: 'button', 'aria-label': 'Цвет ' + c, style: { background: c } });
+    b.addEventListener('click', () => setColor(c, b));
+    sw.appendChild(b);
+  });
+  const custom = el('label', { class: 'swatch swatch--custom', title: 'Свой цвет' }, el('input', { type: 'color', value: '#ff00aa', 'aria-label': 'Свой цвет' }));
+  custom.querySelector('input').addEventListener('input', (e) => setColor(e.target.value, custom));
+  sw.appendChild(custom);
+
+  function setColor(c, node) {
+    B.color = c;
+    $$('.swatch', sw).forEach(x => x.classList.toggle('is-active', x === node));
+    if (B.tool !== 'pen') setTool('pen');
+    updateWidthDot();
+  }
+  function updateWidthDot() {
+    $('#width-dot').style.setProperty('--w', Math.max(2, B.width * 1.2) + 'px');
+    $('#width-dot').style.setProperty('--dot', B.tool === 'eraser' ? 'var(--muted)' : (B.color === '#111111' ? '#f3f3f4' : B.color));
+    $('#width-value').textContent = B.width;
+  }
+  $('#width').addEventListener('input', (e) => { B.width = Number(e.target.value); updateWidthDot(); });
+  updateWidthDot();
+
+  function setTool(t) {
+    B.tool = t;
+    $$('[data-tool]').forEach(b => b.classList.toggle('is-active', b.dataset.tool === t));
+    $('#board-stage').classList.toggle('tool-hand', t === 'hand');
+    updateWidthDot();
+  }
+  $$('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+
+  function normWidth() {
+    return B.tool === 'eraser' ? Math.max(24, B.width * 5) / 1920 : (B.width * 1.25) / 1920;
+  }
+  function boardPoint(e) {
+    const r = $('#board').getBoundingClientRect();
+    return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+  }
+  function emitStroke(a, b) {
+    const s = { sid: B.sid, x0: a.x, y0: a.y, x1: b.x, y1: b.y, color: B.color, width: normWidth(), tool: B.tool === 'eraser' ? 'eraser' : 'pen' };
+    board.add(s);
+    socket.emit('draw', s);
+  }
+
+  const bStage = $('#board-stage');
+  bStage.addEventListener('pointerdown', (e) => {
+    if (e.button === 1 || B.tool === 'hand' || B.space) {
+      B.panning = { x: e.clientX, y: e.clientY, panX: board.transform.panX, panY: board.transform.panY };
+      bStage.classList.add('is-panning');
+      bStage.setPointerCapture(e.pointerId);
+      return;
+    }
+    if (e.button !== 0) return;
+    const start = boardPoint(e);
+    if (start.x < 0 || start.x > 1 || start.y < 0 || start.y > 1) return;
+    B.drawing = true;
+    B.sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    B.last = start;
+    emitStroke(B.last, { x: B.last.x + 0.0001, y: B.last.y + 0.0001 });
+    bStage.setPointerCapture(e.pointerId);
+  });
+  bStage.addEventListener('pointermove', (e) => {
+    if (B.panning) {
+      const t = board.transform;
+      board.setTransform({ zoom: t.zoom, panX: B.panning.panX + (e.clientX - B.panning.x) / board.cssW, panY: B.panning.panY + (e.clientY - B.panning.y) / board.cssH });
+      syncTransform();
+      return;
+    }
+    if (!B.drawing) return;
+    const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    for (const ev of events) {
+      const p = boardPoint(ev);
+      const dx = (p.x - B.last.x) * board.cssW, dy = (p.y - B.last.y) * board.cssH;
+      if (dx * dx + dy * dy < 4) continue;
+      emitStroke(B.last, p);
+      B.last = p;
+    }
+  });
+  const endPointer = () => {
+    B.drawing = false;
+    if (B.panning) { B.panning = false; bStage.classList.remove('is-panning'); }
+  };
+  bStage.addEventListener('pointerup', endPointer);
+  bStage.addEventListener('pointercancel', endPointer);
+  bStage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const t = board.transform;
+    if (e.ctrlKey || e.metaKey) {
+      const zoom = Math.min(5, Math.max(0.5, t.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+      board.setTransform({ ...t, zoom });
+    } else {
+      board.setTransform({ zoom: t.zoom, panX: t.panX - e.deltaX / board.cssW, panY: t.panY - e.deltaY / board.cssH });
+    }
+    syncTransform();
+  }, { passive: false });
+
+  let transformQueued = false;
+  function syncTransform() {
+    $('#zoom-reset').textContent = Math.round(board.transform.zoom * 100) + '%';
+    if (transformQueued) return;
+    transformQueued = true;
+    requestAnimationFrame(() => { transformQueued = false; socket.emit('whiteboard-transform', board.transform); });
+  }
+  $('#zoom-in').addEventListener('click', () => { board.setTransform({ ...board.transform, zoom: Math.min(5, board.transform.zoom * 1.2) }); syncTransform(); });
+  $('#zoom-out').addEventListener('click', () => { board.setTransform({ ...board.transform, zoom: Math.max(0.5, board.transform.zoom / 1.2) }); syncTransform(); });
+  $('#zoom-reset').addEventListener('click', () => { board.setTransform({ zoom: 1, panX: 0, panY: 0 }); syncTransform(); });
+
+  function undo() { socket.emit('board-undo'); }
+  $('#board-undo').addEventListener('click', undo);
+  $('#board-clear').addEventListener('click', async () => {
+    if (!board.strokes.length) return;
+    if (await CC.confirm('Очистить доску?', 'Рисунок пропадёт у всех учеников. Сохранить его можно кнопкой «Сохранить».', 'Очистить', 'danger')) {
+      board.clear();
+      socket.emit('clear-canvas');
+    }
+  });
+  $('#board-save').addEventListener('click', async () => {
+    const p = await api.saveBoard(board.toPNG());
+    if (p) toast('Доска сохранена', { kind: 'positive', action: { label: 'Показать', run: () => api.openPath(p) } });
+  });
+  $('#board-share').addEventListener('change', (e) => { if (S.tab === 'board') socket.emit('whiteboard-mode', e.target.checked); });
+
+  socket.on('board-strokes', (list) => board.setStrokes(list));
+  socket.on('clear-canvas', () => board.clear());
+
+  // ---------- Чат ----------
+  const chat = new CC.Chat($('#chat'), {
+    meId: null,
+    canWhisper: true,
+    teacherView: true,
+    emptyText: 'Сообщения видят все: ученики в классе и дома. Нажмите на имя ученика, чтобы написать ему лично.',
+    fileUrl: (u) => BASE + u,
+    onSend: (text, to) => socket.emit('chat-message', { text, to }),
+    onFile: (file, to) => CC.uploadFile(BASE, socket.id, file, to),
+    onUnseen: () => { $('#chat-meta').textContent = chat && chat.unseen ? `${chat.unseen} новых` : ''; updateRightBadge(); }
+  });
+  socket.on('connect', () => { chat.opts.meId = socket.id; });
+  socket.on('chat-message', (m) => chat.add(m));
+  socket.on('chat-history', (list) => chat.setHistory(list));
+  window.addEventListener('focus', () => { if (chat.nearEnd()) chat.markSeen(); });
+
+  // ---------- Запись урока ----------
+  // Записываем «сцену»: открытый экран ученика → доска → эфир → окно приложения.
+  // Источник переключается сам, звук — микрофон учителя, эфир и голоса учеников.
+  const Recorder = {
+    active: false, rec: null, canvas: null, timer: null, appStream: null, startedAt: 0, path: null,
+    async start() {
+      Mixer.init();
+      if (Mixer.ctx.state === 'suspended') Mixer.ctx.resume();
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = 1920; this.canvas.height = 1080;
+      const ctx = this.canvas.getContext('2d');
+      try {
+        const id = await api.ownWindowSource();
+        if (id) {
+          this.appStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: id, maxWidth: 1920, maxHeight: 1080, maxFrameRate: 30 } } });
+          this.appVideo = el('video', { muted: true, autoplay: true, playsinline: true });
+          this.appVideo.srcObject = this.appStream;
+          await this.appVideo.play().catch(() => {});
+        }
+      } catch (e) { this.appStream = null; }
+      const draw = () => {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, 1920, 1080);
+        let src = null;
+        const vv = $('#viewer-video');
+        if (Viewer.mode && vv.videoWidth) src = vv;
+        else if (S.tab === 'board') { this.drawBoard(ctx); return; }
+        else if (Broadcast.active && $('#preview-video').videoWidth) src = $('#preview-video');
+        else if (this.appVideo && this.appVideo.videoWidth) src = this.appVideo;
+        if (src) this.fit(ctx, src, src.videoWidth, src.videoHeight);
+      };
+      this.timer = setInterval(draw, 1000 / 30);
+      const tracks = [...this.canvas.captureStream(30).getVideoTracks(), ...Mixer.toRecord.stream.getAudioTracks()];
+      const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
+      this.rec = new MediaRecorder(new MediaStream(tracks), { mimeType: mime, videoBitsPerSecond: 3_000_000 });
+      this.path = await api.recStart();
+      this.rec.ondataavailable = async (e) => { if (e.data.size) api.recChunk(await e.data.arrayBuffer()); };
+      this.rec.onstop = async () => {
+        const p = await api.recStop();
+        if (p) toast('Запись сохранена', { kind: 'positive', action: { label: 'Показать', run: () => api.openPath(p) } });
+      };
+      this.rec.start(2000);
+      this.active = true;
+      this.startedAt = Date.now();
+      await Mixer.updateMic();
+      api.keepAwake(true);
+      this.render();
+    },
+    fit(ctx, src, w, h) {
+      const s = Math.min(1920 / w, 1080 / h);
+      const dw = w * s, dh = h * s;
+      ctx.drawImage(src, (1920 - dw) / 2, (1080 - dh) / 2, dw, dh);
+    },
+    drawBoard(ctx) {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, 1920, 1080);
+      const t = board.transform;
+      ctx.save();
+      ctx.translate(960 + t.panX * 1920, 540 + t.panY * 1080);
+      ctx.scale(t.zoom, t.zoom);
+      ctx.drawImage(board.canvas, -960, -540, 1920, 1080);
+      ctx.restore();
+    },
+    stop() {
+      if (!this.active) return;
+      this.active = false;
+      clearInterval(this.timer);
+      try { this.rec.stop(); } catch (e) {}
+      if (this.appStream) this.appStream.getTracks().forEach(t => t.stop());
+      this.appStream = null; this.appVideo = null;
+      Mixer.updateMic();
+      if (!Broadcast.active) api.keepAwake(false);
+      this.render();
+    },
+    render() {
+      const b = $('#rec-btn');
+      b.classList.toggle('is-recording', this.active);
+      b.querySelector('use').setAttribute('href', this.active ? '#i-stop' : '#i-record');
+      $('#rec-label').textContent = this.active ? CC.duration(Date.now() - this.startedAt) : 'Запись';
+    }
+  };
+  setInterval(() => { if (Recorder.active) Recorder.render(); }, 1000);
+  $('#rec-btn').addEventListener('click', () => {
+    if (!window.teacherAPI) { toast('Запись работает в приложении учителя'); return; }
+    Recorder.active ? Recorder.stop() : Recorder.start().catch(err => toast('Не удалось начать запись: ' + err.message, { kind: 'warning' }));
+  });
+
+  // ---------- Клавиатура ----------
+  document.addEventListener('keydown', (e) => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+    if (!$('#viewer').classList.contains('hidden')) {
+      if (e.key === 'Escape' && !Viewer.control && !document.querySelector('.overlay')) closeViewer(false);
+      return;
+    }
+    if (document.querySelector('.overlay')) return;
+    if ((e.ctrlKey || e.metaKey) && e.key === '1') { e.preventDefault(); setTab('monitoring'); }
+    if ((e.ctrlKey || e.metaKey) && e.key === '2') { e.preventDefault(); setTab('board'); }
+    if (typing) return;
+    if (S.tab === 'board') {
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); undo(); }
+      if (e.code === 'KeyP') setTool('pen');
+      if (e.code === 'KeyE') setTool('eraser');
+      if (e.code === 'KeyH') setTool('hand');
+      if (e.code === 'Space' && !B.space) { B.space = true; bStage.classList.add('tool-hand'); e.preventDefault(); }
+    }
+    if (S.tab === 'monitoring' && (e.ctrlKey || e.metaKey) && e.code === 'KeyF') {
+      e.preventDefault(); $('#search').classList.add('is-open'); $('#pc-search').focus();
+    }
+    if (S.tab === 'monitoring' && (e.ctrlKey || e.metaKey) && e.code === 'KeyA') {
+      e.preventDefault();
+      visibleAgents().forEach(a => toggleSelect(a.id, true));
+    }
+    if (e.key === 'Escape' && S.selected.size) [...S.selected].forEach(id => toggleSelect(id, false));
+  });
+  document.addEventListener('keyup', (e) => {
+    if (e.code === 'Space' && B.space) { B.space = false; bStage.classList.toggle('tool-hand', B.tool === 'hand'); }
+  });
+
+  // Первичная отрисовка
+  renderGrid();
+  renderPeople();
+  updateCounts();
+  Broadcast.render();
+  renderLinks();
+})();

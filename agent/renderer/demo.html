@@ -1,178 +1,32 @@
 <!DOCTYPE html>
-<html><head>
+<html lang="ru">
+<head>
   <meta charset="UTF-8">
-  <title>Демонстрация</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' http:; connect-src 'self' http: ws:; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'; font-src 'self'">
+  <title>Эфир учителя</title>
+  <link rel="stylesheet" href="../../shared/ui/theme.css">
   <style>
-    * { margin: 0; } body { background: black; overflow: hidden; }
-    video { width: 100vw; height: 100vh; object-fit: contain; }
-    canvas { position: absolute; pointer-events: none; }
-    #status { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #888; font-size: 1.2rem; font-family: sans-serif; }
-    #close-btn { position: fixed; top: 12px; right: 12px; z-index: 100; background: rgba(0,0,0,0.6);
-      color: #aaa; border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 6px 14px;
-      font-size: 0.8rem; font-family: sans-serif; cursor: pointer; opacity: 0; transition: opacity 0.3s; }
-    #close-btn:hover { background: rgba(220,38,38,0.8); color: white; opacity: 1; }
-    body:hover #close-btn { opacity: 0.6; }
+    html, body { background: #000; overflow: hidden; cursor: default; }
+    .stage { position: fixed; inset: 0; }
+    #video { position: absolute; inset: 0; }
+    .wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--muted); font-size: var(--fs-lg); }
+    .exit { position: fixed; top: 16px; right: 16px; z-index: 5; opacity: 0; transition: opacity .2s; background: rgba(19,19,21,.9); }
+    body:hover .exit { opacity: 1; }
+    .spinner { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--control); border-top-color: var(--text); animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .unmute { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 5; }
   </style>
 </head>
 <body>
-  <video id="demoVideo" autoplay playsinline></video>
-  <canvas id="demoCanvas"></canvas>
-  <div id="status">Подключение к трансляции...</div>
-  <button id="close-btn" title="Esc — закрыть демонстрацию">✕ Esc</button>
-  <script>
-    // Закрытие по Escape или кнопке
-    document.getElementById('close-btn').addEventListener('click', () => window.electronAPI.closeDemo());
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.electronAPI.closeDemo(); });
-
-    let socket = null;
-    let teacherPC = null;
-    const iceConfig = { iceServers: [{urls:'stun:stun.l.google.com:19302'}] };
-
-    window.electronAPI.onServerAddress((address) => {
-      const s = document.createElement('script');
-      s.src = address + '/socket.io/socket.io.js';
-      s.onload = () => {
-        if (socket) return;
-        socket = io(address);
-        console.log('[DEMO] Connected to', address);
-        
-        socket.on('connect', () => {
-            socket.emit('register-demo-viewer', window.electronAPI?.hostname || 'Demo');
-        });
-        
-        socket.on('offer', async ({ source, sdp, connectionType }) => {
-            if (connectionType && connectionType !== 'broadcast') return;
-            console.log('[DEMO] Received offer from', source);
-            try {
-                if (teacherPC) teacherPC.close();
-                teacherPC = new RTCPeerConnection(iceConfig);
-                
-                teacherPC.ontrack = (e) => { 
-                    console.log('[DEMO] Got track:', e.track.kind);
-                    document.getElementById('demoVideo').srcObject = e.streams[0];
-                    document.getElementById('status').style.display = 'none';
-                };
-                teacherPC.onicecandidate = (e) => { 
-                    if(e.candidate) socket.emit('ice-candidate',{target:source,candidate:e.candidate,connectionType:'broadcast'}); 
-                };
-                teacherPC.onconnectionstatechange = () => {
-                    console.log('[DEMO] Connection:', teacherPC.connectionState);
-                };
-                
-                await teacherPC.setRemoteDescription(new RTCSessionDescription(sdp));
-                const answer = await teacherPC.createAnswer();
-                await teacherPC.setLocalDescription(answer);
-                socket.emit('answer', { target: source, sdp: teacherPC.localDescription, connectionType: 'broadcast' });
-            } catch (err) {
-                console.error('[DEMO] WebRTC error:', err);
-            }
-        });
-
-        // Handle ICE candidates from teacher
-        socket.on('ice-candidate', async ({ source, candidate, connectionType }) => {
-            if (teacherPC) {
-                try {
-                    await teacherPC.addIceCandidate(candidate);
-                } catch(err) {
-                    console.error('[DEMO] ICE error:', err);
-                }
-            }
-        });
-
-        // Whiteboard rendering over demo video
-        const canvas = document.getElementById('demoCanvas');
-        const ctx = canvas.getContext('2d');
-        let savedWhiteboardImage = null;
-        
-        function resizeCanvas() {
-            // Fixed 16:9 aspect ratio to match teacher's canvas
-            const ASPECT = 16 / 9;
-            let w = window.innerWidth;
-            let h = w / ASPECT;
-            if (h > window.innerHeight) {
-                h = window.innerHeight;
-                w = h * ASPECT;
-            }
-            canvas.width = Math.floor(w);
-            canvas.height = Math.floor(h);
-            canvas.style.left = Math.floor((window.innerWidth - canvas.width) / 2) + 'px';
-            canvas.style.top = Math.floor((window.innerHeight - canvas.height) / 2) + 'px';
-            canvas.style.width = canvas.width + 'px';
-            canvas.style.height = canvas.height + 'px';
-        }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
-
-        // Whiteboard mode
-        socket.on('whiteboard-mode', (active) => {
-            if (active) {
-                canvas.style.background = 'white';
-                document.getElementById('status').style.display = 'none';
-                // Restore saved whiteboard drawing if available
-                if (savedWhiteboardImage) {
-                    const img = new Image();
-                    img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                    img.src = savedWhiteboardImage;
-                }
-            } else {
-                // Save whiteboard drawing before hiding
-                if (canvas.width > 0 && canvas.height > 0) {
-                    savedWhiteboardImage = canvas.toDataURL();
-                }
-                canvas.style.background = 'transparent';
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-            }
-        });
-
-        function drawStroke(data) {
-            const x0 = data.x0 * canvas.width;
-            const y0 = data.y0 * canvas.height;
-            const x1 = data.x1 * canvas.width;
-            const y1 = data.y1 * canvas.height;
-
-            ctx.beginPath();
-            ctx.moveTo(x0, y0);
-            ctx.lineTo(x1, y1);
-            
-            if (data.tool === 'eraser') {
-                ctx.globalCompositeOperation = 'destination-out';
-            } else {
-                ctx.globalCompositeOperation = 'source-over';
-                ctx.strokeStyle = data.color;
-            }
-            
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            ctx.lineWidth = data.width * canvas.width;
-            ctx.stroke();
-        }
-
-        socket.on('draw', drawStroke);
-
-        socket.on('canvas-history', (history) => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            history.forEach(drawStroke);
-        });
-
-        socket.on('whiteboard-transform', (t) => {
-            canvas.style.transform = 'translate(' + t.panX + 'px, ' + t.panY + 'px) scale(' + t.scale + ')';
-            canvas.style.transformOrigin = 'center center';
-        });
-
-        socket.on('clear-canvas', () => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            savedWhiteboardImage = null;
-        });
-
-        socket.on('broadcast-stopped', () => {
-            if (teacherPC) { teacherPC.close(); teacherPC = null; }
-            document.getElementById('demoVideo').srcObject = null;
-            // Close demo window via IPC
-            window.electronAPI.closeDemo();
-        });
-      };
-      document.head.appendChild(s);
-    });
-  </script>
+  <div class="stage" id="stage">
+    <video id="video" class="stage__video" autoplay playsinline></video>
+    <canvas id="board" class="board-canvas hidden"></canvas>
+    <div class="wait" id="wait"><span class="spinner"></span><span id="wait-text">Подключаюсь к эфиру учителя…</span></div>
+  </div>
+  <button class="btn exit hidden" id="exit" type="button"><svg class="i i-sm"><use href="#i-x"/></svg>Свернуть <span class="kbd">Esc</span></button>
+  <button class="btn btn--primary unmute hidden" id="unmute" type="button"><svg class="i i-sm"><use href="#i-volume"/></svg>Включить звук</button>
+  <script src="../../shared/ui/icons.js"></script>
+  <script src="../../shared/ui/common.js"></script>
+  <script src="demo.js"></script>
 </body>
 </html>

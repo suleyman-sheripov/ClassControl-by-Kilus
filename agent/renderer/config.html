@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'">
+  <title>Настройки агента</title>
+  <link rel="stylesheet" href="../../shared/ui/theme.css">
+  <link rel="stylesheet" href="agent.css">
+</head>
+<body>
+  <div class="config">
+    <div class="config__head">
+      <span class="brand__mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span>
+      <div>
+        <h1 class="config__title">Настройки агента</h1>
+        <div class="faint" style="font-size: var(--fs-sm)">Только для администратора</div>
+      </div>
+    </div>
+
+    <!-- Пароль -->
+    <form class="config__body" id="login">
+      <label class="field">
+        <span class="field__label" id="pw-label">Пароль администратора</span>
+        <input class="input input--lg" type="password" id="pw" autocomplete="current-password">
+        <span class="field__hint" id="pw-hint"></span>
+      </label>
+      <div class="error" id="pw-error"></div>
+      <button class="btn btn--primary btn--lg" type="submit" id="pw-btn">Открыть</button>
+    </form>
+
+    <!-- Настройки -->
+    <form class="hidden" id="form" style="display:flex; flex-direction:column; flex:1">
+      <div class="config__body">
+        <div class="status-line"><span class="dot" id="st-dot"></span><span id="st-text"></span></div>
+        <label class="field">
+          <span class="field__label">Название компьютера для учителя</span>
+          <input class="input" id="pcName" maxlength="40" placeholder="Например: ПК-07">
+          <span class="field__hint" id="host-hint"></span>
+        </label>
+        <div class="field">
+          <span class="field__label">Подключение к учителю</span>
+          <div class="seg seg--full" role="radiogroup">
+            <button type="button" class="seg__btn" data-mode="auto">Найти в сети</button>
+            <button type="button" class="seg__btn" data-mode="manual">Указать адрес</button>
+          </div>
+        </div>
+        <div class="field hidden" id="manual">
+          <input class="input mono" id="serverAddress" placeholder="192.168.1.10:3000">
+          <span class="field__hint">Если в школе несколько кабинетов в одной сети — закрепите агент за компьютером своего учителя.</span>
+          <div class="found" id="found"></div>
+        </div>
+        <label class="switch">
+          <span class="switch__text"><span class="switch__label">Запускать вместе с Windows</span></span>
+          <input type="checkbox" id="autoStart"><span class="switch__track"></span>
+        </label>
+        <label class="switch">
+          <span class="switch__text"><span class="switch__label">Уведомления о сообщениях</span></span>
+          <input type="checkbox" id="notifications"><span class="switch__track"></span>
+        </label>
+      </div>
+      <div class="config__foot">
+        <button class="btn btn--danger" type="button" id="quit">Выключить агент</button>
+        <span class="spacer"></span>
+        <button class="btn" type="button" id="cancel">Закрыть</button>
+        <button class="btn btn--primary" type="submit">Сохранить</button>
+      </div>
+    </form>
+  </div>
+  <script src="../../shared/ui/icons.js"></script>
+  <script src="../../shared/ui/common.js"></script>
+  <script src="config.js"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'">
+  <title>Сообщение от учителя</title>
+  <link rel="stylesheet" href="../../shared/ui/theme.css">
+  <link rel="stylesheet" href="agent.css">
+</head>
+<body>
+  <div class="note-win">
+    <div class="note-win__head">
+      <span class="avatar avatar--teacher"><svg class="i i-sm"><use href="#i-bell"/></svg></span>
+      <span class="note-win__from" id="from">Учитель</span>
+      <span class="note-win__time mono" id="time"></span>
+    </div>
+    <div class="note-win__text" id="text"></div>
+    <div class="note-win__foot"><button class="btn btn--primary" id="ok" type="button">Понятно</button></div>
+  </div>
+  <script src="../../shared/ui/icons.js"></script>
+  <script src="message.js"></script>
+</body>
+</html>

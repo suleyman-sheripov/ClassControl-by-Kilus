@@ -1,136 +1,156 @@
-let socket = null;
-let screenshotInterval = null;
-let agentName = window.electronAPI.hostname || 'Ученик';
-let remotePC = null;
-let currentAddress = null;
-const iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }; 
+/* ClassControl Agent — невидимое окно: связь с учителем, мониторинг, показ экрана, чат. */
+(function () {
+  'use strict';
+  const api = window.agentAPI;
+  let socket = null;
+  let address = null;
+  let shotTimer = null;
+  let shotInterval = 1000;
+  let remote = null;          // { peer, stream }
+  let info = null;
+  const state = { broadcast: { active: false, allowExit: false }, board: false };
 
-// Ждём адрес сервера от main process
-window.electronAPI.onServerAddress((address) => {
-  if (currentAddress === address && socket && socket.connected) return;
-  currentAddress = address;
-  connectToServer(address);
-});
+  api.onServerAddress((addr) => connect(addr));
+  api.info().then((i) => { info = i; if (i.serverAddress) connect(i.serverAddress); });
 
-function connectToServer(address) {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
+  function loadClient(addr) {
+    return new Promise((resolve, reject) => {
+      if (window.io && window.__ioFrom === addr) return resolve();
+      const s = document.createElement('script');
+      s.src = addr + '/socket.io/socket.io.js';
+      s.onload = () => { window.__ioFrom = addr; resolve(); };
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
   }
-  stopScreenshots();
 
-  socket = io(address);
-
-  socket.on('connect', () => {
-      console.log('[AGENT] Подключён:', socket.id);
-      socket.emit('register-agent', agentName);
-      stopScreenshots();
-      startScreenshots();
-    });
-
-    socket.on('disconnect', () => {
-      console.log('[AGENT] Отключён от сервера');
-      stopScreenshots();
-    });
-
-    // Удалённое управление — учитель запросил экран
-    socket.on('request-screen-share', async () => {
-      console.log('[AGENT] Запрос демонстрации экрана от учителя');
-      try {
-        const screenStream = await window.electronAPI.getScreenStream();
-        if (!screenStream) {
-          console.error('[AGENT] Не удалось захватить экран');
-          return;
-        }
-
-        if (remotePC) remotePC.close();
-        remotePC = new RTCPeerConnection(iceConfig);
-
-        screenStream.getTracks().forEach(track => remotePC.addTrack(track, screenStream));
-
-        remotePC.onicecandidate = (e) => {
-          if (e.candidate) {
-            socket.emit('ice-candidate', { target: 'teacher', candidate: e.candidate, connectionType: 'remote' });
-          }
-        };
-
-        remotePC.onconnectionstatechange = () => {
-          console.log('[AGENT] Remote PC state:', remotePC.connectionState);
-          if (remotePC.connectionState === 'disconnected' || remotePC.connectionState === 'failed') {
-            screenStream.getTracks().forEach(t => t.stop());
-            remotePC.close();
-            remotePC = null;
-          }
-        };
-
-        const offer = await remotePC.createOffer();
-        await remotePC.setLocalDescription(offer);
-        socket.emit('offer', { target: 'teacher', sdp: remotePC.localDescription, connectionType: 'remote' });
-      } catch (err) {
-        console.error('[AGENT] Ошибка захвата экрана:', err);
-      }
-    });
-
-    // WebRTC сигналинг
-    socket.on('answer', async ({ source, sdp }) => {
-      if (remotePC) {
-        try {
-          await remotePC.setRemoteDescription(new RTCSessionDescription(sdp));
-        } catch (err) {
-          console.error('[AGENT] Error setting answer:', err);
-        }
-      }
-    });
-
-    socket.on('ice-candidate', async ({ source, candidate }) => {
-      if (remotePC) {
-        try {
-          await remotePC.addIceCandidate(candidate);
-        } catch (err) {
-          console.error('[AGENT] ICE error:', err);
-        }
-      }
-    });
-
-    socket.on('control-command', ({ action, data }) => {
-      console.log('[AGENT] Control command:', action, data);
-    });
-
-    // Демонстрация учителя
-    socket.on('broadcast-started', () => {
-      window.electronAPI.openDemo();
-    });
-    socket.on('broadcast-stopped', () => {
-      window.electronAPI.closeDemo();
-    });
-
-    // Уведомление об отключении учителя
-    socket.on('teacher-disconnected', () => {
-      console.log('[AGENT] Учитель отключился');
-      window.electronAPI.closeDemo();
-      window.electronAPI.showNotification('ClassControl', 'Учитель отключился от сервера');
-    });
-}
-
-// Скриншоты каждую секунду
-function startScreenshots() {
-  if (screenshotInterval) return;
-  screenshotInterval = setInterval(async () => {
-    if (!socket || !socket.connected) return;
+  async function connect(addr) {
+    if (!addr || addr === address) return;
+    address = addr;
+    if (socket) { socket.close(); socket = null; }
+    stopRemote();
     try {
-        const imageBase64 = await window.electronAPI.takeScreenshot();
-        if (imageBase64) {
-          socket.emit('agent-screenshot', { agentId: socket.id, imageBase64 });
-        }
-    } catch(err) {
-        console.error('Screenshot error', err);
+      await loadClient(addr);
+    } catch (e) {
+      address = null;
+      setTimeout(() => api.info().then(i => i.serverAddress && connect(i.serverAddress)), 5000);
+      return;
     }
-  }, 1000);
-}
+    info = await api.info();
+    socket = io(addr, { transports: ['websocket'], reconnectionDelayMax: 5000 });
 
-function stopScreenshots() {
-  if (screenshotInterval) {
-    clearInterval(screenshotInterval);
-    screenshotInterval = null;
+    socket.on('connect', () => {
+      socket.emit('register-agent', { hostname: info.hostname, name: info.pcName, os: info.platform });
+    });
+    socket.on('agent-ready', (d) => {
+      api.connectionState({ connected: true, socketId: socket.id, teacherName: d.teacherName });
+      state.broadcast = d.broadcast || { active: false };
+      syncDemo();
+      startShots();
+    });
+    socket.on('auth-error', (m) => console.warn('[AGENT]', m));
+    socket.on('disconnect', () => {
+      api.connectionState({ connected: false });
+      stopShots();
+      stopRemote();
+      state.broadcast = { active: false };
+      state.board = false;
+      syncDemo();
+    });
+
+    // Мониторинг
+    socket.on('screenshot-rate', ({ active }) => {
+      shotInterval = active ? 1000 : 5000;
+      stopShots(); startShots();
+    });
+
+    // Команды учителя
+    socket.on('control', (cmd) => api.control(cmd));
+    socket.on('remote-start', startRemote);
+    socket.on('remote-stop', stopRemote);
+    socket.on('signal', async ({ kind, type, payload }) => {
+      if (kind !== 'remote' || !remote || !remote.peer) return;
+      try {
+        if (type === 'answer') await remote.peer.answer(payload);
+        if (type === 'ice') await remote.peer.ice(payload);
+      } catch (e) { console.error('[AGENT] signal', e); }
+    });
+
+    // Эфир и доска: окно демонстрации на весь экран
+    socket.on('broadcast-started', (st) => { state.broadcast = st || { active: true }; syncDemo(); });
+    socket.on('broadcast-stopped', () => { state.broadcast = { active: false }; syncDemo(); });
+    socket.on('whiteboard-mode', (on) => { state.board = Boolean(on); syncDemo(); });
+    socket.on('teacher-online', (d) => api.connectionState({ connected: true, socketId: socket.id, teacherName: d.name }));
+    socket.on('teacher-disconnected', () => {
+      state.broadcast = { active: false }; state.board = false; syncDemo();
+      api.notify('ClassControl', 'Учитель отключился');
+    });
+
+    // Чат: пересылаем окну беседы
+    socket.on('chat-message', (msg) => {
+      api.chatEvent({ type: 'message', msg });
+      if (msg.senderId !== socket.id && msg.type !== 'system') {
+        api.notify(msg.to ? `${msg.sender} — лично вам` : msg.sender, msg.type === 'file' ? 'Файл: ' + msg.filename : msg.text);
+      }
+    });
+    socket.on('chat-history', (list) => api.chatEvent({ type: 'history', list }));
+    socket.on('clear-canvas', () => {});
   }
-}
+
+  function syncDemo() {
+    api.broadcast({ active: Boolean(state.broadcast.active) || state.board, allowExit: Boolean(state.broadcast.allowExit) && !state.board });
+  }
+
+  api.onChatSend((msg) => socket && socket.connected && socket.emit('chat-message', msg));
+  api.onChatRequestHistory(() => socket && socket.connected && socket.emit('request-chat-history'));
+  api.onProcesses((list) => socket && socket.emit('agent-processes', { list }));
+  api.onControlResult((r) => socket && socket.emit('agent-control-result', r));
+  api.onAgentStatus((s) => socket && socket.emit('agent-status', s));
+
+  // ---------- Скриншоты ----------
+  function startShots() {
+    if (shotTimer) return;
+    const tick = async () => {
+      if (socket && socket.connected) {
+        try {
+          const r = await api.takeScreenshot();
+          if (r && r.image) socket.emit('agent-screenshot', { image: r.image, idle: r.idle });
+        } catch (e) { /* пропускаем кадр */ }
+      }
+      shotTimer = setTimeout(tick, shotInterval);
+    };
+    shotTimer = setTimeout(tick, 200);
+  }
+  function stopShots() { clearTimeout(shotTimer); shotTimer = null; }
+
+  // ---------- Показ экрана учителю (для просмотра и управления) ----------
+  async function startRemote() {
+    stopRemote();
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: { ideal: 1920, max: 1920 }, height: { ideal: 1080, max: 1080 }, frameRate: { ideal: 20, max: 24 } },
+        audio: false
+      });
+      const track = stream.getVideoTracks()[0];
+      if (track) track.contentHint = 'detail';
+      remote = { stream, peer: null };
+      api.remoteSession(true);
+      remote.peer = await CC.offerPeer({
+        socket, target: 'teacher', kind: 'remote', stream,
+        tune: (pc) => {},
+        onState: (st) => { if (st === 'failed' || st === 'closed') stopRemote(); }
+      });
+      CC.limitBitrate(remote.peer.pc, 6000);
+    } catch (err) {
+      console.error('[AGENT] Не удалось показать экран', err);
+      stopRemote();
+    }
+  }
+  function stopRemote() {
+    if (!remote) return;
+    if (remote.peer) remote.peer.close();
+    if (remote.stream) remote.stream.getTracks().forEach(t => t.stop());
+    remote = null;
+    api.remoteSession(false);
+  }
+})();

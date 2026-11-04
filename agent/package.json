@@ -1,9 +1,12 @@
 {
   "name": "classcontrol-agent",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "description": "ClassControl Agent — программа на компьютере ученика",
   "main": "main.js",
+  "author": "Kilus",
   "scripts": {
     "start": "electron .",
+    "config": "electron . --config",
     "build": "electron-builder --win"
   },
   "build": {
@@ -12,23 +15,39 @@
     "directories": {
       "output": "../dist/agent"
     },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "assets/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../shared",
+        "to": "shared"
+      }
+    ],
     "win": {
       "target": "nsis",
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.png"
     },
     "nsis": {
       "oneClick": true,
+      "perMachine": true,
       "createDesktopShortcut": false,
       "createStartMenuShortcut": true,
       "menuCategory": "ClassControl",
-      "shortcutName": "ClassControl Configurator"
+      "shortcutName": "ClassControl Agent",
+      "include": "build/installer.nsh",
+      "runAfterFinish": true
     }
   },
   "devDependencies": {
-    "electron": "^28.0.0",
-    "electron-builder": "^24.0.0"
+    "electron": "^45.2.0",
+    "electron-builder": "^26.0.0"
   },
-  "dependencies": {
-    "socket.io-client": "^4.7.0"
+  "optionalDependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6"
   }
 }
