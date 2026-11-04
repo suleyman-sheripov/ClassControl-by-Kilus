@@ -6,8 +6,9 @@
  */
 const {
   app, BrowserWindow, Tray, Menu, ipcMain, desktopCapturer, Notification,
-  powerMonitor, screen, shell, session, nativeImage, dialog
+  powerMonitor, screen, shell, session, nativeImage, dialog, nativeTheme
 } = require('electron');
+const themeBg = () => (nativeTheme.shouldUseDarkColors ? '#0b0d18' : '#eef0f7');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -118,7 +119,7 @@ function openChat() {
   chatWindow = new BrowserWindow({
     width: 380, height: 560, minWidth: 320, minHeight: 400,
     x: workArea.x + workArea.width - 400, y: workArea.y + workArea.height - 580,
-    title: 'Беседа урока', backgroundColor: '#0d1210', autoHideMenuBar: true,
+    title: 'Беседа урока', backgroundColor: themeBg(), autoHideMenuBar: true,
     webPreferences: webPrefs()
   });
   chatWindow.setMenuBarVisibility(false);
@@ -150,7 +151,7 @@ function openConfig() {
   if (configWindow && !configWindow.isDestroyed()) { configWindow.show(); configWindow.focus(); return; }
   configWindow = new BrowserWindow({
     width: 460, height: 620, resizable: false, title: 'ClassControl — настройки агента',
-    backgroundColor: '#0d1210', autoHideMenuBar: true, webPreferences: webPrefs()
+    backgroundColor: themeBg(), autoHideMenuBar: true, webPreferences: webPrefs()
   });
   configWindow.setMenuBarVisibility(false);
   configWindow.loadFile(page('config.html'));
@@ -184,7 +185,7 @@ function lockScreens(text) {
       x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
       frame: false, fullscreen: true, kiosk: true, alwaysOnTop: true, skipTaskbar: true,
       movable: false, resizable: false, minimizable: false, closable: false,
-      backgroundColor: '#0d1210', webPreferences: webPrefs()
+      backgroundColor: themeBg(), webPreferences: webPrefs()
     });
     w.setAlwaysOnTop(true, 'screen-saver');
     w.loadFile(page('lock.html'));
@@ -216,7 +217,7 @@ function showMessage(text, file) {
   const { workArea } = screen.getPrimaryDisplay();
   const w = messageWindow = new BrowserWindow({
     width: 420, height: 220, x: Math.round(workArea.x + workArea.width / 2 - 210), y: Math.round(workArea.y + workArea.height / 3 - 110),
-    frame: false, resizable: false, alwaysOnTop: true, skipTaskbar: false, backgroundColor: '#131916',
+    frame: false, resizable: false, alwaysOnTop: true, skipTaskbar: false, backgroundColor: themeBg(),
     title: 'Сообщение от учителя', webPreferences: webPrefs()
   });
   w.setAlwaysOnTop(true, 'screen-saver');
@@ -483,7 +484,7 @@ function openHello() {
   const { workArea } = screen.getPrimaryDisplay();
   helloWindow = new BrowserWindow({
     width: 420, height: 380, x: Math.round(workArea.x + workArea.width / 2 - 210), y: Math.round(workArea.y + workArea.height / 3 - 190),
-    frame: false, resizable: false, alwaysOnTop: true, backgroundColor: '#131916', title: 'Кто за компьютером?', webPreferences: webPrefs()
+    frame: false, resizable: false, alwaysOnTop: true, backgroundColor: themeBg(), title: 'Кто за компьютером?', webPreferences: webPrefs()
   });
   helloWindow.loadFile(page('hello.html'));
   helloWindow.on('closed', () => { helloWindow = null; });
@@ -662,7 +663,7 @@ function openTaskWindow() {
   taskWindow = new BrowserWindow({
     width: 420, height: 460, x: workArea.x + workArea.width - 440, y: workArea.y + 20,
     resizable: false, minimizable: false, maximizable: false, alwaysOnTop: true, frame: false,
-    title: 'Задание от учителя', backgroundColor: '#131916', webPreferences: webPrefs()
+    title: 'Задание от учителя', backgroundColor: themeBg(), webPreferences: webPrefs()
   });
   taskWindow.setAlwaysOnTop(true, 'floating');
   taskWindow.loadFile(page('task.html'));

@@ -8,7 +8,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="/ui/theme.css">
   <link rel="stylesheet" href="style.css">
-  <script src="theme-init.js"></script>
+  <script src="/ui/theme-init.js"></script>
+  <script src="/ui/mascot.js"></script>
 </head>
 <body>
 
@@ -16,9 +17,10 @@
   <main class="join" id="join">
     <form class="join__card" id="join-form" autocomplete="on">
       <div class="brand">
-        <span class="brand__mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span>
+        <span class="brand__mark"><cc-finger point="right" size="30"></cc-finger></span>
         <span class="brand__name">ClassControl</span>
       </div>
+      <div class="join__hero hero"><cc-finger point="down" motion="nudge" size="104"></cc-finger></div>
       <div class="join__text">
         <h1 class="join__title">Вход на урок</h1>
         <p class="join__lesson" id="join-lesson"><span class="dot dot--warning dot--pulse"></span><span>Подключаюсь к классу…</span></p>
@@ -50,7 +52,7 @@
   <div class="lesson hidden" id="lesson">
     <header class="head">
       <div class="brand">
-        <span class="brand__mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span>
+        <span class="brand__mark"><cc-finger point="right" size="30"></cc-finger></span>
         <span class="brand__name head__product">ClassControl</span>
       </div>
       <span class="head__sep" aria-hidden="true"></span>
@@ -73,7 +75,7 @@
             <img class="stage__relay hidden" id="relay" alt="">
             <div class="board-surface hidden" id="board-surface"><canvas class="board-canvas" id="board"></canvas></div>
             <div class="stage__empty" id="empty">
-              <svg class="i i-xl"><use href="#i-cast"/></svg>
+              <cc-finger point="right" motion="float" size="96"></cc-finger>
               <span class="stage__empty-title" id="empty-title">Учитель ещё не начал показ</span>
               <span class="stage__empty-text" id="empty-text">Экран учителя или доска появятся здесь автоматически.</span>
             </div>
@@ -87,7 +89,7 @@
 
         <div class="controls" role="toolbar" aria-label="Управление">
           <button class="ctl" id="hand-btn" type="button" aria-pressed="false">
-            <svg class="i"><use href="#i-raise"/></svg><span>Поднять руку</span>
+            <cc-finger point="up" size="22"></cc-finger><span>Поднять руку</span>
           </button>
           <button class="ctl" id="mic-btn" type="button" disabled title="Учитель включит микрофон, когда даст слово">
             <svg class="i"><use href="#i-mic-off"/></svg><span>Микрофон</span>
@@ -134,9 +136,10 @@
   <main class="join hidden" id="gone">
     <div class="join__card">
       <div class="brand">
-        <span class="brand__mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span>
+        <span class="brand__mark"><cc-finger point="right" size="30"></cc-finger></span>
         <span class="brand__name">ClassControl</span>
       </div>
+      <div class="join__hero hero"><cc-finger point="down" motion="float" size="104"></cc-finger></div>
       <div class="join__text">
         <h1 class="join__title" id="gone-title">Вы вышли с урока</h1>
         <p class="join__hint" id="gone-text">Чтобы вернуться, войдите снова.</p>

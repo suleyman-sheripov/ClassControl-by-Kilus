@@ -1,72 +1,88 @@
-/* Окна агента ученика: беседа, блокировка, сообщения, настройки */
+/* Окна агента ученика: беседа, блокировка, сообщения, настройки — на той же «мягком стекле» */
 body { user-select: none; }
 input, textarea, .msg__body { user-select: text; }
 
 /* Беседа */
-.chat-app { height: 100vh; display: grid; grid-template-rows: 52px 1fr; }
+.chat-app { height: 100vh; display: grid; grid-template-rows: 64px 1fr; padding: 0 10px 10px; gap: 0; }
 .chat-head {
-  display: flex; align-items: center; gap: 10px; padding: 0 12px 0 14px;
-  border-bottom: 1px solid var(--rule);
+  display: flex; align-items: center; gap: 12px; padding: 0 6px;
 }
 .chat-head__text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; flex: 1; }
-.chat-head__title { font-weight: 600; font-size: var(--fs-md); }
+.chat-head__title { font-weight: 650; font-size: var(--fs-md); letter-spacing: -0.01em; }
 .chat-head__sub { font-size: var(--fs-sm); color: var(--faint); display: flex; align-items: center; gap: 6px; }
-.chat-app .chat { background: var(--surface); }
+.chat-head__sub .dot { width: 7px; height: 7px; }
+.chat-app .chat { background: var(--surface); border-radius: var(--r-panel); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--edge); }
+.chat-app .chat__list { padding-top: 10px; }
 .offline {
-  margin: 12px; display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px;
-  background: var(--warning-tint); color: var(--warning); border-radius: var(--r-control); font-size: var(--fs-sm);
+  margin: 12px; display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px;
+  background: var(--warning-tint); color: var(--warning); border-radius: 14px; font-size: var(--fs-sm);
 }
 
-/* Блокировка */
+/* Блокировка: спокойный экран, указка показывает «вверх — на учителя» */
 .lock {
-  height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px;
-  background: var(--ground); cursor: none; text-align: center; padding: 48px;
+  height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+  cursor: none; text-align: center; padding: 48px;
 }
-.lock__mark { width: 72px; height: 72px; border-radius: 18px; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; }
-.lock__mark svg { width: 40px; height: 40px; }
-.lock__text { font-size: clamp(28px, 4.5vw, 56px); font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; max-width: 18ch; }
-.lock__sub { color: var(--faint); font-size: var(--fs-lg); display: flex; align-items: center; gap: 8px; }
+.lock__hero { height: 200px; margin-bottom: 4px; }
+.lock__hero::before { width: 300px; height: 180px; filter: blur(50px); }
+.lock__text { font-size: clamp(30px, 4.6vw, 60px); font-weight: 700; letter-spacing: -0.03em; line-height: 1.12; max-width: 18ch; animation: dialog-in var(--t-enter) var(--spring) both; animation-delay: .08s; }
+.lock__sub {
+  color: var(--muted); font-size: var(--fs-md); display: flex; align-items: center; gap: 8px;
+  height: 38px; padding: 0 16px; border-radius: 999px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--edge);
+  animation: dialog-in var(--t-enter) var(--spring) both; animation-delay: .16s;
+}
 
-/* Сообщение учителя */
-.note-win { height: 100vh; display: flex; flex-direction: column; border: 1px solid var(--control); border-radius: 0; background: var(--surface); }
-.note-win__head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 0; -webkit-app-region: drag; }
-.note-win__from { font-weight: 600; font-size: var(--fs-md); }
+/* Сообщение учителя и «Кто за компьютером?» — небольшие окна без рамки */
+.note-win {
+  height: 100vh; display: flex; flex-direction: column;
+  background: var(--surface-solid);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.note-win__head { display: flex; align-items: center; gap: 10px; padding: 16px 18px 0; -webkit-app-region: drag; }
+.note-win__head cc-finger { animation: none; }
+.note-win__from { font-weight: 650; font-size: var(--fs-md); letter-spacing: -0.01em; }
 .note-win__time { margin-left: auto; color: var(--faint); font-size: var(--fs-sm); }
-.note-win__text { flex: 1; padding: 12px 16px; font-size: var(--fs-lg); line-height: 1.5; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
-.note-win__foot { display: flex; justify-content: flex-end; padding: 0 16px 16px; }
+.note-win__text { flex: 1; padding: 12px 18px; font-size: var(--fs-lg); line-height: 1.55; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.note-win__foot { display: flex; justify-content: flex-end; padding: 0 18px 18px; }
 
-/* Плашка «учитель подключился» */
+/* Плашка «учитель подключился»: стеклянная «пилюля» на прозрачном окне */
 .banner-wrap { height: 100vh; display: grid; place-items: center; background: transparent; }
 body.transparent { background: transparent; }
+body.transparent::before { display: none; }
 .banner {
-  display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 14px;
-  border-radius: 999px; background: rgba(19,19,21,.94); color: var(--text); font-size: var(--fs-sm); font-weight: 500;
-  box-shadow: 0 0 0 1px var(--border), 0 8px 24px rgba(0,0,0,.4);
+  display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 16px;
+  border-radius: 999px; background: rgba(22, 24, 44, .9); color: #eef0fb; font-size: var(--fs-sm); font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1), 0 8px 24px rgba(0, 0, 0, .35);
+  animation: toast-in var(--t-enter) var(--spring);
 }
 
 /* Настройки агента */
 .config { min-height: 100vh; display: flex; flex-direction: column; }
-.config__head { display: flex; align-items: center; gap: 12px; padding: 20px 20px 4px; }
-.config__title { font-size: var(--fs-lg); font-weight: 600; margin: 0; }
-.config__body { padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; flex: 1; }
-.config__foot { display: flex; gap: 8px; padding: 0 20px 20px; }
+.config__head { display: flex; align-items: center; gap: 12px; padding: 22px 22px 4px; }
+.config__title { font-size: var(--fs-lg); font-weight: 650; margin: 0; letter-spacing: -0.015em; }
+.config__body { padding: 16px 22px; display: flex; flex-direction: column; gap: 16px; flex: 1; }
+.config__foot { display: flex; gap: 8px; padding: 0 22px 22px; }
 .config__foot .spacer { flex: 1; }
 .error { color: var(--negative); font-size: var(--fs-sm); min-height: 18px; }
-.found { display: flex; flex-direction: column; gap: 4px; }
-.found__item { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: var(--r-control); background: var(--raised); border: 1px solid var(--border); font-family: var(--mono); font-size: var(--fs-sm); color: var(--text); text-align: left; }
-.found__item:hover { border-color: var(--control-hover); }
-.status-line { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--muted); padding: 10px 12px; border-radius: var(--r-control); background: var(--raised); }
+.found { display: flex; flex-direction: column; gap: 6px; }
+.found__item {
+  display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-radius: 12px; border: 0;
+  background: var(--raised); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--border);
+  font-family: var(--mono); font-size: var(--fs-sm); color: var(--text); text-align: left;
+  transition: transform var(--t-ui) var(--spring);
+}
+.found__item:hover { transform: translateY(-1px); }
+.status-line { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--muted); padding: 12px 14px; border-radius: 14px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--edge); }
 
 /* Окно задания (опрос, сдача работы) */
-.task-win { height: 100vh; display: grid; grid-template-rows: 48px 1fr; background: var(--surface); border: 1px solid var(--control); }
-.task-win__head { display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--rule); -webkit-app-region: drag; }
+.task-win { height: 100vh; display: grid; grid-template-rows: 56px 1fr; }
+.task-win__head { display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; -webkit-app-region: drag; }
 .task-win__head .icon-btn { -webkit-app-region: no-drag; margin-left: auto; }
-.task-win__title { font-weight: 600; font-size: var(--fs-md); }
-.task-win__body { overflow-y: auto; padding: 14px; }
+.task-win__title { font-weight: 650; font-size: var(--fs-md); letter-spacing: -0.01em; }
+.task-win__body { overflow-y: auto; padding: 4px 14px 14px; }
 
 /* «Кто за компьютером?» */
-.hello__body { flex: 1; padding: 14px 16px; }
-
-.hello__taken { margin-top: 12px; padding: 12px; border-radius: var(--r-control); background: var(--accent-tint); }
+.hello__body { flex: 1; padding: 14px 18px; }
+.hello__taken { margin-top: 12px; padding: 14px; border-radius: 16px; background: var(--accent-tint); animation: dialog-in var(--t-ui) var(--spring); }
 .hello__q { margin: 0 0 10px; font-size: var(--fs-body); line-height: 1.5; }
 .hello__actions { display: flex; gap: 8px; flex-wrap: wrap; }

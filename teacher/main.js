@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog, shell, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog, shell, powerSaveBlocker, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -33,7 +33,7 @@ const DEFAULTS = {
   allowExit: false,
   shareAudio: true,
   shareMic: false,
-  theme: 'dark'
+  theme: 'auto'
 };
 let settings = { ...DEFAULTS };
 try {
@@ -56,7 +56,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 640,
     title: 'ClassControl',
-    backgroundColor: '#0d1210',
+    backgroundColor: (settings.theme === 'dark' || (settings.theme !== 'light' && nativeTheme.shouldUseDarkColors)) ? '#0b0d18' : '#eef0f7',
     show: false,
     autoHideMenuBar: true,
     webPreferences: {

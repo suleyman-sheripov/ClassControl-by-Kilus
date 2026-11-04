@@ -114,8 +114,7 @@
   // Учитель завершил урок: у следующего урока будет другая ссылка
   socket.on('lesson-ended', () => {
     sessionStorage.removeItem('cc-code');
-    leave('Урок закончился', 'Спасибо! Ссылка этого урока больше не работает — на следующий урок учитель пришлёт новую.');
-    $('#rejoin').classList.add('hidden');
+    leave('Урок закончился', 'Спасибо! Ссылка этого урока больше не работает — на следующий урок учитель пришлёт новую.', true);
   });
 
   socket.on('welcome', (w) => {
@@ -156,7 +155,7 @@
     if (!socket.connected) socket.connect();
   });
 
-  function leave(title, text) {
+  function leave(title, text, final) {
     me.joined = false;
     stopShare(true);
     stopVoice();
@@ -164,6 +163,10 @@
     socket.disconnect();
     $('#lesson').classList.add('hidden');
     $('#gone-title').textContent = title;
+    $('#rejoin').classList.toggle('hidden', Boolean(final));
+    // Указка смотрит на кнопку «Вернуться», если вернуться можно; после урока — просто парит
+    const gf = $('#gone cc-finger');
+    if (gf) { gf.setAttribute('point', final ? 'up-right' : 'down'); gf.setAttribute('motion', final ? 'float' : 'nudge'); }
     $('#gone-text').textContent = text;
     $('#gone').classList.remove('hidden');
   }
@@ -333,6 +336,9 @@
     b.classList.toggle('is-on', me.hand);
     b.setAttribute('aria-pressed', me.hand);
     b.querySelector('span').textContent = me.hand ? 'Опустить руку' : 'Поднять руку';
+    // Поднятая рука — «указка» вверх подпрыгивает, пока учитель не ответит
+    const f = b.querySelector('cc-finger');
+    if (f) { if (me.hand) f.setAttribute('motion', 'raise'); else f.removeAttribute('motion'); }
   }
   $('#hand-btn').addEventListener('click', () => {
     me.hand = !me.hand;
@@ -526,11 +532,12 @@
     $('#theme-btn').title = light ? 'Тёмная тема' : 'Светлая тема';
   }
   $('#theme-btn').addEventListener('click', () => {
-    const light = document.documentElement.dataset.theme !== 'light';
-    if (light) document.documentElement.dataset.theme = 'light'; else delete document.documentElement.dataset.theme;
-    try { localStorage.setItem('cc-theme', light ? 'light' : 'dark'); } catch (e) {}
-    renderThemeBtn();
+    const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    if (window.CCTheme) CCTheme.set(next); else document.documentElement.dataset.theme = next;
+    setTimeout(renderThemeBtn, 0);
   });
+  // Тема системы сменилась сама — значок тоже
+  new MutationObserver(renderThemeBtn).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   renderThemeBtn();
 
   window.addEventListener('beforeunload', () => { if (shareStream) socket.emit('online-user-stop-share'); });

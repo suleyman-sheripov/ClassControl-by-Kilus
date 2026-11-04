@@ -5,11 +5,13 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'">
   <title>Экран заблокирован</title>
   <link rel="stylesheet" href="../../shared/ui/theme.css">
+  <script src="../../shared/ui/theme-init.js"></script>
+  <script src="../../shared/ui/mascot.js"></script>
   <link rel="stylesheet" href="agent.css">
 </head>
 <body>
   <main class="lock">
-    <span class="lock__mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span>
+    <span class="lock__hero hero"><cc-finger point="up" motion="nudge" size="150"></cc-finger></span>
     <div class="lock__text" id="text">Внимание на учителя</div>
     <div class="lock__sub"><svg class="i"><use href="#i-lock"/></svg>Компьютер заблокирован учителем</div>
   </main>

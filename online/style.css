@@ -1,130 +1,164 @@
 /* ClassControl — страница ученика (из дома или с телефона).
-   Широкий экран: [сцена 16:9 + кнопки] [чат 360]. Узкий: сцена сверху, чат под ней. */
+   Широкий экран: [сцена 16:9 + кнопки] [чат 360]. Узкий: сцена сверху, чат под ней.
+   Всё на «мягком стекле» поверх ауры; сцена — единственное тёмное место (там видео). */
 
 html, body { height: 100%; }
 body { overflow: hidden; }
 .error { color: var(--negative); font-size: var(--fs-sm); min-height: 0; margin: 0; }
 .error:empty { display: none; }
 
-/* Уведомления — сверху, чтобы не закрывать поле сообщения */
-.toasts { top: 64px; left: 50%; right: auto; transform: translateX(-50%); align-items: center; }
+/* Уведомления — сверху по центру, чтобы не закрывать поле сообщения */
+.toasts { top: 68px; left: 50%; right: auto; transform: translateX(-50%); align-items: center; }
 
-/* ---------- Вход ---------- */
+/* ---------- Вход и «урок закончился» ---------- */
 .join {
   min-height: 100%; display: grid; place-items: center; padding: 24px 16px;
   overflow-y: auto;
 }
 .join__card {
-  width: min(400px, 100%); display: flex; flex-direction: column; gap: 20px;
-  padding: 28px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border);
+  position: relative;
+  width: min(420px, 100%); display: flex; flex-direction: column; gap: 18px;
+  padding: 26px 28px 28px; border-radius: 30px;
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(30px) saturate(1.8); backdrop-filter: blur(30px) saturate(1.8);
+  box-shadow: var(--shadow-2), inset 0 0 0 1px var(--edge);
+  animation: dialog-in var(--t-enter) var(--spring);
 }
-.join__text { display: flex; flex-direction: column; gap: 6px; }
-.join__title { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
-.join__lesson { margin: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--fs-body); }
-.join__hint { margin: 0; color: var(--faint); font-size: var(--fs-sm); line-height: 1.55; }
+.join__card > .brand { position: absolute; top: 20px; left: 22px; }
+.join__card > .brand .brand__mark { width: 30px; height: 30px; border-radius: 10px; }
+.join__card > .brand .brand__mark cc-finger { --finger-size: 26px; }
+.join__card > .brand .brand__name { font-size: var(--fs-body); color: var(--muted); }
+.join__hero { height: 124px; margin: 22px 0 -6px; }
+.join__text { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.join__title { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.2; }
+.join__lesson { margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: var(--fs-body); text-align: center; }
+.join__hint { margin: 0; color: var(--faint); font-size: var(--fs-sm); line-height: 1.6; text-align: center; }
 
-.taken { padding: 12px; border-radius: var(--r-control); background: var(--accent-tint); }
+.taken { padding: 14px; border-radius: 16px; background: var(--accent-tint); animation: dialog-in var(--t-ui) var(--spring); }
 .taken__q { margin: 0 0 10px; font-size: var(--fs-body); line-height: 1.5; }
 .taken__actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ---------- Урок ---------- */
-.lesson { height: 100%; display: grid; grid-template-rows: 52px 1fr; }
+.lesson { height: 100%; display: grid; grid-template-rows: 60px 1fr; animation: fade .4s ease; }
 .head {
   display: flex; align-items: center; gap: 12px; padding: 0 12px 0 16px;
-  border-bottom: 1px solid var(--rule); min-width: 0;
+  min-width: 0;
 }
-.head__sep { width: 1px; height: 20px; background: var(--border); flex: none; }
-.head__lesson { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); }
-.head__right { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
-.head__me { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 220px; font-weight: 500; }
+.head__sep { width: 1px; height: 20px; background: var(--rule); flex: none; }
+.head__lesson {
+  display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted);
+  height: 32px; padding: 0 12px; border-radius: 999px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--edge);
+}
+.head__lesson .dot { width: 7px; height: 7px; }
+.head__right { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.head__me { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 220px; font-weight: 600; margin-right: 4px; }
 
 .room {
-  display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 8px; padding: 8px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; padding: 0 12px 12px;
   min-height: 0;
 }
-.stage-col { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; }
+.stage-col { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-width: 0; }
 .stage-wrap {
   flex: 1; min-height: 0; display: grid; place-items: center;
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
-  padding: 12px; overflow: hidden;
+  background: var(--surface); border-radius: var(--r-panel);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--edge);
+  padding: 14px; overflow: hidden;
 }
 .stage {
   position: relative; width: 100%; max-height: 100%; aspect-ratio: 16 / 9;
-  border-radius: 6px; background: #000; overflow: hidden;
+  border-radius: 16px; background: #07080f; overflow: hidden;
+  box-shadow: 0 18px 40px -20px rgba(20, 20, 60, .45);
 }
 @supports (container-type: size) {
   .stage-wrap { container-type: size; }
   .stage { width: min(100cqw, 100cqh * 16 / 9); }
 }
 .stage__video, .stage__relay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+/* Пока показа нет — не чёрный экран, а спокойная картинка с указкой */
 .stage__empty {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 8px; padding: 24px; text-align: center; color: var(--faint); background: var(--inset);
+  gap: 8px; padding: 24px; text-align: center; color: var(--faint);
+  background: var(--raised);
 }
-.stage__empty .i { color: var(--control-hover); margin-bottom: 4px; }
-.stage__empty-title { color: var(--muted); font-size: var(--fs-md); font-weight: 500; }
-.stage__empty-text { font-size: var(--fs-sm); max-width: 320px; }
-.stage__chips { position: absolute; top: 10px; left: 10px; display: flex; gap: 6px; }
-.stage__chips .badge { background: var(--glass); backdrop-filter: blur(6px); }
-.stage__chips .badge--live { color: var(--live); }
-.stage__chips .badge--warning { color: var(--warning); }
-.stage__unmute { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); }
+.stage__empty::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(40% 50% at 30% 30%, rgba(160, 230, 210, .35), transparent 70%),
+    radial-gradient(40% 50% at 72% 66%, rgba(190, 170, 255, .35), transparent 70%);
+}
+:root[data-theme="dark"] .stage__empty { background: #12152a; }
+:root[data-theme="dark"] .stage__empty::before { opacity: .55; }
+.stage__empty > * { position: relative; }
+.stage:has(> .stage__empty:not(.hidden)) { background: transparent; }
+.stage__empty cc-finger { margin-bottom: 6px; }
+.stage__empty-title { color: var(--text); font-size: var(--fs-lg); font-weight: 650; letter-spacing: -0.015em; }
+.stage__empty-text { font-size: var(--fs-sm); max-width: 320px; color: var(--muted); line-height: 1.55; }
+.stage__chips { position: absolute; top: 12px; left: 12px; display: flex; gap: 6px; }
+.stage__chips .badge { background: rgba(12, 12, 28, .55); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.stage__chips .badge--live { color: #ff8a95; }
+.stage__chips .badge--warning { color: #ffc56b; }
+.stage__unmute { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); }
 /* Доска — бесконечный холст: занимает всю область, без рамки 16:9 и тёмных полей */
-.stage.is-board { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; }
-.stage-wrap.is-board { padding: 0; background: transparent; border: 0; }
+.stage.is-board { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; box-shadow: none; }
+.stage-wrap.is-board { padding: 0; }
 .stage:fullscreen { border-radius: 0; width: 100%; max-height: none; aspect-ratio: auto; }
 
-/* Кнопки урока */
+/* Кнопки урока: стеклянная полка с «пилюлями» */
 .controls {
   display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap;
-  padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
+  padding: 10px; border-radius: var(--r-panel);
+  background: var(--surface); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--edge);
   flex: none;
 }
 .ctl {
-  display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px;
-  border-radius: 999px; border: 1px solid var(--control); background: var(--raised);
-  color: var(--text); font-size: var(--fs-body); font-weight: 500;
-  transition: background-color .15s, border-color .15s, color .15s;
+  display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px;
+  border-radius: 999px; border: 0; background: var(--raised);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--border);
+  color: var(--text); font-size: var(--fs-body); font-weight: 600;
+  transition: background-color .2s, color .2s, box-shadow .2s, transform var(--t-ui) var(--spring);
 }
-.ctl:hover { background: var(--hover); border-color: var(--control-hover); }
+.ctl:hover { background: color-mix(in srgb, var(--raised) 92%, var(--accent)); }
+.ctl:active { transform: scale(.95); transition-duration: var(--t-press); }
 .ctl:disabled { opacity: .45; cursor: not-allowed; }
-.ctl--icon { width: 40px; padding: 0; justify-content: center; }
-.ctl.is-on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.ctl.is-live { background: var(--live); border-color: var(--live); color: var(--live-ink); }
-.ctl.is-mic { background: var(--positive); border-color: var(--positive); color: var(--positive-ink); }
+.ctl--icon { width: 44px; padding: 0; justify-content: center; }
+.ctl cc-finger { --finger-size: 24px; animation: none; margin: 0 -2px 0 -6px; }
+.ctl.is-on { background: var(--grad-primary); color: #fff; box-shadow: var(--shadow-press); }
+.ctl.is-live { background: var(--live); color: var(--live-ink); box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--live) 70%, transparent); }
+.ctl.is-mic { background: var(--positive); color: var(--positive-ink); box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--positive) 70%, transparent); }
 .ctl__timer { font-family: var(--mono); font-size: var(--fs-sm); }
 
-.side { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; }
+.side { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-width: 0; }
 .side-chat { min-height: 0; flex: 1; }
-.task-panel { flex: none; max-height: 60%; overflow-y: auto; background: transparent; border: 0; }
-.task-panel .stask { background: var(--surface); }
-.task-panel .stask + .stask { margin-top: 8px; }
+.task-panel { flex: none; max-height: 60%; overflow-y: auto; background: transparent; box-shadow: none; }
+.task-panel .stask + .stask { margin-top: 10px; }
 .side-chat .panel__head { padding-right: 8px; }
 
 /* ---------- Телефон и узкое окно ---------- */
 @media (max-width: 900px) {
   body { overflow: auto; }
-  .lesson { height: auto; min-height: 100%; grid-template-rows: 52px auto; }
+  .lesson { height: auto; min-height: 100%; grid-template-rows: 60px auto; }
   .room { grid-template-columns: 1fr; }
-  .stage-wrap { padding: 0; border: 0; background: transparent; flex: none; }
+  .stage-wrap { padding: 0; background: transparent; box-shadow: none; flex: none; }
   .stage-wrap { container-type: normal; }
   .stage { width: 100%; }
+  .stage.is-board { aspect-ratio: 4 / 3; height: auto; border-radius: 16px; }
   .side-chat { height: 70vh; min-height: 360px; flex: none; }
   .task-panel { max-height: none; }
   .head__product, .head__sep, #leave span { display: none; }
   .head__me { max-width: 140px; }
 }
 @media (max-width: 520px) {
-  .room { padding: 0 0 8px; gap: 0; }
-  .stage { border-radius: 0; }
-  .controls { border-radius: 0; border-left: 0; border-right: 0; gap: 6px; padding: 8px; }
-  .ctl { height: 40px; padding: 0 12px; }
+  .room { padding: 0 10px 10px; gap: 10px; }
+  .head { padding: 0 8px 0 12px; gap: 8px; }
+  .head__lesson { padding: 0 10px; }
+  #me-name { display: none; }
+  .controls { gap: 6px; padding: 8px; }
   .ctl span { display: none; }
-  .ctl { width: 48px; justify-content: center; padding: 0; }
+  .ctl { width: 52px; height: 48px; justify-content: center; padding: 0; }
+  .ctl cc-finger { margin: 0; }
   .ctl .ctl__timer { display: inline; }
-  #share-btn.is-live { width: auto; padding: 0 12px; }
-  .side-chat { border-radius: 0; border-left: 0; border-right: 0; margin-top: 8px; }
-  .side { gap: 0; }
-  .task-panel { padding: 8px 8px 0; }
-  .join__card { padding: 22px 18px; }
+  #share-btn.is-live { width: auto; padding: 0 14px; }
+  .side { gap: 10px; }
+  .join__card { padding: 22px 18px 22px; border-radius: 26px; }
+  .join__title { font-size: 23px; }
 }

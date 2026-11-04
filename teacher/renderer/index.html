@@ -6,6 +6,8 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' http://localhost:* http://127.0.0.1:*; connect-src 'self' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob: http://localhost:* http://127.0.0.1:*; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'; font-src 'self'">
   <title>ClassControl</title>
   <link rel="stylesheet" href="../../shared/ui/theme.css">
+  <script src="../../shared/ui/theme-init.js"></script>
+  <script src="../../shared/ui/mascot.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,7 +17,7 @@
     <header class="topbar">
       <div class="topbar__left">
         <div class="brand">
-          <span class="brand__mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span>
+          <span class="brand__mark"><cc-finger point="right" size="30"></cc-finger></span>
           <span class="brand__name">ClassControl</span>
         </div>
         <span class="topbar__sep" aria-hidden="true"></span>
@@ -70,7 +72,7 @@
             <div class="preview" id="preview">
               <video id="preview-video" autoplay playsinline muted></video>
               <button class="preview__empty" id="preview-empty" type="button">
-                <svg class="i i-lg"><use href="#i-cast"/></svg>
+                <span class="tile tile--lilac"><svg class="i i-lg"><use href="#i-cast"/></svg></span>
                 <span>Выберите, что показать</span>
               </button>
               <span class="preview__live hidden" id="preview-live"><span class="dot dot--live dot--pulse"></span>Эфир</span>
@@ -199,7 +201,7 @@
           <div class="pc-scroll">
             <div class="pc-grid" id="pc-grid" data-size="m"></div>
             <div class="empty pc-empty" id="pc-empty">
-              <svg class="i i-xl empty__icon"><use href="#i-grid"/></svg>
+              <cc-finger point="down-right" motion="float" size="120"></cc-finger>
               <div class="empty__title">Компьютеры класса появятся здесь</div>
               <div class="empty__text">Запустите ClassControl Agent на компьютерах учеников в этой же сети — они найдут учителя сами, ничего настраивать не нужно.</div>
             </div>
@@ -301,7 +303,7 @@
     </div>
     <div class="viewer__stage" id="viewer-stage" tabindex="0">
       <video id="viewer-video" autoplay playsinline></video>
-      <div class="viewer__wait" id="viewer-wait"><span class="spinner"></span><span id="viewer-wait-text">Подключаюсь к экрану…</span></div>
+      <div class="viewer__wait" id="viewer-wait"><cc-finger point="right" motion="tap" size="72"></cc-finger><span id="viewer-wait-text">Подключаюсь к экрану…</span></div>
       <div class="viewer__hint hidden" id="viewer-hint">Мышь и клавиатура передаются ученику · <span class="kbd">Esc</span> — отпустить</div>
     </div>
   </div>

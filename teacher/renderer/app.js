@@ -96,9 +96,7 @@
       { icon: 'save', label: 'Завершить урок', run: endLesson },
       '-',
       { icon: 'lock', label: 'Закрепить ПК за этим кабинетом', run: bindRoom },
-      document.documentElement.dataset.theme === 'light'
-        ? { icon: 'moon', label: 'Тёмная тема', run: () => { applyTheme('dark'); api.saveSettings({ theme: 'dark' }).then(x => { if (x) settings = x; }); } }
-        : { icon: 'sun', label: 'Светлая тема', run: () => { applyTheme('light'); api.saveSettings({ theme: 'light' }).then(x => { if (x) settings = x; }); } },
+      themeItem(),
       { icon: 'settings', label: 'Настройки', run: openSettings }
     ], { alignRight: right });
   }
@@ -128,6 +126,7 @@
   async function startLesson() {
     const name = el('input', { class: 'input input--lg', placeholder: 'Например: Анна Петровна', maxlength: 40 });
     const ok = await CC.dialog({
+      hero: { point: 'down', motion: 'nudge' },
       title: 'Новый урок', sub: `${settings.roomName || 'Кабинет'}. Ученики увидят ваше имя в чате и на странице входа.`,
       body: el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Как вас зовут' }), name),
       actions: [{ label: 'Начать урок', kind: 'primary', primary: true, value: () => true }]
@@ -144,6 +143,7 @@
     const when = new Date(p.startedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
     const what = [p.messages && `${p.messages} ${CC.plural(p.messages, 'сообщение', 'сообщения', 'сообщений')}`, p.strokes && p.strokes.length && 'доска', p.polls && `${p.polls} ${CC.plural(p.polls, 'опрос', 'опроса', 'опросов')}`, p.works && `${p.works} ${CC.plural(p.works, 'работа', 'работы', 'работ')}`].filter(Boolean).join(', ');
     const choice = await CC.dialog({
+      hero: { point: 'right', motion: 'float' },
       title: 'Прошлый урок не был завершён',
       sub: `${p.teacherName && p.teacherName !== 'Учитель' ? p.teacherName + ', ' : ''}начат ${when}. Осталось: ${what || 'немного данных'}.`,
       actions: [{ label: 'Не сохранять', value: 'drop' }, { label: 'Сохранить…', value: 'save' }, { label: 'Продолжить урок', kind: 'primary', primary: true, value: 'resume' }]
@@ -185,6 +185,13 @@
 
   // ---------- Переключение режимов ----------
   function setTab(tab) {
+    if (tab === S.tab) return;
+    // Смена режима — мягким переходом (View Transitions), если система не просит меньше движения
+    if (document.startViewTransition && S.tab && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      document.startViewTransition(() => applyTab(tab));
+    } else applyTab(tab);
+  }
+  function applyTab(tab) {
     S.tab = tab;
     for (const t of ['monitoring', 'board', 'tasks']) {
       $('#tab-' + t).setAttribute('aria-selected', tab === t);
@@ -327,6 +334,7 @@
   let goneTimer = null;
   function applyRoster({ agents, online, offline }) {
     const prevAgents = S.agents;
+    const joined = S.joined || (S.joined = { names: [], at: 0 });
     S.agents = new Map(agents.map(a => [a.id, a]));
     S.online = new Map(online.map(u => [u.id, u]));
     S.offline = new Map((offline || []).map(a => [a.host, a]));
@@ -344,7 +352,15 @@
     for (const id of [...S.shots.keys()]) if (!S.agents.has(id)) S.shots.delete(id);
     if (prevAgents.size && agents.length > prevAgents.size) {
       const fresh = agents.filter(a => !prevAgents.has(a.id));
-      if (fresh.length === 1) toast(`${fresh[0].name} подключился`, { icon: 'monitor' });
+      // Утром класс включается разом — одно уведомление на всех, а не тридцать
+      if (fresh.length) {
+        if (Date.now() - joined.at > 6000) joined.names = [];
+        joined.at = Date.now();
+        joined.names.push(...fresh.map(a => a.name));
+        const n = joined.names.length;
+        toast(n === 1 ? `${joined.names[0]} подключился`
+          : `Подключились: ${joined.names.slice(0, 3).join(', ')}${n > 3 ? ` и ещё ${n - 3}` : ''}`, { icon: 'monitor', group: 'joined' });
+      }
     }
     renderGrid();
     renderPeople();
@@ -376,7 +392,7 @@
         el('span', { class: 'avatar', style: { '--av-bg': 'var(--active)', '--av-ink': 'var(--muted)' } }, icon('monitor', 'i-sm')),
         el('div', { class: 'row__main' },
           el('span', { class: 'row__title', text: a.student || 'Не представился' }),
-          el('span', { class: 'row__sub' }, a.hand ? icon('raise', 'i-sm person__hand') : el('span', { class: 'dot ' + (a.locked ? 'dot--warning' : a.idle >= 180 ? '' : 'dot--positive') }),
+          el('span', { class: 'row__sub' }, a.hand ? handMark() : el('span', { class: 'dot ' + (a.locked ? 'dot--warning' : a.idle >= 180 ? '' : 'dot--positive') }),
             a.hand ? `${a.name}, поднял руку` : `${a.name}, ${a.locked ? 'заблокирован' : CC.idleText(a.idle || 0)}`)),
         el('div', { class: 'row__actions' },
           el('button', { class: 'icon-btn icon-btn--sm', type: 'button', title: 'Подключиться', 'aria-label': 'Подключиться', onclick: () => openViewer(a.id) }, icon('pointer', 'i-sm')),
@@ -394,7 +410,7 @@
       return;
     }
     users.forEach(u => {
-      const sub = u.hand ? [icon('raise', 'i-sm person__hand'), 'поднял руку']
+      const sub = u.hand ? [handMark(), 'поднял руку']
         : u.voice ? [icon('mic', 'i-sm'), 'говорит']
         : u.sharing ? [icon('share', 'i-sm'), 'показывает экран']
         : [u.remote ? 'из дома' : 'в сети школы'];
@@ -422,10 +438,13 @@
 
   socket.on('hand-raised', ({ id, name, inClass }) => {
     // В классе слово даёт сам учитель вслух; ученику из дома нужен микрофон
-    toast(`${name} поднял руку`, { kind: 'accent', icon: 'raise', action: inClass
+    toast(`${name} поднял руку`, { kind: 'accent', finger: 'up', motion: 'raise', duration: 7000, action: inClass
       ? { label: 'Опустить руку', run: () => socket.emit('lower-hand', { id }) }
       : { label: 'Дать слово', run: () => socket.emit('teacher-voice', { userId: id, on: true }) } });
   });
+
+  // Поднятая рука — маленькая «указка» вверх: тот же знак, что у ученика на кнопке
+  function handMark() { return CC.finger ? CC.finger({ point: 'up', size: 18, class: 'person__hand' }) : icon('raise', 'i-sm person__hand'); }
 
   function updateRightBadge() {
     const hands = [...S.online.values(), ...S.agents.values()].filter(u => u.hand).length;
@@ -1120,6 +1139,7 @@
       btn.querySelector('use').setAttribute('href', live ? '#i-stop' : '#i-play');
       btn.querySelector('span').textContent = live ? 'Остановить эфир' : 'Начать эфир';
       $('#preview-empty').classList.toggle('hidden', live);
+      $('#preview').classList.toggle('is-live', live);
       $('#preview-live').classList.toggle('hidden', !live);
       $('#live-badge').classList.toggle('hidden', !live);
       const n = this.peers.size;
@@ -1498,14 +1518,14 @@
   }
 
   function starters(compact) {
-    const tile = (iconName, title, text, run) => el('button', { class: 'starter', type: 'button', onclick: run },
-      el('span', { class: 'starter__icon' }, icon(iconName)),
+    const tile = (iconName, title, text, run, tint) => el('button', { class: 'starter', type: 'button', onclick: run },
+      el('span', { class: 'tile tile--' + tint + ' starter__icon' }, icon(iconName)),
       el('span', { class: 'starter__title', text: title }),
       compact ? null : el('span', { class: 'starter__text', text }));
     return el('div', { class: 'starters' },
-      tile('poll', 'Быстрый опрос', 'Вопрос с вариантами ответа. Ответы видно сразу, итоги можно показать классу.', createPoll),
-      tile('inbox', 'Собрать работы', 'Ученики сдают файлы одной кнопкой. Работы ложатся в папку, подписанные именами.', createCollection),
-      tile('download', 'Раздать файл', 'Файл появится на рабочем столе каждого компьютера класса и в чате урока.', () => $('#assign-file').click()));
+      tile('poll', 'Быстрый опрос', 'Вопрос с вариантами ответа. Ответы видно сразу, итоги можно показать классу.', createPoll, 'lilac'),
+      tile('inbox', 'Собрать работы', 'Ученики сдают файлы одной кнопкой. Работы ложатся в папку, подписанные именами.', createCollection, 'mint'),
+      tile('download', 'Раздать файл', 'Файл появится на рабочем столе каждого компьютера класса и в чате урока.', () => $('#assign-file').click(), 'peach'));
   }
 
   function renderTasks() {
@@ -1711,10 +1731,17 @@
   });
 
   // ---------- Тема ----------
+  // auto — как в системе; светлая или тёмная — явный выбор. Смена — с плавным переходом.
   function applyTheme(theme) {
-    document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+    if (window.CCTheme) { if (CCTheme.get() !== theme) CCTheme.set(theme); }
+    else document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light';
   }
-  applyTheme(settings.theme);
+  applyTheme(settings.theme || 'auto');
+  function themeItem() {
+    const dark = document.documentElement.dataset.theme === 'dark';
+    const next = dark ? 'light' : 'dark';
+    return { icon: dark ? 'sun' : 'moon', label: dark ? 'Светлая тема' : 'Тёмная тема', run: () => { applyTheme(next); api.saveSettings({ theme: next }).then(x => { if (x) settings = x; }); } };
+  }
 
   // ---------- Кабинет, первый запуск, прошлый урок ----------
   async function bindRoom() {
@@ -1733,7 +1760,7 @@
       el('label', { class: 'field' }, el('span', { class: 'field__label', text: 'Кабинет' }), room),
       el('p', { class: 'onboard__why', text: 'Настраивается один раз для этого компьютера. Компьютеры класса подключатся только к учителю своего кабинета, даже если в школе работают несколько учителей.' }));
     while (!room.value.trim()) {
-      await CC.dialog({ title: 'Как называется этот кабинет?', body, wide: true, actions: [{ label: 'Готово', kind: 'primary', primary: true, value: () => true }] });
+      await CC.dialog({ hero: { point: 'down', motion: 'nudge' }, title: 'Как называется этот кабинет?', body, actions: [{ label: 'Готово', kind: 'primary', primary: true, value: () => true }] });
       if (!room.value.trim()) toast('Укажите кабинет', { kind: 'warning' });
     }
     settings = await api.saveSettings({ roomName: room.value.trim(), onboarded: true }) || settings;

@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const CC = {};
+  const CC = window.CC || {};   // маскот (mascot.js) мог уже добавить CC.finger
 
   // ---------- DOM ----------
   CC.$ = (sel, root) => (root || document).querySelector(sel);
@@ -79,7 +79,12 @@
     const s = String(name || '');
     for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
     const hue = (h % 12) * 30 + 8;
-    return { bg: `hsl(${hue} 32% 20%)`, ink: `hsl(${hue} 70% 80%)`, solid: `hsl(${hue} 65% 64%)` };
+    // Насыщенность и светлота — из темы (--tint-*), поэтому цвет имени читается и днём, и вечером
+    return {
+      bg: `linear-gradient(140deg, hsl(${hue + 24} var(--tint-bg-a)), hsl(${hue} var(--tint-bg-b)))`,
+      ink: `hsl(${hue} var(--tint-ink))`,
+      solid: `hsl(${hue} var(--tint-solid))`
+    };
   };
 
   CC.avatar = (name, opts = {}) => {
@@ -93,15 +98,29 @@
   };
 
   // ---------- Уведомления ----------
+  // opts.group — уведомления одной группы не копятся: новое заменяет текст прежнего и продлевает его.
+  // На экране не больше четырёх уведомлений: самое старое уходит первым.
+  const toastGroups = new Map();
   CC.toast = function (text, opts = {}) {
     let host = document.getElementById('toasts');
     if (!host) {
       host = CC.el('div', { id: 'toasts', class: 'toasts', role: 'status', 'aria-live': 'polite' });
       document.body.appendChild(host);
     }
+    const same = opts.group && toastGroups.get(opts.group);
+    if (same && same.node.isConnected && !same.node.classList.contains('is-leaving')) {
+      same.node.querySelector(':scope > span').textContent = text;
+      clearTimeout(same.timer);
+      same.timer = setTimeout(same.close, opts.duration || 4500);
+      return same.close;
+    }
+    const alive = [...host.children].filter(n => !n.classList.contains('is-leaving'));
+    if (alive.length >= 4) alive[0].dispatchEvent(new Event('cc-dismiss'));
     const kind = opts.kind || 'info';
     const iconName = opts.icon || { positive: 'check', warning: 'alert', live: 'live', accent: 'raise', info: 'info' }[kind] || 'info';
-    const node = CC.el('div', { class: `toast toast--${kind}` }, CC.icon(iconName), CC.el('span', { text }));
+    // Особые моменты (рука поднята, урок начался) — с маскотом вместо значка
+    const mark = opts.finger && CC.finger ? CC.finger({ point: opts.finger, motion: opts.motion || 'none', size: 30 }) : CC.icon(iconName);
+    const node = CC.el('div', { class: `toast toast--${kind}` }, mark, CC.el('span', { text }));
     if (opts.action) {
       node.appendChild(CC.el('button', {
         class: 'btn btn--sm toast__action', text: opts.action.label,
@@ -110,20 +129,31 @@
     }
     host.appendChild(node);
     function close() {
+      if (node.classList.contains('is-leaving')) return;
       node.classList.add('is-leaving');
-      setTimeout(() => node.remove(), 200);
+      setTimeout(() => node.remove(), 240);
     }
-    setTimeout(close, opts.duration || 4500);
+    node.addEventListener('cc-dismiss', close);
+    const timer = setTimeout(close, opts.duration || 4500);
+    if (opts.group) toastGroups.set(opts.group, { node, close, timer });
     return close;
   };
 
   // ---------- Диалоги ----------
-  CC.dialog = function ({ title, sub, body, actions, wide, onOpen }) {
+  // hero: { point, motion } — маскот над заголовком, для особых моментов (новый урок, первый запуск)
+  CC.dialog = function ({ title, sub, body, actions, wide, onOpen, hero }) {
     return new Promise((resolve) => {
       const overlay = CC.el('div', { class: 'overlay' });
+      let done = false;
       const close = (value) => {
-        overlay.remove();
+        if (done) return;
+        done = true;
         document.removeEventListener('keydown', onKey, true);
+        // Мягко гаснет, но сразу перестаёт мешать: следующий диалог может открыться немедленно
+        overlay.classList.add('is-leaving');
+        overlay.style.pointerEvents = 'none';
+        overlay.querySelector('.dialog').classList.replace('dialog', 'dialog-leaving');
+        setTimeout(() => overlay.remove(), 180);
         resolve(value);
       };
       const foot = CC.el('div', { class: 'dialog__foot' });
@@ -133,7 +163,8 @@
           onclick: () => close(typeof a.value === 'function' ? a.value() : a.value)
         }));
       });
-      const dialog = CC.el('div', { class: 'dialog' + (wide ? ' dialog--wide' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+      const dialog = CC.el('div', { class: 'dialog' + (wide ? ' dialog--wide' : '') + (hero ? ' dialog--hero' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+        hero && CC.finger ? CC.el('div', { class: 'hero' }, CC.finger({ point: hero.point || 'right', motion: hero.motion || 'float', size: hero.size || 104 })) : null,
         CC.el('div', { class: 'dialog__head' },
           CC.el('div', null,
             CC.el('h2', { class: 'dialog__title', text: title }),
@@ -315,7 +346,7 @@
     }
     emptyNode() {
       return CC.el('div', { class: 'empty chat__empty', style: { flex: '1' } },
-        CC.icon('chat', 'i-xl empty__icon'),
+        CC.finger ? CC.finger({ point: 'down', motion: 'nudge', size: 64 }) : CC.icon('chat', 'i-xl empty__icon'),
         CC.el('div', { class: 'empty__title', text: 'Сообщений пока нет' }),
         CC.el('div', { class: 'empty__text', text: this.opts.emptyText || 'Напишите классу — сообщение увидят все участники урока.' }));
     }
@@ -325,6 +356,7 @@
       const node = m.type === 'system' ? CC.el('div', { class: 'msg msg--system', text: m.text }) : this.renderMessage(m);
       this.list.appendChild(node);
       if (silent) return;
+      node.classList.add('is-new');
       const mine = this.isMine(m);
       if (stick || mine) this.scrollToEnd(true);
       else this.newBtn.classList.remove('hidden');
