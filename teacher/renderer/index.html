@@ -1,250 +1,318 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClassControl — Учитель</title>
-    <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' http://localhost:* http://127.0.0.1:*; connect-src 'self' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob: http://localhost:* http://127.0.0.1:*; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'; font-src 'self'">
+  <title>ClassControl</title>
+  <link rel="stylesheet" href="../../shared/ui/theme.css">
+  <script src="../../shared/ui/theme-init.js"></script>
+  <script src="../../shared/ui/mascot.js"></script>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="app-container" class="app">
+  <div class="app" id="app">
 
-        <!-- ===== HEADER ===== -->
-        <header class="main-header">
-            <div class="logo">
-                <div class="logo__icon">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                </div>
-                <span class="logo__text">ClassControl</span>
+    <!-- ===== Верхняя панель ===== -->
+    <header class="topbar">
+      <div class="topbar__left">
+        <div class="brand">
+          <span class="brand__mark"><cc-finger point="right" size="30"></cc-finger></span>
+          <span class="brand__name">ClassControl</span>
+        </div>
+        <span class="topbar__sep" aria-hidden="true"></span>
+        <button class="lesson-chip" id="lesson-chip" type="button" title="Урок">
+          <span id="room-name" class="truncate">Кабинет</span>
+          <span id="teacher-name" class="lesson-chip__teacher truncate"></span>
+          <span class="lesson-chip__time mono" id="lesson-time">00:00</span>
+        </button>
+      </div>
+
+      <nav class="seg topbar__tabs" role="tablist" aria-label="Режим">
+        <button class="seg__btn" role="tab" id="tab-monitoring" aria-selected="true">
+          <svg class="i"><use href="#i-grid"/></svg>Мониторинг<span class="seg__count" id="tab-pc-count">0</span>
+        </button>
+        <button class="seg__btn" role="tab" id="tab-board" aria-selected="false">
+          <svg class="i"><use href="#i-board"/></svg>Доска
+        </button>
+        <button class="seg__btn" role="tab" id="tab-tasks" aria-selected="false">
+          <svg class="i"><use href="#i-tasks"/></svg>Задания<span class="seg__count hidden" id="tab-tasks-count"></span>
+        </button>
+      </nav>
+
+      <div class="topbar__right">
+        <span class="badge badge--accent hidden" id="board-badge" title="Учащиеся видят доску на весь экран"><svg class="i i-sm"><use href="#i-board"/></svg>Доска у учеников</span>
+        <span class="badge badge--live hidden" id="live-badge"><span class="dot dot--live dot--pulse"></span>В эфире <span class="mono" id="live-time">00:00</span></span>
+        <button class="btn btn--sm" id="rec-btn" type="button" title="Запись урока в файл">
+          <svg class="i i-sm"><use href="#i-record"/></svg><span id="rec-label">Запись</span>
+        </button>
+        <button class="btn btn--sm" id="invite-btn" type="button">
+          <svg class="i i-sm"><use href="#i-link"/></svg><span>Пригласить</span>
+        </button>
+        <span class="topbar__sep" aria-hidden="true"></span>
+        <button class="icon-btn" id="toggle-left" type="button" title="Панель эфира" aria-label="Панель эфира"><svg class="i"><use href="#i-sidebar"/></svg></button>
+        <button class="icon-btn" id="toggle-right" type="button" title="Участники и чат" aria-label="Участники и чат">
+          <svg class="i"><use href="#i-sidebar-right"/></svg><span class="count count--accent toggle-badge hidden" id="right-badge">0</span>
+        </button>
+        <button class="icon-btn" id="settings-btn" type="button" title="Настройки" aria-label="Настройки"><svg class="i"><use href="#i-settings"/></svg></button>
+        <button class="icon-btn" id="menu-btn" type="button" title="Урок и настройки" aria-label="Урок и настройки"><svg class="i"><use href="#i-more"/></svg></button>
+      </div>
+    </header>
+
+    <!-- ===== Рабочая область ===== -->
+    <main class="workspace" id="workspace">
+
+      <!-- Левая колонка: эфир и инструменты доски -->
+      <aside class="side side--left" id="side-left" aria-label="Эфир">
+        <section class="panel" id="studio">
+          <div class="panel__head">
+            <h2 class="panel__title">Эфир</h2>
+            <span class="panel__meta" id="viewers-meta"></span>
+          </div>
+          <div class="panel__body">
+            <div class="preview" id="preview">
+              <video id="preview-video" autoplay playsinline muted></video>
+              <button class="preview__empty" id="preview-empty" type="button">
+                <span class="tile tile--lilac"><svg class="i i-lg"><use href="#i-cast"/></svg></span>
+                <span>Выберите, что показать</span>
+              </button>
+              <span class="preview__live hidden" id="preview-live"><span class="dot dot--live dot--pulse"></span>Эфир</span>
             </div>
 
-            <div class="header-center">
-                <nav class="tabs">
-                    <button id="tab-monitoring" class="tab-btn active">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                        <span>Мониторинг</span>
-                    </button>
-                    <button id="tab-whiteboard" class="tab-btn">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                        <span>Доска</span>
-                    </button>
-                </nav>
+            <button class="source-btn" id="source-btn" type="button">
+              <span class="source-btn__thumb" id="source-thumb"><svg class="i"><use href="#i-monitor"/></svg></span>
+              <span class="source-btn__text">
+                <span class="source-btn__label">Источник</span>
+                <span class="source-btn__name truncate" id="source-name">Весь экран</span>
+              </span>
+              <svg class="i i-sm faint"><use href="#i-chevron-down"/></svg>
+            </button>
+
+            <button class="disclosure" id="studio-more" type="button" aria-expanded="false" aria-controls="studio-settings">
+              <span>Настройки эфира</span>
+              <span class="disclosure__meta" id="studio-summary"></span>
+              <svg class="i i-sm"><use href="#i-chevron-down"/></svg>
+            </button>
+            <div class="studio-settings" id="studio-settings">
+            <div class="field-row">
+              <label class="field">
+                <span class="field__label">Качество</span>
+                <select class="select" id="quality">
+                  <option value="1920x1080">1080p</option>
+                  <option value="1280x720">720p</option>
+                  <option value="854x480">480p</option>
+                  <option value="640x360">360p</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="field__label">Кадров в секунду</span>
+                <select class="select" id="fps">
+                  <option value="5">5</option>
+                  <option value="10">10</option>
+                  <option value="15">15</option>
+                  <option value="30">30</option>
+                  <option value="60">60</option>
+                </select>
+              </label>
             </div>
 
-            <div class="header-right">
-                <div id="record-timer" class="rec-badge hidden">
-                    <span class="rec-badge__dot"></span>
-                    <span>00:00</span>
-                </div>
-                <button id="recordBtn" class="hdr-btn">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
-                    <span>Запись</span>
-                </button>
-                <div class="user-profile">
-                    <span id="teacher-name-display">Учитель</span>
-                    <div class="status-indicator online"></div>
-                </div>
+            <div class="switches">
+              <label class="switch">
+                <span class="switch__text"><span class="switch__label">Звук компьютера</span></span>
+                <input type="checkbox" id="opt-audio"><span class="switch__track"></span>
+              </label>
+              <label class="switch">
+                <span class="switch__text"><span class="switch__label">Мой микрофон</span><span class="switch__hint">Слышно ученикам из дома</span></span>
+                <input type="checkbox" id="opt-mic"><span class="switch__track"></span>
+              </label>
+              <label class="switch">
+                <span class="switch__text"><span class="switch__label">Ученики могут закрыть эфир</span></span>
+                <input type="checkbox" id="opt-exit"><span class="switch__track"></span>
+              </label>
             </div>
-        </header>
-
-        <!-- ===== CONTENT ===== -->
-        <main class="content-layout">
-
-            <!-- SIDEBAR LEFT: Студия эфира + Инструменты доски -->
-            <aside class="sidebar sidebar-left" id="panel-left">
-                <section class="panel studio-panel">
-                    <div class="panel-header">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-                        <h3>Студия эфира</h3>
-                    </div>
-                    <div class="broadcast-preview">
-                        <video id="preview-video" autoplay playsinline muted></video>
-                        <div id="preview-placeholder" class="preview-placeholder">
-                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-                            <span>Нет активного потока</span>
-                        </div>
-                    </div>
-
-                    <div class="studio-controls">
-                        <label class="control-label">Качество</label>
-                        <select id="qualitySelect" class="styled-select">
-                            <option value="1920x1080">1080p (Full HD)</option>
-                            <option value="1280x720">720p (HD)</option>
-                            <option value="854x480" selected>480p (SD)</option>
-                            <option value="640x360">360p</option>
-                            <option value="426x240">240p</option>
-                            <option value="320x180">180p (min)</option>
-                        </select>
-
-                        <label class="control-label">Частота кадров</label>
-                        <select id="fpsSelect" class="styled-select">
-                            <option value="5">5 FPS</option>
-                            <option value="10">10 FPS</option>
-                            <option value="15" selected>15 FPS</option>
-                            <option value="20">20 FPS</option>
-                            <option value="30">30 FPS</option>
-                            <option value="60">60 FPS</option>
-                        </select>
-
-                        <button id="btn-start-broadcast" class="btn btn-primary w-full mt-4">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                            Начать эфир
-                        </button>
-                        <button id="btn-stop-broadcast" class="btn btn-danger w-full mt-4 hidden">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-                            Остановить эфир
-                        </button>
-                    </div>
-                </section>
-
-                <section id="whiteboard-tools-section" class="panel tools-panel hidden">
-                    <div class="panel-header">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-                        <h3>Инструменты</h3>
-                    </div>
-                    <div class="tools-grid">
-                        <button id="tool-brush" class="tool-btn active" title="Кисть">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                            Кисть
-                        </button>
-                        <button id="tool-eraser" class="tool-btn" title="Ластик">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16l9.5-9.5a2.83 2.83 0 014 0l3 3a2.83 2.83 0 010 4L13 20"/></svg>
-                            Ластик
-                        </button>
-                        <button id="tool-hand" class="tool-btn" title="Перетаскивание (Рука)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13V5a2 2 0 114 0v4M14 13V7a2 2 0 114 0v5M18 13v-2a2 2 0 114 0v8a8 8 0 01-8 8H9a8 8 0 01-8-8v-6a2 2 0 114 0v5M6 13V4a2 2 0 114 0v9"/></svg>
-                            Рука
-                        </button>
-                        <button id="clear-canvas-btn" class="tool-btn danger" title="Очистить">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-                            Очистить
-                        </button>
-                    </div>
-                    <div id="brush-color-row" class="tool-row">
-                        <label>Цвет:</label>
-                        <input type="color" id="colorPicker" value="#6366f1">
-                    </div>
-                    <div class="tool-row">
-                        <label>Толщина:</label>
-                        <input type="range" id="lineWidth" min="1" max="25" value="5">
-                    </div>
-                </section>
-            </aside>
-
-            <div class="resizer" id="resizer-left"></div>
-
-            <!-- CENTER -->
-            <section class="main-viewport">
-                <div id="monitoring-grid" class="monitoring-grid">
-                    <div class="grid-placeholder">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                        <span>Ожидание подключения компьютеров...</span>
-                    </div>
-                </div>
-
-                <div id="whiteboard-container" class="whiteboard-container hidden">
-                    <canvas id="whiteboard"></canvas>
-                    <!-- Плавающая панель зума -->
-                    <div class="zoom-controls">
-                        <button id="zoom-out" class="zoom-btn" title="Отдалить">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg>
-                        </button>
-                        <span id="zoom-level">100%</span>
-                        <button id="zoom-in" class="zoom-btn" title="Приблизить">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-                        </button>
-                        <button id="zoom-reset" class="zoom-btn zoom-btn--reset" title="Сбросить масштаб">1:1</button>
-                    </div>
-                </div>
-            </section>
-
-            <div class="resizer" id="resizer-right"></div>
-
-            <!-- SIDEBAR RIGHT: Участники + Чат -->
-            <aside class="sidebar sidebar-right" id="panel-right">
-                <!-- Подпанель: Списки участников (компактная) -->
-                <section class="panel participants-combined-panel">
-                    <div class="panel-header">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-                        <h3>Участники
-                            <span class="count-badge" id="agents-count">0</span>
-                            <span class="participants-separator">+</span>
-                            <span class="count-badge count-badge--online" id="online-count">0</span>
-                        </h3>
-                    </div>
-                    <div class="participants-lists">
-                        <div class="participants-group">
-                            <div class="participants-group__label">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                                В классе
-                            </div>
-                            <ul id="agents-list" class="item-list"></ul>
-                        </div>
-                        <div class="participants-group">
-                            <div class="participants-group__label">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-                                Онлайн
-                            </div>
-                            <ul id="online-users-list" class="item-list"></ul>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Подпанель: Чат (основная) -->
-                <section class="panel chat-panel">
-                    <div class="panel-header">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                        <h3>Чат</h3>
-                    </div>
-                    <div id="chat-messages" class="chat-messages"></div>
-                    <div class="chat-input-wrapper">
-                        <button id="chat-attach-btn" class="chat-action-btn" title="Прикрепить файл">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-                        </button>
-                        <input type="file" id="chat-file-input" class="hidden">
-                        <input type="text" id="chat-text-input" placeholder="Написать..." autocomplete="off">
-                        <button id="chat-send-btn" class="chat-send-btn">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
-                        </button>
-                    </div>
-                </section>
-            </aside>
-        </main>
-
-        <!-- ===== MODALS ===== -->
-        <div id="remote-modal" class="modal hidden">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h2 id="remote-modal-title">Удаленное управление: ПК-01</h2>
-                    <button id="remote-modal-close" class="close-btn">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                    </button>
-                </div>
-                <div class="remote-viewer-wrapper">
-                    <video id="remote-video" autoplay playsinline></video>
-                    <div id="remote-mouse-catcher" class="mouse-catcher"></div>
-                </div>
             </div>
+          </div>
+          <div class="panel__foot">
+            <button class="btn btn--primary btn--lg btn--block" id="broadcast-btn" type="button">
+              <svg class="i"><use href="#i-play"/></svg><span>Начать эфир</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="panel hidden" id="board-tools">
+          <div class="panel__head">
+            <h2 class="panel__title">Доска</h2>
+            <div class="panel__actions">
+              <button class="icon-btn" id="board-undo" type="button" title="Отменить (Ctrl+Z)" aria-label="Отменить"><svg class="i"><use href="#i-undo"/></svg></button>
+              <button class="icon-btn" id="board-save" type="button" title="Сохранить картинкой" aria-label="Сохранить"><svg class="i"><use href="#i-save"/></svg></button>
+              <button class="icon-btn" id="board-clear" type="button" title="Очистить доску" aria-label="Очистить"><svg class="i"><use href="#i-trash"/></svg></button>
+            </div>
+          </div>
+          <div class="panel__body">
+            <button class="btn btn--block" id="board-share-btn" type="button"><svg class="i i-sm"><use href="#i-cast"/></svg><span>Показать доску ученикам</span></button>
+            <div class="seg seg--full" role="radiogroup" aria-label="Инструмент">
+              <button class="seg__btn is-active" data-tool="pen" type="button" title="Ручка (P)"><svg class="i"><use href="#i-pen"/></svg>Ручка</button>
+              <button class="seg__btn" data-tool="eraser" type="button" title="Ластик (E)"><svg class="i"><use href="#i-eraser"/></svg>Ластик</button>
+              <button class="seg__btn" data-tool="hand" type="button" title="Рука (H или пробел)"><svg class="i"><use href="#i-hand"/></svg>Рука</button>
+            </div>
+            <div class="field">
+              <span class="field__label">Цвет</span>
+              <div class="swatches" id="swatches"></div>
+            </div>
+            <div class="field">
+              <span class="field__label width-label">Толщина <span class="mono faint" id="width-value">4</span></span>
+              <div class="width-row">
+                <input type="range" class="range" id="width" min="1" max="24" value="4">
+                <span class="width-dot" id="width-dot"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Центр: мониторинг / доска -->
+      <section class="panel center" id="center">
+        <div class="view" id="view-monitoring">
+          <div class="toolbar">
+            <label class="check" title="Выбрать все">
+              <input type="checkbox" id="select-all"><span class="check__box"><svg class="i i-sm"><use href="#i-check"/></svg></span>
+            </label>
+            <span class="toolbar__title" id="selection-label">Компьютеры класса</span>
+            <div class="toolbar__actions" id="pc-actions">
+              <button class="btn btn--sm" data-act="lock" type="button"><svg class="i i-sm"><use href="#i-lock"/></svg><span>Заблокировать</span></button>
+              <button class="btn btn--sm" data-act="message" type="button"><svg class="i i-sm"><use href="#i-bell"/></svg><span>Сообщение</span></button>
+              <button class="icon-btn icon-btn--sm icon-btn--outline" data-act="unlock" type="button" title="Разблокировать" aria-label="Разблокировать"><svg class="i i-sm"><use href="#i-unlock"/></svg></button>
+              <button class="icon-btn icon-btn--sm icon-btn--outline" data-act="open-url" type="button" title="Открыть сайт" aria-label="Открыть сайт"><svg class="i i-sm"><use href="#i-globe"/></svg></button>
+              <button class="icon-btn icon-btn--sm icon-btn--outline" data-act="more" type="button" title="Выключить, перезагрузить" aria-label="Питание"><svg class="i i-sm"><use href="#i-power"/></svg></button>
+              <span class="toolbar__sep" aria-hidden="true"></span>
+              <button class="btn btn--sm" id="focus-btn" type="button" title="Предупреждать, если ученик открыл запрещённое"><svg class="i i-sm"><use href="#i-target"/></svg><span>Фокус</span></button>
+            </div>
+            <div class="toolbar__right">
+              <div class="search" id="search">
+                <button class="icon-btn icon-btn--sm search__btn" id="search-btn" type="button" title="Найти ПК" aria-label="Найти ПК"><svg class="i i-sm"><use href="#i-search"/></svg></button>
+                <input class="search__input" id="pc-search" placeholder="Найти ПК" autocomplete="off" aria-label="Найти ПК">
+              </div>
+              <div class="seg seg--compact" role="radiogroup" aria-label="Размер карточек">
+                <button class="seg__btn" data-size="s" type="button" title="Мелкие карточки">S</button>
+                <button class="seg__btn is-active" data-size="m" type="button" title="Средние карточки">M</button>
+                <button class="seg__btn" data-size="l" type="button" title="Крупные карточки">L</button>
+              </div>
+            </div>
+          </div>
+          <div class="pc-scroll">
+            <div class="pc-grid" id="pc-grid" data-size="m"></div>
+            <div class="empty pc-empty" id="pc-empty">
+              <cc-finger point="down-right" motion="float" size="120"></cc-finger>
+              <div class="empty__title">Компьютеры класса появятся здесь</div>
+              <div class="empty__text">Запустите ClassControl Agent на компьютерах учеников в этой же сети — они найдут учителя сами, ничего настраивать не нужно.</div>
+            </div>
+          </div>
         </div>
 
-        <div id="student-share-modal" class="modal hidden">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h2 id="student-share-title">Демонстрация ученика</h2>
-                    <button id="student-share-close" class="close-btn">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                    </button>
-                </div>
-                <div class="remote-viewer-wrapper">
-                    <video id="student-share-video" autoplay playsinline></video>
-                    <div id="student-share-status" class="share-status">Подключение...</div>
-                </div>
+        <div class="view hidden" id="view-tasks">
+          <div class="toolbar">
+            <span class="toolbar__title">Задания урока</span>
+            <div class="toolbar__right">
+              <button class="btn btn--sm" id="task-assign" type="button"><svg class="i i-sm"><use href="#i-download"/></svg><span>Раздать файл</span></button>
+              <button class="btn btn--sm" id="task-collect" type="button"><svg class="i i-sm"><use href="#i-inbox"/></svg><span>Собрать работы</span></button>
+              <button class="btn btn--sm btn--primary" id="task-poll" type="button"><svg class="i i-sm"><use href="#i-poll"/></svg><span>Опрос</span></button>
+              <input type="file" id="assign-file" class="hidden">
             </div>
+          </div>
+          <div class="tasks-scroll">
+            <div class="tasks" id="tasks"></div>
+          </div>
         </div>
+
+        <div class="view hidden" id="view-board">
+          <div class="board-stage" id="board-stage">
+            <canvas class="board-canvas" id="board"></canvas>
+          </div>
+          <div class="board-hint" id="board-hint">Колесо или <span class="kbd">Пробел</span> — двигать, <span class="kbd">Ctrl</span> + колесо — масштаб</div>
+          <div class="zoom">
+            <button class="icon-btn icon-btn--sm" id="zoom-out" type="button" aria-label="Отдалить"><svg class="i i-sm"><use href="#i-minus"/></svg></button>
+            <button class="zoom__value mono" id="zoom-reset" type="button" title="Сбросить масштаб">100%</button>
+            <button class="icon-btn icon-btn--sm" id="zoom-in" type="button" aria-label="Приблизить"><svg class="i i-sm"><use href="#i-plus"/></svg></button>
+            <span class="zoom__sep" aria-hidden="true"></span>
+            <button class="icon-btn icon-btn--sm" id="zoom-fit" type="button" title="Показать всё нарисованное" aria-label="Показать всё"><svg class="i i-sm"><use href="#i-focus"/></svg></button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Правая колонка: участники и чат -->
+      <aside class="side side--right" id="side-right" aria-label="Участники и чат">
+        <section class="panel people" id="people">
+          <div class="panel__head">
+            <div class="seg" role="tablist">
+              <button class="seg__btn is-active" data-people="class" type="button">В классе <span class="seg__count" id="count-class">0</span></button>
+              <button class="seg__btn" data-people="home" type="button">Онлайн <span class="seg__count" id="count-home">0</span></button>
+            </div>
+            <span class="panel__actions"><span class="badge badge--accent hidden" id="hands-badge"><svg class="i i-sm"><use href="#i-raise"/></svg><span id="hands-count">0</span></span></span>
+          </div>
+          <ul class="rows people__list" id="people-list"></ul>
+        </section>
+
+        <section class="panel chat-panel">
+          <div class="panel__head">
+            <h2 class="panel__title">Чат</h2>
+            <span class="panel__meta" id="chat-meta"></span>
+            <span class="panel__actions"><button class="btn btn--sm btn--ghost chat-rules" id="chat-rules" type="button" title="Правила чата: медленный режим, только учителю, файлы"><svg class="i i-sm"><use href="#i-shield"/></svg><span>Правила</span></button></span>
+          </div>
+          <div class="chat" id="chat">
+            <div class="chat__list" aria-live="polite"></div>
+            <div class="composer">
+              <div class="composer__to hidden"></div>
+              <div class="composer__box">
+                <button class="icon-btn icon-btn--sm composer__attach" type="button" title="Отправить файл" aria-label="Отправить файл"><svg class="i"><use href="#i-clip"/></svg></button>
+                <input type="file" class="composer__file hidden">
+                <textarea class="composer__input" rows="1" placeholder="Сообщение для всех…" aria-label="Сообщение"></textarea>
+                <button class="icon-btn icon-btn--sm composer__send" type="button" aria-label="Отправить" disabled><svg class="i i-sm"><use href="#i-send"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <!-- ===== Строка состояния ===== -->
+    <footer class="statusbar">
+      <span class="statusbar__item" id="status-server"><span class="dot" id="server-dot"></span><span id="server-text">Запуск сервера…</span></span>
+      <button class="statusbar__item statusbar__link" id="status-lan" type="button" title="Скопировать адрес"><svg class="i i-sm"><use href="#i-wifi"/></svg><span class="mono" id="lan-text">—</span></button>
+      <button class="statusbar__item statusbar__link" id="status-home" type="button"><svg class="i i-sm"><use href="#i-globe"/></svg><span id="home-text">Доступ из дома выключен</span></button>
+      <span class="statusbar__spacer"></span>
+      <span class="statusbar__item num" id="status-pcs"><svg class="i i-sm"><use href="#i-monitor"/></svg><span id="status-pcs-n">0</span></span>
+      <span class="statusbar__item num" id="status-online"><svg class="i i-sm"><use href="#i-users"/></svg><span id="status-online-n">0</span></span>
+    </footer>
+  </div>
+
+  <!-- ===== Просмотр экрана ученика / удалённое управление ===== -->
+  <div class="viewer hidden" id="viewer" role="dialog" aria-modal="true">
+    <div class="viewer__bar">
+      <button class="icon-btn" id="viewer-back" type="button" aria-label="Назад"><svg class="i"><use href="#i-chevron-left"/></svg></button>
+      <div class="viewer__title">
+        <span class="viewer__name" id="viewer-name">ПК</span>
+        <span class="viewer__state faint" id="viewer-state">Подключение…</span>
+      </div>
+      <div class="viewer__actions" id="viewer-actions">
+        <label class="switch viewer__control" id="viewer-control-wrap">
+          <span class="switch__text"><span class="switch__label">Управлять мышью и клавиатурой</span></span>
+          <input type="checkbox" id="viewer-control"><span class="switch__track"></span>
+        </label>
+        <button class="btn btn--sm" id="viewer-procs" type="button"><svg class="i i-sm"><use href="#i-list"/></svg>Программы</button>
+        <button class="btn btn--sm" id="viewer-lock" type="button"><svg class="i i-sm"><use href="#i-lock"/></svg><span>Заблокировать</span></button>
+        <button class="btn btn--sm" id="viewer-close" type="button"><svg class="i i-sm"><use href="#i-x"/></svg>Закрыть</button>
+      </div>
     </div>
+    <div class="viewer__stage" id="viewer-stage" tabindex="0">
+      <video id="viewer-video" autoplay playsinline></video>
+      <div class="viewer__wait" id="viewer-wait"><cc-finger point="right" motion="tap" size="72"></cc-finger><span id="viewer-wait-text">Подключаюсь к экрану…</span></div>
+      <div class="viewer__hint hidden" id="viewer-hint">Мышь и клавиатура передаются ученику · <span class="kbd">Esc</span> — отпустить</div>
+    </div>
+  </div>
 
-    <script src="http://localhost:3000/socket.io/socket.io.js"></script>
-    <script src="script.js"></script>
+  <script src="../../shared/ui/icons.js"></script>
+  <script src="../../shared/ui/vendor/qrcode.js"></script>
+  <script src="../../shared/ui/common.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

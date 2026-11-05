@@ -1,375 +1,164 @@
-/* ===================================================================
-   ClassControl — Online Student Interface
-   Complete HTML+CSS redesign
-   =================================================================== */
+/* ClassControl — страница ученика (из дома или с телефона).
+   Широкий экран: [сцена 16:9 + кнопки] [чат 360]. Узкий: сцена сверху, чат под ней.
+   Всё на «мягком стекле» поверх ауры; сцена — единственное тёмное место (там видео). */
 
-/* — Design tokens — */
-:root {
-    --c-bg:       #0b0c10;
-    --c-surface:  #13151d;
-    --c-card:     #191c27;
-    --c-input:    #1e2130;
-    --c-border:   rgba(255,255,255,.06);
-    --c-border-h: rgba(255,255,255,.10);
-    --c-accent:   #6c5ce7;
-    --c-accent2:  #4ea0f7;
-    --c-grad:     linear-gradient(135deg, #6c5ce7, #4ea0f7);
-    --c-red:      #e74c6f;
-    --c-green:    #2ed8a4;
-    --c-text:     #eaedf3;
-    --c-text2:    #8a8faa;
-    --c-text3:    #50546e;
-    --r:   8px;
-    --r-m: 12px;
-    --r-l: 16px;
-}
+html, body { height: 100%; }
+body { overflow: hidden; }
+.error { color: var(--negative); font-size: var(--fs-sm); min-height: 0; margin: 0; }
+.error:empty { display: none; }
 
-*{margin:0;padding:0;box-sizing:border-box}
+/* Уведомления — сверху по центру, чтобы не закрывать поле сообщения */
+.toasts { top: 68px; left: 50%; right: auto; transform: translateX(-50%); align-items: center; }
 
-body{
-    background:var(--c-bg);
-    color:var(--c-text);
-    font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
-    height:100vh;
-    overflow:hidden;
-    -webkit-font-smoothing:antialiased;
+/* ---------- Вход и «урок закончился» ---------- */
+.join {
+  min-height: 100%; display: grid; place-items: center; padding: 24px 16px;
+  overflow-y: auto;
 }
-.hidden{display:none!important}
+.join__card {
+  position: relative;
+  width: min(420px, 100%); display: flex; flex-direction: column; gap: 18px;
+  padding: 26px 28px 28px; border-radius: 30px;
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(30px) saturate(1.8); backdrop-filter: blur(30px) saturate(1.8);
+  box-shadow: var(--shadow-2), inset 0 0 0 1px var(--edge);
+  animation: dialog-in var(--t-enter) var(--spring);
+}
+.join__card > .brand { position: absolute; top: 20px; left: 22px; }
+.join__card > .brand .brand__mark { width: 30px; height: 30px; border-radius: 10px; }
+.join__card > .brand .brand__mark cc-finger { --finger-size: 26px; }
+.join__card > .brand .brand__name { font-size: var(--fs-body); color: var(--muted); }
+.join__hero { height: 124px; margin: 22px 0 -6px; }
+.join__text { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.join__title { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.2; }
+.join__lesson { margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: var(--fs-body); text-align: center; }
+.join__hint { margin: 0; color: var(--faint); font-size: var(--fs-sm); line-height: 1.6; text-align: center; }
 
-/* ============================ LOGIN ============================ */
-.login-screen{
-    display:flex;align-items:center;justify-content:center;
-    height:100vh;position:relative;overflow:hidden;
-}
+.taken { padding: 14px; border-radius: 16px; background: var(--accent-tint); animation: dialog-in var(--t-ui) var(--spring); }
+.taken__q { margin: 0 0 10px; font-size: var(--fs-body); line-height: 1.5; }
+.taken__actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
-/* Animated blobs */
-.login-backdrop{position:absolute;inset:0;overflow:hidden;pointer-events:none}
-.blob{position:absolute;border-radius:50%;filter:blur(100px);opacity:.35}
-.blob-1{width:520px;height:520px;background:#6c5ce7;top:-12%;right:-8%;animation:drift-a 18s ease-in-out infinite}
-.blob-2{width:440px;height:440px;background:#4ea0f7;bottom:-8%;left:-8%;animation:drift-b 22s ease-in-out infinite}
-.blob-3{width:280px;height:280px;background:#2ed8a4;top:48%;left:52%;opacity:.12;animation:drift-c 16s ease-in-out infinite}
-@keyframes drift-a{0%,100%{transform:translate(0,0)}50%{transform:translate(-30px,25px)}}
-@keyframes drift-b{0%,100%{transform:translate(0,0)}50%{transform:translate(25px,-30px)}}
-@keyframes drift-c{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+/* ---------- Урок ---------- */
+.lesson { height: 100%; display: grid; grid-template-rows: 60px 1fr; animation: fade .4s ease; }
+.head {
+  display: flex; align-items: center; gap: 12px; padding: 0 12px 0 16px;
+  min-width: 0;
+}
+.head__sep { width: 1px; height: 20px; background: var(--rule); flex: none; }
+.head__lesson {
+  display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted);
+  height: 32px; padding: 0 12px; border-radius: 999px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--edge);
+}
+.head__lesson .dot { width: 7px; height: 7px; }
+.head__right { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.head__me { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 220px; font-weight: 600; margin-right: 4px; }
 
-/* Card */
-.login-card{
-    position:relative;z-index:1;
-    background:rgba(19,21,29,.75);
-    backdrop-filter:blur(32px);-webkit-backdrop-filter:blur(32px);
-    border:1px solid var(--c-border-h);
-    border-radius:24px;
-    padding:44px 40px;
-    max-width:420px;width:92%;
-    box-shadow:0 24px 80px rgba(0,0,0,.45);
+.room {
+  display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; padding: 0 12px 12px;
+  min-height: 0;
 }
+.stage-col { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-width: 0; }
+.stage-wrap {
+  flex: 1; min-height: 0; display: grid; place-items: center;
+  background: var(--surface); border-radius: var(--r-panel);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--edge);
+  padding: 14px; overflow: hidden;
+}
+.stage {
+  position: relative; width: 100%; max-height: 100%; aspect-ratio: 16 / 9;
+  border-radius: 16px; background: #07080f; overflow: hidden;
+  box-shadow: 0 18px 40px -20px rgba(20, 20, 60, .45);
+}
+@supports (container-type: size) {
+  .stage-wrap { container-type: size; }
+  .stage { width: min(100cqw, 100cqh * 16 / 9); }
+}
+.stage__video, .stage__relay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+/* Пока показа нет — не чёрный экран, а спокойная картинка с указкой */
+.stage__empty {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 24px; text-align: center; color: var(--faint);
+  background: var(--raised);
+}
+.stage__empty::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(40% 50% at 30% 30%, rgba(160, 230, 210, .35), transparent 70%),
+    radial-gradient(40% 50% at 72% 66%, rgba(190, 170, 255, .35), transparent 70%);
+}
+:root[data-theme="dark"] .stage__empty { background: #12152a; }
+:root[data-theme="dark"] .stage__empty::before { opacity: .55; }
+.stage__empty > * { position: relative; }
+.stage:has(> .stage__empty:not(.hidden)) { background: transparent; }
+.stage__empty cc-finger { margin-bottom: 6px; }
+.stage__empty-title { color: var(--text); font-size: var(--fs-lg); font-weight: 650; letter-spacing: -0.015em; }
+.stage__empty-text { font-size: var(--fs-sm); max-width: 320px; color: var(--muted); line-height: 1.55; }
+.stage__chips { position: absolute; top: 12px; left: 12px; display: flex; gap: 6px; }
+.stage__chips .badge { background: rgba(12, 12, 28, .55); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.stage__chips .badge--live { color: #ff8a95; }
+.stage__chips .badge--warning { color: #ffc56b; }
+.stage__unmute { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); }
+/* Доска — бесконечный холст: занимает всю область, без рамки 16:9 и тёмных полей */
+.stage.is-board { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; box-shadow: none; }
+.stage-wrap.is-board { padding: 0; }
+.stage:fullscreen { border-radius: 0; width: 100%; max-height: none; aspect-ratio: auto; }
 
-.login-brand{text-align:center;margin-bottom:32px}
-.brand-icon{
-    width:64px;height:64px;margin:0 auto 18px;
-    background:var(--c-grad);
-    border-radius:18px;
-    display:flex;align-items:center;justify-content:center;
-    color:#fff;
-    box-shadow:0 8px 28px rgba(108,92,231,.35);
+/* Кнопки урока: стеклянная полка с «пилюлями» */
+.controls {
+  display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px; border-radius: var(--r-panel);
+  background: var(--surface); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--edge);
+  flex: none;
 }
-.brand-name{font-size:1.6rem;font-weight:700;letter-spacing:-.03em;color:#fff;margin-bottom:4px}
-.brand-tagline{color:var(--c-text2);font-size:.92rem}
+.ctl {
+  display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px;
+  border-radius: 999px; border: 0; background: var(--raised);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--border);
+  color: var(--text); font-size: var(--fs-body); font-weight: 600;
+  transition: background-color .2s, color .2s, box-shadow .2s, transform var(--t-ui) var(--spring);
+}
+.ctl:hover { background: color-mix(in srgb, var(--raised) 92%, var(--accent)); }
+.ctl:active { transform: scale(.95); transition-duration: var(--t-press); }
+.ctl:disabled { opacity: .45; cursor: not-allowed; }
+.ctl--icon { width: 44px; padding: 0; justify-content: center; }
+.ctl cc-finger { --finger-size: 24px; animation: none; margin: 0 -2px 0 -6px; }
+.ctl.is-on { background: var(--grad-primary); color: #fff; box-shadow: var(--shadow-press); }
+.ctl.is-live { background: var(--live); color: var(--live-ink); box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--live) 70%, transparent); }
+.ctl.is-mic { background: var(--positive); color: var(--positive-ink); box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--positive) 70%, transparent); }
+.ctl__timer { font-family: var(--mono); font-size: var(--fs-sm); }
 
-/* Form */
-.login-form{display:flex;flex-direction:column;gap:20px}
-.form-field label{
-    display:block;font-size:.72rem;font-weight:600;text-transform:uppercase;
-    letter-spacing:.07em;color:var(--c-text2);margin-bottom:8px;
-}
-.input-wrapper{
-    position:relative;display:flex;align-items:center;
-}
-.input-icon{
-    position:absolute;left:14px;color:var(--c-text3);pointer-events:none;
-}
-#name-input{
-    width:100%;padding:13px 14px 13px 42px;
-    background:var(--c-input);
-    border:1.5px solid var(--c-border-h);
-    color:#fff;
-    border-radius:var(--r-m);
-    outline:none;font-size:.95rem;
-    transition:border-color .25s,box-shadow .25s;
-}
-#name-input:focus{
-    border-color:var(--c-accent);
-    box-shadow:0 0 0 3px rgba(108,92,231,.15);
-}
-#name-input::placeholder{color:var(--c-text3)}
+.side { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-width: 0; }
+.side-chat { min-height: 0; flex: 1; }
+.task-panel { flex: none; max-height: 60%; overflow-y: auto; background: transparent; box-shadow: none; }
+.task-panel .stask + .stask { margin-top: 10px; }
+.side-chat .panel__head { padding-right: 8px; }
 
-.login-submit{
-    display:flex;align-items:center;justify-content:center;gap:10px;
-    width:100%;padding:14px;
-    background:var(--c-grad);color:#fff;
-    border:none;border-radius:var(--r-m);
-    font-weight:600;font-size:.95rem;
-    cursor:pointer;
-    box-shadow:0 4px 18px rgba(108,92,231,.3);
-    transition:transform .2s,box-shadow .2s;
+/* ---------- Телефон и узкое окно ---------- */
+@media (max-width: 900px) {
+  body { overflow: auto; }
+  .lesson { height: auto; min-height: 100%; grid-template-rows: 60px auto; }
+  .room { grid-template-columns: 1fr; }
+  .stage-wrap { padding: 0; background: transparent; box-shadow: none; flex: none; }
+  .stage-wrap { container-type: normal; }
+  .stage { width: 100%; }
+  .stage.is-board { aspect-ratio: 4 / 3; height: auto; border-radius: 16px; }
+  .side-chat { height: 70vh; min-height: 360px; flex: none; }
+  .task-panel { max-height: none; }
+  .head__product, .head__sep, #leave span { display: none; }
+  .head__me { max-width: 140px; }
 }
-.login-submit:hover{
-    transform:translateY(-1px);
-    box-shadow:0 8px 28px rgba(108,92,231,.45);
-}
-
-/* ============================ HEADER ============================ */
-.app-header{
-    height:52px;
-    background:var(--c-surface);
-    border-bottom:1px solid var(--c-border);
-    display:flex;align-items:center;justify-content:space-between;
-    padding:0 16px;
-    flex-shrink:0;
-}
-.app-header__left,.app-header__right{display:flex;align-items:center;gap:10px}
-.app-logo{
-    width:30px;height:30px;
-    background:var(--c-grad);border-radius:8px;
-    display:flex;align-items:center;justify-content:center;
-    color:#fff;flex-shrink:0;
-}
-.app-header__title{font-weight:700;font-size:.88rem;color:#fff;letter-spacing:-.02em}
-.app-header__divider{width:1px;height:18px;background:var(--c-border-h);margin:0 2px}
-
-/* Status pill */
-.status-pill{
-    display:inline-flex;align-items:center;gap:5px;
-    padding:3px 10px;border-radius:100px;
-    font-size:.7rem;font-weight:600;
-}
-.status-pill--online{background:rgba(46,216,164,.1);color:var(--c-green)}
-.status-pill__dot{
-    width:6px;height:6px;border-radius:50%;background:currentColor;
-    animation:blink 2s ease-in-out infinite;
-}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
-
-.app-header__user{font-size:.82rem;color:var(--c-text2);font-weight:500}
-
-.btn-leave{
-    display:flex;align-items:center;gap:6px;
-    padding:6px 12px;
-    background:transparent;border:1.5px solid rgba(231,76,111,.25);
-    color:var(--c-red);border-radius:var(--r);
-    font-size:.78rem;font-weight:600;cursor:pointer;
-    transition:all .2s;
-}
-.btn-leave:hover{background:var(--c-red);color:#fff;border-color:var(--c-red)}
-
-/* ============================ BODY ============================ */
-.app-body{
-    display:flex;
-    height:calc(100vh - 52px);
-    overflow:hidden;
-}
-
-.app-body__main{
-    flex:1;
-    display:flex;flex-direction:column;
-    min-width:0;
-    background:var(--c-bg);
-    padding:12px;
-    gap:10px;
-}
-
-/* Media card (video / whiteboard) */
-.media-card{
-    flex:1;
-    min-height:0;
-    border-radius:var(--r-l);
-    overflow:hidden;
-    background:#000;
-    border:1px solid var(--c-border);
-}
-.media-card__viewport{
-    position:relative;
-    width:100%;height:100%;
-    overflow:hidden;
-}
-.media-card__viewport video{
-    position:absolute;inset:0;width:100%;height:100%;
-    object-fit:contain;pointer-events:none;
-}
-.media-card__viewport canvas{position:absolute;pointer-events:none}
-
-.media-card__placeholder{
-    position:absolute;inset:0;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    gap:14px;
-}
-.placeholder-icon{color:var(--c-text3);opacity:.45}
-.media-card__placeholder span{color:var(--c-text3);font-size:.88rem}
-
-/* Share toolbar */
-.share-toolbar{
-    display:flex;align-items:center;justify-content:center;gap:12px;
-    padding:10px 0;
-    flex-shrink:0;
-}
-.btn-share{
-    display:inline-flex;align-items:center;gap:8px;
-    padding:10px 22px;
-    background:var(--c-grad);color:#fff;
-    border:none;border-radius:var(--r-m);
-    font-weight:600;font-size:.85rem;
-    cursor:pointer;
-    box-shadow:0 4px 14px rgba(108,92,231,.25);
-    transition:transform .2s,box-shadow .2s;
-}
-.btn-share:hover{transform:translateY(-1px);box-shadow:0 6px 22px rgba(108,92,231,.4)}
-
-.share-toolbar__timer{
-    font-size:1.3rem;font-weight:700;
-    color:var(--c-red);
-    font-variant-numeric:tabular-nums;
-    min-width:56px;text-align:center;
-}
-
-.btn-stop{
-    display:inline-flex;align-items:center;gap:6px;
-    padding:8px 16px;
-    background:var(--c-red);color:#fff;
-    border:none;border-radius:var(--r);
-    font-weight:600;font-size:.82rem;
-    cursor:pointer;transition:background .2s;
-}
-.btn-stop:hover{background:#d03a5e}
-
-/* ============================ CHAT SIDEBAR ============================ */
-.chat-sidebar{
-    width:340px;
-    background:var(--c-surface);
-    border-left:1px solid var(--c-border);
-    display:flex;flex-direction:column;
-    flex-shrink:0;
-}
-
-.chat-sidebar__header{
-    padding:14px 18px;
-    border-bottom:1px solid var(--c-border);
-    display:flex;align-items:center;gap:10px;
-    font-size:.85rem;font-weight:600;
-    color:var(--c-text2);
-    flex-shrink:0;
-}
-.chat-sidebar__header svg{color:var(--c-accent);flex-shrink:0}
-
-.chat-sidebar__messages{
-    flex:1;overflow-y:auto;
-    padding:14px;
-    display:flex;flex-direction:column;gap:6px;
-    min-height:0;
-}
-.chat-sidebar__messages::-webkit-scrollbar{width:3px}
-.chat-sidebar__messages::-webkit-scrollbar-track{background:transparent}
-.chat-sidebar__messages::-webkit-scrollbar-thumb{background:rgba(255,255,255,.06);border-radius:3px}
-
-.chat-msg{
-    font-size:.85rem;line-height:1.55;
-    padding:9px 12px;
-    background:var(--c-card);
-    border-radius:var(--r);
-    border:1px solid var(--c-border);
-    position:relative;
-}
-.chat-msg .sender{font-weight:600;margin-right:5px}
-.chat-msg .sender-badge{
-    display:inline-block;width:8px;height:8px;
-    border-radius:50%;margin-right:4px;vertical-align:middle;
-}
-
-/* Teacher message */
-.chat-msg.chat-msg--teacher{
-    background:linear-gradient(135deg, rgba(108,92,231,.12), rgba(78,160,247,.08));
-    border-color:rgba(108,92,231,.25);
-    border-left:3px solid var(--c-accent);
-}
-.chat-msg--teacher .sender{color:var(--c-accent)}
-.chat-msg--teacher .sender::before{
-    content:'';display:inline-block;
-    width:6px;height:6px;border-radius:50%;
-    background:var(--c-accent);margin-right:5px;vertical-align:middle;
-}
-
-/* Student messages */
-.chat-msg--student .sender{font-weight:600}
-
-.chat-msg.file a{color:var(--c-green);text-decoration:none;font-weight:500}
-.chat-msg.file a:hover{text-decoration:underline}
-
-/* Chat input */
-.chat-sidebar__input{
-    display:flex;align-items:center;gap:6px;
-    padding:12px;
-    border-top:1px solid var(--c-border);
-    background:var(--c-card);
-    flex-shrink:0;
-}
-
-.chat-icon-btn{
-    width:36px;height:36px;
-    background:var(--c-input);
-    border:1px solid var(--c-border-h);
-    color:var(--c-text2);
-    border-radius:var(--r);cursor:pointer;
-    display:flex;align-items:center;justify-content:center;
-    transition:all .2s;flex-shrink:0;padding:0;
-}
-.chat-icon-btn:hover{background:var(--c-accent);color:#fff;border-color:var(--c-accent)}
-
-#msg-input{
-    flex:1;
-    padding:9px 12px;
-    background:var(--c-input);
-    border:1.5px solid var(--c-border-h);
-    color:#fff;border-radius:var(--r);
-    outline:none;font-size:.85rem;
-    transition:border-color .2s;
-}
-#msg-input:focus{border-color:var(--c-accent)}
-#msg-input::placeholder{color:var(--c-text3)}
-
-.chat-send-btn{
-    width:36px;height:36px;
-    background:var(--c-grad);
-    border:none;color:#fff;
-    border-radius:var(--r);cursor:pointer;
-    display:flex;align-items:center;justify-content:center;
-    transition:all .2s;flex-shrink:0;
-}
-.chat-send-btn:hover{box-shadow:0 4px 12px rgba(108,92,231,.3);transform:translateY(-1px)}
-
-/* ============================ TOASTS ============================ */
-.toast-container{
-    position:fixed;top:62px;left:50%;transform:translateX(-50%);
-    z-index:1000;display:flex;flex-direction:column;gap:8px;
-    pointer-events:none;
-}
-.toast{
-    background:var(--c-card);
-    border:1px solid var(--c-border-h);
-    border-left:4px solid var(--c-red);
-    color:var(--c-text);
-    padding:12px 22px;
-    border-radius:var(--r);
-    font-size:.85rem;font-weight:500;
-    box-shadow:0 8px 32px rgba(0,0,0,.35);
-    animation:toast-in .3s ease,toast-out .3s ease 4.7s forwards;
-    pointer-events:auto;min-width:280px;text-align:center;
-}
-.toast.info{border-left-color:var(--c-accent)}
-@keyframes toast-in{from{opacity:0;transform:translateY(-16px)}to{opacity:1;transform:translateY(0)}}
-@keyframes toast-out{from{opacity:1}to{opacity:0;transform:translateY(-10px)}}
-
-/* ============================ RESPONSIVE ============================ */
-@media(max-width:768px){
-    .app-body{flex-direction:column}
-    .chat-sidebar{width:100%;height:280px;border-left:none;border-top:1px solid var(--c-border)}
-    .app-body__main{padding:8px}
+@media (max-width: 520px) {
+  .room { padding: 0 10px 10px; gap: 10px; }
+  .head { padding: 0 8px 0 12px; gap: 8px; }
+  .head__lesson { padding: 0 10px; }
+  #me-name { display: none; }
+  .controls { gap: 6px; padding: 8px; }
+  .ctl span { display: none; }
+  .ctl { width: 52px; height: 48px; justify-content: center; padding: 0; }
+  .ctl cc-finger { margin: 0; }
+  .ctl .ctl__timer { display: inline; }
+  #share-btn.is-live { width: auto; padding: 0 14px; }
+  .side { gap: 10px; }
+  .join__card { padding: 22px 18px 22px; border-radius: 26px; }
+  .join__title { font-size: 23px; }
 }

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'">
+  <title>Задание от учителя</title>
+  <link rel="stylesheet" href="../../shared/ui/theme.css">
+  <script src="../../shared/ui/theme-init.js"></script>
+  <script src="../../shared/ui/mascot.js"></script>
+  <link rel="stylesheet" href="agent.css">
+</head>
+<body>
+  <div class="task-win">
+    <header class="task-win__head">
+      <span class="brand__mark"><cc-finger point="right" size="30"></cc-finger></span>
+      <span class="task-win__title">Задание от учителя</span>
+      <button class="icon-btn" id="close" type="button" aria-label="Свернуть" title="Свернуть — вернуться можно через значок в трее"><svg class="i"><use href="#i-x"/></svg></button>
+    </header>
+    <main class="task-win__body" id="tasks"></main>
+  </div>
+  <script src="../../shared/ui/icons.js"></script>
+  <script src="../../shared/ui/common.js"></script>
+  <script src="../../shared/ui/tasks.js"></script>
+  <script src="task.js"></script>
+</body>
+</html>

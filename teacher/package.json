@@ -1,48 +1,103 @@
 {
   "name": "classcontrol-teacher",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "description": "ClassControl — приложение учителя",
   "main": "main.js",
+  "author": "Kilus",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win"
+    "prebuild": "node ../scripts/prepare-build.js",
+    "build": "electron-builder",
+    "build:win": "npm run build -- --win",
+    "build:mac": "npm run build -- --mac",
+    "build:linux": "npm run build -- --linux"
   },
   "build": {
     "appId": "com.classcontrol.teacher",
-    "productName": "ClassControl Teacher",
+    "productName": "ClassControl",
     "directories": {
       "output": "../dist/teacher"
     },
     "files": [
-      "**/*",
-      "../server/**/*"
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "assets/**",
+      "package.json"
     ],
     "extraResources": [
       {
         "from": "../server",
         "to": "server",
-        "filter": ["**/*", "!node_modules/**/*"]
+        "filter": [
+          "**/*",
+          "!test/**",
+          "!data/**",
+          "!uploads/**",
+          "!node_modules/socket.io-client/**"
+        ]
+      },
+      {
+        "from": "../server/node_modules",
+        "to": "server/node_modules",
+        "filter": [
+          "**/*",
+          "!socket.io-client/**",
+          "!**/*.md",
+          "!**/test/**"
+        ]
+      },
+      {
+        "from": "../online",
+        "to": "online"
+      },
+      {
+        "from": "../shared",
+        "to": "shared"
+      },
+      {
+        "from": "../bin",
+        "to": "bin",
+        "filter": [
+          "cloudflared*"
+        ]
       }
     ],
     "win": {
       "target": "nsis",
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.png"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "ClassControl Teacher"
-    }
+      "shortcutName": "ClassControl"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.education",
+      "icon": "assets/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Education",
+      "icon": "assets/icon.png"
+    },
+    "artifactName": "ClassControl-${version}-${os}-${arch}.${ext}"
   },
   "devDependencies": {
-    "electron": "^28.0.0",
-    "electron-builder": "^24.0.0"
-  },
-  "dependencies": {
-    "express": "^4.18.0",
-    "socket.io": "^4.7.0",
-    "multer": "^1.4.5-lts.1",
-    "socket.io-client": "^4.7.0"
+    "electron": "^45.2.0",
+    "electron-builder": "^26.0.0"
   }
 }

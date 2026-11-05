@@ -1,0 +1,74 @@
+# Установщики для Windows, macOS и Linux — собираются на серверах GitHub.
+# Запуск: вкладка Actions → «Сборка установщиков» → Run workflow, тег v* (например v2.1.0) или любой PR.
+# Готовые файлы появятся внизу страницы запуска в разделе Artifacts, а для тега — в Releases.
+name: Сборка установщиков
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+  # Для PR — чтобы установщики можно было скачать и проверить до слияния
+  pull_request:
+    paths-ignore: ['docs/**', '**/*.md']
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm --prefix server ci
+      - run: npm test
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+          - os: macos-latest
+            target: mac
+          - os: ubuntu-latest
+            target: linux
+    runs-on: ${{ matrix.os }}
+    env:
+      # Без сертификата подписи: Windows покажет «Неизвестный издатель», macOS — «Открыть» через правый клик
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Приложение учителя
+        run: |
+          npm --prefix teacher ci
+          npm --prefix teacher run build -- --${{ matrix.target }} --publish never
+      - name: Агент ученика
+        run: |
+          npm --prefix agent ci
+          npm --prefix agent run build -- --${{ matrix.target }} --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClassControl-${{ matrix.target }}
+          path: |
+            dist/*/*.exe
+            dist/*/*.dmg
+            dist/*/*.AppImage
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/**/*
+          generate_release_notes: true
