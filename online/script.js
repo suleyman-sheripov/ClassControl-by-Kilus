@@ -124,6 +124,8 @@
   });
 
   socket.on('welcome', (w) => {
+    socket.emit('interactive-sync');
+    voiceMode = w.voiceMode || 'permission'; renderMic();
     me.id = w.id;
     chat.opts.meKey = w.key;
     me.name = w.name;
@@ -349,48 +351,63 @@
   }
   $('#hand-btn').addEventListener('click', () => {
     me.hand = !me.hand;
-    socket.emit('raise-hand', me.hand);
+    socket.emit('raise-hand', { up: me.hand, question: $('#hand-question').value.trim().slice(0, 200) });
     renderHand();
     if (me.hand) toast('Учитель видит, что вы подняли руку', { kind: 'accent', icon: 'raise' });
   });
 
   // ---------- Голос (когда учитель дал слово) ----------
-  let voice = null; // { stream, peer, muted }
+  let voice = null, voiceMode = 'permission', voiceGeneration = 0, ptt = false;
+  socket.on('voice-mode', mode => { voiceMode = mode; renderMic(); });
   socket.on('voice-granted', async () => {
+    if (voice) return;
+    const generation = ++voiceGeneration;
     me.hand = false; renderHand();
+    let stream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-      voice = { stream, peer: null, muted: false };
-      voice.peer = await CC.offerPeer({ socket, target: 'teacher', kind: 'voice', stream });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      if (generation !== voiceGeneration) { stream.getTracks().forEach(t => t.stop()); return; }
+      const current = voice = { stream, peer: null, muted: false };
+      voice.peer = await CC.offerPeer({ socket, target: 'teacher', kind: 'voice', stream, onPeer: p => { if (voice === current) current.peer = p; else p.close(); } });
       renderMic();
-      toast('Учитель дал вам слово — микрофон включён', { kind: 'positive', icon: 'mic' });
+      toast('Микрофон включён', { kind: 'positive', icon: 'mic' });
     } catch (e) {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (generation === voiceGeneration) { stopVoice(); socket.emit('request-voice', false); }
       toast('Не удалось включить микрофон: разрешите доступ в браузере', { kind: 'warning', icon: 'mic-off' });
     }
   });
-  socket.on('voice-revoked', () => { stopVoice(); toast('Учитель выключил ваш микрофон', { icon: 'mic-off' }); });
-
+  socket.on('voice-revoked', () => { stopVoice(); });
   function stopVoice() {
-    if (!voice) return;
-    if (voice.peer) voice.peer.close();
-    voice.stream.getTracks().forEach(t => t.stop());
-    voice = null;
-    renderMic();
+    voiceGeneration++;
+    if (voice?.peer) voice.peer.close();
+    if (voice?.stream) voice.stream.getTracks().forEach(t => t.stop());
+    voice = null; renderMic();
   }
   function renderMic() {
     const b = $('#mic-btn');
-    b.disabled = !voice;
-    b.classList.toggle('is-mic', Boolean(voice && !voice.muted));
-    b.querySelector('use').setAttribute('href', voice && !voice.muted ? '#i-mic' : '#i-mic-off');
-    b.querySelector('span').textContent = !voice ? 'Микрофон' : voice.muted ? 'Включить микрофон' : 'Выключить микрофон';
-    b.title = voice ? '' : 'Учитель включит микрофон, когда даст слово';
+    b.disabled = !voice && voiceMode !== 'free';
+    b.classList.toggle('is-mic', Boolean(voice));
+    b.querySelector('use').setAttribute('href', voice ? '#i-mic' : '#i-mic-off');
+    b.querySelector('span').textContent = voice ? 'Выключить микрофон' : 'Включить микрофон';
+    b.title = b.disabled ? 'Учитель включит микрофон, когда даст слово' : '';
+    $('#push-to-talk').classList.toggle('hidden', voiceMode !== 'free');
   }
   $('#mic-btn').addEventListener('click', () => {
-    if (!voice) return;
-    voice.muted = !voice.muted;
-    voice.stream.getAudioTracks().forEach(t => { t.enabled = !voice.muted; });
-    renderMic();
+    if (voice) { stopVoice(); socket.emit('request-voice', false); }
+    else if (voiceMode === 'free') socket.emit('request-voice', true);
   });
+  function holdVoice(on) {
+    if (voiceMode !== 'free' || !me.joined || on === ptt) return;
+    ptt = on;
+    if (on) socket.emit('request-voice', true);
+    else { stopVoice(); socket.emit('request-voice', false); }
+  }
+  $('#push-to-talk').addEventListener('pointerdown', e => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); holdVoice(true); });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) $('#push-to-talk').addEventListener(ev, () => holdVoice(false));
+  window.addEventListener('blur', () => holdVoice(false));
+  document.addEventListener('keydown', e => { if (e.code === 'Space' && !e.repeat && !e.target.closest('input,textarea,select,[contenteditable=true]') && voiceMode === 'free' && me.joined) { e.preventDefault(); holdVoice(true); } });
+  document.addEventListener('keyup', e => { if (e.code === 'Space' && ptt) { e.preventDefault(); holdVoice(false); } });
 
   // ---------- Показ своего экрана (до 5 минут) ----------
   let shareStream = null;
@@ -473,6 +490,7 @@
 
   // ---------- Опрос и сдача работы ----------
   const tasks = { poll: null, collect: null };
+  socket.on('interactive-update',data=>{tasks.interactive=data;renderTasks();});
   let submitWaiter = null;
   const finishSubmit = (r) => { const w = submitWaiter; submitWaiter = null; uploading = false; if (w) w(r); };
   let uploading = false;
@@ -499,10 +517,12 @@
     } catch (err) { finishSubmit({ ok: false, error: 'Нет связи с учителем' }); }
   });
   function renderTasks() {
-    const has = Boolean(tasks.poll || tasks.collect);
+    const has = Boolean(tasks.poll || tasks.collect || tasks.interactive?.quizzes.length || tasks.interactive?.reviews.length || tasks.interactive?.feedback.length);
     $('#task-panel').classList.toggle('hidden', !has);
     if (!has) return;
     CC.renderStudentTasks($('#task-root'), tasks, {
+      onInteractive:(event,data)=>CC.interactiveSend(socket,event,data),
+      workUrl:url=>url+'?socketId='+encodeURIComponent(socket.id)+'&token='+encodeURIComponent(me.uploadToken),
       onAnswer: (id, option) => socket.emit('poll-answer', { id, option }),
       onSubmit: (collectId) => new Promise((resolve) => {
         const input = $('#submit-file');
