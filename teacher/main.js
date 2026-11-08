@@ -2,6 +2,7 @@
 const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog, shell, powerSaveBlocker, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const https = require('https');
 const { spawn } = require('child_process');
 
@@ -10,6 +11,7 @@ const RES = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
 const SERVER_PATH = path.join(RES, 'server', 'server.js');
 const ONLINE_DIR = path.join(RES, 'online');
 const SHARED_DIR = path.join(RES, 'shared');
+if(!app.isPackaged&&process.env.CLASSCONTROL_PROFILE){fs.mkdirSync(process.env.CLASSCONTROL_PROFILE,{recursive:true});app.setPath('userData',process.env.CLASSCONTROL_PROFILE);}
 
 // Демо: виртуальный класс на одном компьютере. Отдельная папка данных — проба не трогает настоящий кабинет.
 const DEMO = process.env.CLASSCONTROL_DEMO === '1' || process.argv.includes('--demo');
@@ -177,6 +179,7 @@ ipcMain.handle('boot', () => ({
   port: lessonServer ? lessonServer.port : null,
   token: lessonServer ? lessonServer.token : '',
   serverError,
+  fingerprint: lessonServer?.fingerprint || '',
   settings,
   platform: process.platform,
   version: app.getVersion(),
@@ -408,6 +411,7 @@ function writeReport(snap, boardPng, baseDir) {
     }
   }
 
+  if(snap.interactive)fs.writeFileSync(path.join(dir,'Интерактив.json'),JSON.stringify(snap.interactive,null,2));
   if (boardPng && boardPng.startsWith('data:image/png;base64,')) {
     fs.writeFileSync(path.join(dir, 'Доска.png'), Buffer.from(boardPng.split(',')[1], 'base64'));
   }
@@ -439,64 +443,16 @@ function cloudflaredName() {
   return process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared';
 }
 
-function findCloudflared() {
-  const candidates = [
-    path.join(RES, 'bin', cloudflaredName()),
-    path.join(app.getPath('userData'), 'bin', cloudflaredName()),
-    path.join(path.dirname(app.getPath('exe')), cloudflaredName()),
-    path.join(__dirname, '..', cloudflaredName())
-  ];
-  return candidates.find(p => fs.existsSync(p)) || null;
-}
-
-function download(url, dest, redirects = 0) {
-  return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'ClassControl' } }, (res) => {
-      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirects < 6) {
-        res.resume();
-        return resolve(download(res.headers.location, dest, redirects + 1));
-      }
-      if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
-      const total = Number(res.headers['content-length']) || 0;
-      let got = 0;
-      const tmp = dest + '.part';
-      const out = fs.createWriteStream(tmp);
-      res.on('data', (c) => {
-        got += c.length;
-        if (total) setTunnel({ state: 'downloading', progress: Math.round(got / total * 100) });
-      });
-      res.pipe(out);
-      out.on('finish', () => out.close(() => { fs.renameSync(tmp, dest); resolve(dest); }));
-      out.on('error', reject);
-    }).on('error', reject);
-  });
-}
-
 async function ensureCloudflared() {
-  const found = findCloudflared();
-  if (found) return found;
-  const asset = {
-    win32: 'cloudflared-windows-amd64.exe',
-    linux: process.arch === 'arm64' ? 'cloudflared-linux-arm64' : 'cloudflared-linux-amd64',
-    darwin: process.arch === 'arm64' ? 'cloudflared-darwin-arm64.tgz' : 'cloudflared-darwin-amd64.tgz'
-  }[process.platform];
-  if (!asset) throw new Error('Скачайте cloudflared вручную и положите рядом с программой');
-  const dir = path.join(app.getPath('userData'), 'bin');
-  fs.mkdirSync(dir, { recursive: true });
-  const dest = path.join(dir, cloudflaredName());
-  setTunnel({ state: 'downloading', progress: 0, error: null });
-  const url = `https://github.com/cloudflare/cloudflared/releases/latest/download/${asset}`;
-  if (asset.endsWith('.tgz')) {
-    // На macOS cloudflared поставляется архивом — распаковываем системным tar
-    const tgz = dest + '.tgz';
-    await download(url, tgz);
-    await new Promise((res, rej) => require('child_process').execFile('tar', ['-xzf', tgz, '-C', dir], (err) => (err ? rej(err) : res())));
-    fs.rmSync(tgz, { force: true });
-  } else {
-    await download(url, dest);
-  }
-  if (process.platform !== 'win32') fs.chmodSync(dest, 0o755);
-  return dest;
+  const platform={win32:'win',darwin:'mac',linux:'linux'}[process.platform];
+  const dir=app.isPackaged?path.join(RES,'bin'):path.join(RES,'bin',platform+'-'+process.arch);
+  const binary=path.join(dir,cloudflaredName());
+  const metaPath=path.join(dir,'integrity.json');
+  if(!fs.existsSync(binary)||!fs.existsSync(metaPath))throw new Error('Проверенный модуль отсутствует. Переустановите приложение; при разработке выполните node scripts/vendor-cloudflared.js.');
+  const meta=JSON.parse(fs.readFileSync(metaPath,'utf8'));
+  const digest=crypto.createHash('sha256').update(fs.readFileSync(binary)).digest('hex');
+  if(!/^[0-9a-f]{64}$/.test(meta.binaryDigest)||digest!==meta.binaryDigest)throw new Error('Контрольная сумма модуля не совпала. Переустановите приложение.');
+  return binary;
 }
 
 async function startTunnel() {

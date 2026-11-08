@@ -7,6 +7,8 @@
   CC.ClassViewer = function ({ socket, onStream, onState }) {
     let parent = null;             // { id, peer }
     let stream = null;
+    let videoPolicy = {};
+    socket.on('broadcast-started',state=>{videoPolicy=state?.video||{};});
     const children = new Map();    // childId -> peer | 'pending'
 
     async function offerChild(id) {
@@ -16,9 +18,12 @@
       try {
         const peer = await CC.offerPeer({
           socket, target: id, kind: 'broadcast', stream,
+          onPeer: p => children.set(id, p),
           onState: (st) => { if (st === 'failed') { socket.emit('relay-failed', { id }); dropChild(id); } }
         });
-        CC.limitBitrate(peer.pc, 2500);
+        const video = stream.getVideoTracks()[0];
+        const media = video ? video.getSettings() : {};
+        CC.limitBitrate(peer.pc, CC.videoBudget({ ...media, ...videoPolicy, fps: videoPolicy.fps || media.frameRate || 30, viewers: Math.max(1, children.size) }));
         children.set(id, peer);
       } catch (e) {
         socket.emit('relay-failed', { id });

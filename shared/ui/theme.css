@@ -945,3 +945,9 @@ cc-finger[motion="pop"] .finger__move { transform-origin: 60px 100px; animation:
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
+
+/* Secondary semantic accent: mint for live classroom work, purple for navigation. */
+:root { --activity:#167a66; --activity-ink:#fff; --activity-tint:rgba(22,122,102,.12); }
+:root[data-theme="dark"] { --activity:#55cbb1; --activity-ink:#092b24; --activity-tint:rgba(85,203,177,.16); }
+.btn--live { background:var(--activity); color:var(--activity-ink); box-shadow:0 6px 18px -8px var(--activity); }
+.btn--live:hover { background:color-mix(in srgb,var(--activity) 88%,white); }

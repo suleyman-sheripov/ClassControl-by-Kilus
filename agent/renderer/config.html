@@ -51,11 +51,11 @@
             <button type="button" class="seg__btn" data-mode="manual">Указать адрес</button>
           </div>
         </div>
-        <div class="field hidden" id="manual">
+        <p class="field__hint" id="auto-hint">Агент сам найдёт учителя своего кабинета в локальной сети школы. Компьютеры должны быть в одной сети, а сетевой экран — разрешать поиск.</p><div class="field hidden" id="manual">
           <input class="input mono" id="serverAddress" placeholder="192.168.1.10:3000">
-          <span class="field__hint">Если в школе несколько кабинетов в одной сети — закрепите агент за компьютером своего учителя.</span>
+          <span class="field__hint">Введите адрес ПК учителя и порт, например 192.168.1.10:3000. Он указан у учителя внизу окна и в «Пригласить». Используйте, если поиск заблокирован или ПК находятся в разных сегментах сети.</span>
         </div>
-        <div class="field" id="found-wrap">
+        <div class="field"><button class="btn" type="button" id="check-address">Проверить подключение</button><span class="field__hint" id="check-result" role="status"></span></div><div class="field" id="found-wrap">
           <span class="field__label">Учителя в сети сейчас</span>
           <div class="found" id="found"></div>
         </div>

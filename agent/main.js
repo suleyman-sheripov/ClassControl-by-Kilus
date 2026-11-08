@@ -10,7 +10,7 @@ const {
 } = require('electron');
 // Проба на одном компьютере с учителем (npm start -- --agent): окна агента — обычные окна,
 // иначе блокировка и эфир закрыли бы экран самого учителя
-const LOCAL_TEST = process.env.CLASSCONTROL_AGENT_LOCAL === '1';
+const LOCAL_TEST = !app.isPackaged && process.env.CLASSCONTROL_AGENT_LOCAL === '1';
 const themeBg = () => (nativeTheme.shouldUseDarkColors ? '#0b0d18' : '#eef0f7');
 const path = require('path');
 const fs = require('fs');
@@ -18,9 +18,13 @@ const os = require('os');
 const dgram = require('dgram');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
+const desktopGuard = require('./platform/windows-desktop')({ enabled: process.platform === 'win32' && !LOCAL_TEST, onError: message => { console.error(message); if(bgWindow&&!bgWindow.isDestroyed())bgWindow.webContents.send('control-result',{action:'lock',ok:false,message:'Системные клавиши не заблокированы. Проверьте журнал агента.'}); } });
+app.on('will-quit', () => desktopGuard.close());
+app.whenReady().then(()=>desktopGuard.prepare());
 
 const RES = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
 const SHARED_DIR = path.join(RES, 'shared');
+if(!app.isPackaged&&process.env.CLASSCONTROL_PROFILE){fs.mkdirSync(process.env.CLASSCONTROL_PROFILE,{recursive:true});app.setPath('userData',process.env.CLASSCONTROL_PROFILE);}
 const WANT_CONFIG = process.argv.includes('--config');
 
 if (!app.requestSingleInstanceLock()) {
@@ -63,6 +67,9 @@ function applyAutoStart() {
   if (process.platform === 'linux' || !app.isPackaged) return;   // из исходников автозапуск не ставим
   app.setLoginItemSettings({ openAtLogin: settings.autoStart, path: app.getPath('exe'), args: ['--hidden'] });
 }
+
+// Проба на одном ПК не засоряет настоящий рабочий стол учителя.
+if(LOCAL_TEST){const testDesktop=path.join(app.getPath('userData'),'test-desktop');fs.mkdirSync(testDesktop,{recursive:true});app.setPath('desktop',testDesktop);}
 
 // ---------- Окна ----------
 let tray = null;
@@ -131,16 +138,23 @@ function openChat() {
 
 function openDemo() {
   if (demoWindow && !demoWindow.isDestroyed()) return;
+  const primary = screen.getPrimaryDisplay();
   demoWindow = new BrowserWindow(LOCAL_TEST ? { width: 960, height: 600, title: 'Эфир учителя (проба)', backgroundColor: '#000000', webPreferences: webPrefs() } : {
-    fullscreen: true, frame: false, alwaysOnTop: true, skipTaskbar: true,
+    x: primary.bounds.x, y: primary.bounds.y, width: primary.bounds.width, height: primary.bounds.height,
+    show: false, fullscreen: true, frame: false, alwaysOnTop: true, skipTaskbar: true,
     backgroundColor: '#000000', webPreferences: webPrefs()
   });
-  if (!LOCAL_TEST) demoWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (!LOCAL_TEST) { demoWindow.setAlwaysOnTop(true, 'screen-saver'); if(process.platform==='darwin')demoWindow.setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true}); }
+  demoWindow.once('ready-to-show', () => {
+    if (!demoWindow || demoWindow.isDestroyed()) return;
+    if (!LOCAL_TEST) { demoWindow.setBounds(primary.bounds); demoWindow.setFullScreen(true); demoWindow.setAlwaysOnTop(true, 'screen-saver'); desktopGuard.present(true); }
+    demoWindow.show(); demoWindow.moveTop();
+  });
   demoWindow.loadFile(page('demo.html'));
   demoWindow.on('close', (e) => {
     if (!LOCAL_TEST && broadcastState.active && !broadcastState.allowExit && !app.isQuitting && !demoWindow.allowClose) e.preventDefault();
   });
-  demoWindow.on('closed', () => { demoWindow = null; });
+  demoWindow.on('closed', () => { demoWindow = null; desktopGuard.present(false); });
 }
 
 function closeDemo(force) {
@@ -156,6 +170,7 @@ function openConfig() {
     width: 460, height: 620, resizable: false, title: 'ClassControl — настройки агента',
     backgroundColor: themeBg(), autoHideMenuBar: true, webPreferences: webPrefs()
   });
+  configWindow.on('closed',()=>{configUnlocked=false;configWindow=null;});
   configWindow.setMenuBarVisibility(false);
   configWindow.loadFile(page('config.html'));
 }
@@ -182,15 +197,17 @@ function hideBanner() {
 let lockText = '';
 function lockScreens(text) {
   lockText = text || 'Внимание на учителя';
+  desktopGuard.lock(true);
   if (lockWindows.length) { lockWindows.forEach(w => !w.isDestroyed() && w.webContents.send('lock-text', lockText)); return; }
   for (const d of (LOCAL_TEST ? [screen.getPrimaryDisplay()] : screen.getAllDisplays())) {
-    const w = new BrowserWindow(LOCAL_TEST ? { width: 960, height: 600, title: 'Блокировка (проба)' } : {
+    const w = new BrowserWindow(LOCAL_TEST ? { width: 960, height: 600, title: 'Блокировка (проба)',webPreferences:webPrefs() } : {
       x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
       frame: false, fullscreen: true, kiosk: true, alwaysOnTop: true, skipTaskbar: true,
       movable: false, resizable: false, minimizable: false, closable: false,
       backgroundColor: themeBg(), webPreferences: webPrefs()
     });
-    if (!LOCAL_TEST) w.setAlwaysOnTop(true, 'screen-saver');
+    if (!LOCAL_TEST) { w.setAlwaysOnTop(true, 'screen-saver');if(process.platform==='darwin')w.setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true}); }
+    w.once('ready-to-show', () => { if (!LOCAL_TEST && !w.isDestroyed()) { w.setBounds(d.bounds); w.setKiosk(true); w.setAlwaysOnTop(true, 'screen-saver'); w.moveTop(); } });
     w.loadFile(page('lock.html'));
     w.webContents.on('did-finish-load', () => w.webContents.send('lock-text', lockText));
     w.on('close', (e) => { if (!w.allowClose && !app.isQuitting) e.preventDefault(); });
@@ -200,6 +217,7 @@ function lockScreens(text) {
   reportStatus();
 }
 function unlockScreens() {
+  desktopGuard.lock(false);
   lockWindows.forEach(w => { if (!w.isDestroyed()) { w.allowClose = true; w.setClosable(true); w.close(); } });
   lockWindows = [];
   reportStatus();
@@ -325,8 +343,8 @@ const PROTECTED = new Set(['explorer.exe', 'csrss.exe', 'winlogon.exe', 'lsass.e
 function listProcesses() {
   return new Promise((resolve) => {
     if (process.platform === 'win32') {
-      const ps = "Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object Id,ProcessName,MainWindowTitle | ConvertTo-Json -Compress";
-      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 8000, maxBuffer: 4e6 }, (err, out) => {
+      const ps = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object Id,ProcessName,MainWindowTitle | ConvertTo-Json -Compress";
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 8000, maxBuffer: 4e6, encoding: 'utf8' }, (err, out) => {
         if (err) return resolve([]);
         try {
           let list = JSON.parse(out || '[]');
@@ -418,11 +436,35 @@ let discoverTimer = null;
 let queryClient = null;
 let listener = null;
 
-function setServer(address) {
+let pendingIdentity = null;
+let serverChoice = 0;
+async function inspectServer(address) {
+  const url = new URL(/^https?:\/\//.test(address) ? address : 'http://' + address);
+  if (!['http:','https:'].includes(url.protocol) || url.username || url.password) throw new Error('Нужен адрес ПК без логина и пароля');
+  const res = await fetch(new URL('/api/identity',url),{signal:AbortSignal.timeout(5000)});
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  if(Number(res.headers.get('content-length')||0)>16384)throw new Error('Ответ учителя слишком большой');
+  let size=0,parts=[];for await(const chunk of res.body){size+=chunk.length;if(size>16384)throw new Error('Ответ учителя слишком большой');parts.push(Buffer.from(chunk));}
+  const data=JSON.parse(Buffer.concat(parts).toString('utf8'));
+  const fingerprint=require(path.join(SHARED_DIR,'teacher-identity')).fingerprint(data.publicKey);
+  return {address:url.origin,publicKey:data.publicKey,fingerprint,room:String(data.room||''),teacher:String(data.teacher||'Учитель')};
+}
+async function setServer(address) {
   if (!address || address === serverAddress) return;
-  serverAddress = address;
-  console.log('[AGENT] Сервер урока:', address);
-  sendAll('server-address', address);
+  const choice = ++serverChoice;
+  try {
+    const identity = await inspectServer(address);
+    if (choice !== serverChoice) return;
+    pendingIdentity=identity;
+    // Initial trust is an administrator decision; a name or LAN announcement is not an identity.
+    if (!settings.trustedKey || require(path.join(SHARED_DIR,'teacher-identity')).fingerprint(settings.trustedKey)!==identity.fingerprint) {
+      console.warn('[AGENT] Требуется подтверждение ключа учителя в настройках агента');
+      if (LOCAL_TEST && /^http:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(identity.address)) { settings.trustedKey=identity.publicKey; }
+      else { if (configWindow && !configWindow.isDestroyed()) configWindow.webContents.send('identity-pending',identity); return; }
+    }
+    serverAddress=identity.address;
+    sendAll('server-address',serverAddress);
+  } catch(err) { console.warn('[AGENT] Учитель недоступен:',err.message); }
 }
 
 function startDiscovery() {
@@ -612,7 +654,7 @@ ipcMain.on('connection-state', (e, s) => {
   if (tray) tray.setToolTip(connected ? `ClassControl — на связи с ${teacherName}` : 'ClassControl — ищу учителя…');
   sendAll('connection-state', { connected, teacherName, socketId: agentSocketId });
 });
-ipcMain.on('control', (e, cmd) => handleControl(cmd));
+ipcMain.on('control', (e, cmd) => {if(bgWindow&&!bgWindow.isDestroyed()&&e.sender===bgWindow.webContents)handleControl(cmd);});
 ipcMain.on('remote-session', (e, on) => {
   remoteActive = Boolean(on);
   if (on) { loadNut(); showBanner('Учитель подключился к вашему экрану'); } else { releaseHeld(); hideBanner(); }
@@ -648,7 +690,8 @@ ipcMain.on('chat-request-history', () => { if (bgWindow && !bgWindow.isDestroyed
 ipcMain.on('message-close', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });
 
 // ---------- Задания учителя: файл на рабочий стол ----------
-const TASKS_DIR = path.join(app.getPath('desktop'), 'Задания');
+const deliveredFiles=new Map();
+const TASKS_DIR = path.join(app.getPath('desktop'), 'От учителя');
 function uniquePath(dir, name) {
   const safe = String(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 150) || 'файл';
   const ext = path.extname(safe), base = safe.slice(0, safe.length - ext.length);
@@ -657,8 +700,10 @@ function uniquePath(dir, name) {
   return p;
 }
 ipcMain.on('assignment', async (e, item) => {
+  if(!bgWindow||bgWindow.isDestroyed()||e.sender!==bgWindow.webContents)return;
   try {
-    if (!/^https?:\/\//.test(item.url) || !serverAddress || !item.url.startsWith(serverAddress)) return;
+    if (!/^https?:\/\//.test(item.url) || !serverAddress || new URL(item.url).origin !== new URL(serverAddress).origin) return;
+    if(!/^[a-f0-9]{64}$/.test(item.sha256||''))throw new Error('Не получена подписанная контрольная сумма файла');
     fs.mkdirSync(TASKS_DIR, { recursive: true });
     const res = await fetch(item.url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -667,30 +712,25 @@ ipcMain.on('assignment', async (e, item) => {
     if (Number(res.headers.get('content-length') || 0) > LIMIT) throw new Error('файл больше 50 МБ');
     const dest = uniquePath(TASKS_DIR, item.filename);
     const part = dest + '.part';
-    const out = fs.createWriteStream(part);
-    let total = 0;
+    let total = 0;const digest=crypto.createHash('sha256');
     try {
-      for await (const chunk of res.body) {
-        total += chunk.length;
-        if (total > LIMIT) throw new Error('файл больше 50 МБ');
-        if (!out.write(chunk)) await new Promise(r => out.once('drain', r));
-      }
-      await new Promise((r, j) => out.end((err) => (err ? j(err) : r())));
-      fs.renameSync(part, dest);
-    } catch (err) {
-      out.destroy();
-      fs.rmSync(part, { force: true });
-      throw err;
-    }
-    showMessage(`Новое задание: «${item.filename}». Файл лежит на рабочем столе в папке «Задания».`, dest);
+      const {Readable,Transform}=require('node:stream');
+      const limit=new Transform({transform(chunk,encoding,callback){total+=chunk.length;digest.update(chunk);if(total>LIMIT)callback(new Error('файл больше 50 МБ'));else callback(null,chunk);}});
+      await require('node:stream/promises').pipeline(Readable.fromWeb(res.body),limit,fs.createWriteStream(part));
+      if(digest.digest('hex')!==item.sha256)throw new Error('Контрольная сумма материала не совпала');
+      fs.renameSync(part,dest);
+    } catch(err) {fs.rmSync(part,{force:true});throw err;}
+    deliveredFiles.set(dest,item.id);
+    if(bgWindow&&!bgWindow.isDestroyed())bgWindow.webContents.send('socket-emit',{event:'assignment-receipt',data:{id:item.id,status:'received'}});
+    showMessage(`Учитель прислал файл «${item.filename}». Он сохранён на рабочем столе в папке «От учителя».`, dest);
   } catch (err) {
     console.error('[AGENT] Задание не скачалось:', err.message);
   }
 });
-ipcMain.on('open-file', (e, p) => {
+ipcMain.on('open-file', (e, p, folder = false) => {
   // Открываем только файлы из папки заданий
   const full = path.resolve(String(p || ''));
-  if (full.startsWith(TASKS_DIR + path.sep)) shell.openPath(full);
+  if (full.startsWith(TASKS_DIR + path.sep)) { if (folder) shell.showItemInFolder(full); else shell.openPath(full).then(error=>{if(!error&&deliveredFiles.has(full)&&bgWindow&&!bgWindow.isDestroyed())bgWindow.webContents.send('socket-emit',{event:'assignment-receipt',data:{id:deliveredFiles.get(full),status:'opened'}});}); }
   else if (full === TASKS_DIR) shell.openPath(TASKS_DIR);
 });
 
@@ -717,11 +757,13 @@ function updateTray() {
   if (!tray) return;
   const items = [{ label: 'Открыть беседу', click: openChat }];
   if (currentTasks.poll && currentTasks.poll.open !== false) items.push({ label: 'Ответить на опрос', click: openTaskWindow });
+  if (currentTasks.interactive&&(currentTasks.interactive.quizzes?.length||currentTasks.interactive.reviews?.length||currentTasks.interactive.feedback?.length)) items.push({label:'Интерактив',click:openTaskWindow});
   if (currentTasks.collect) items.push({ label: 'Сдать работу', click: openTaskWindow });
   tray.setContextMenu(Menu.buildFromTemplate(items));
 }
 ipcMain.on('task', (e, t) => {
   if (t.type === 'reset') { currentTasks = { poll: null, collect: null }; if (taskWindow && !taskWindow.isDestroyed()) taskWindow.close(); }
+  if(t.type==='interactive'){const previous=currentTasks.interactive;currentTasks.interactive=t.data;const feedbackChanged=t.data.feedback?.some(f=>!previous?.feedback?.some(old=>old.collectionId===f.collectionId&&old.text===f.text));const fresh=[...(t.data.quizzes||[]),...(t.data.reviews||[])].some(q=>q.open&&![...(previous?.quizzes||[]),...(previous?.reviews||[])].some(old=>old.id===q.id));if(fresh||feedbackChanged)openTaskWindow();else sendTask();}
   if (t.type === 'poll') { currentTasks.poll = { ...t.poll, open: true }; openTaskWindow(); }
   if (t.type === 'poll-closed') {
     if (currentTasks.poll && currentTasks.poll.id === t.poll.id) {
@@ -739,6 +781,12 @@ ipcMain.on('task', (e, t) => {
   }
   updateTray();
 });
+const interactiveRequests=new Map();
+ipcMain.handle('interactive-send',(e,event,data)=>{
+  if(!['quiz-answer','review-answer'].includes(event)||!bgWindow||bgWindow.isDestroyed())return {ok:false};
+  return new Promise(resolve=>{const id=crypto.randomBytes(8).toString('hex');const timer=setTimeout(()=>{interactiveRequests.delete(id);resolve({ok:false,error:'Нет ответа от учителя'});},6000);interactiveRequests.set(id,{resolve,timer});bgWindow.webContents.send('interactive-send',{id,event,data});});
+});
+ipcMain.on('interactive-result',(e,{id,result})=>{if(!bgWindow||e.sender!==bgWindow.webContents)return;const request=interactiveRequests.get(id);if(request){clearTimeout(request.timer);interactiveRequests.delete(id);request.resolve(result);}});
 ipcMain.on('task-answer', (e, { pollId, option }) => {
   if (!currentTasks.poll || currentTasks.poll.id !== pollId) return;
   currentTasks.poll.myVote = option;
@@ -805,10 +853,15 @@ ipcMain.on('set-focus', (e, f) => {
 
 // Настройки под паролем
 let configUnlocked = false;
-ipcMain.handle('config-state', () => ({ hasPassword: Boolean(settings.passwordHash), unlocked: configUnlocked }));
+let configFailures=0,configRetryAt=0;
+const isConfig=e=>Boolean(configWindow&&!configWindow.isDestroyed()&&e.sender===configWindow.webContents);
+ipcMain.handle('config-state', e => ({ hasPassword: Boolean(settings.passwordHash), unlocked: configUnlocked&&isConfig(e) }));
 ipcMain.handle('config-unlock', (e, pw) => {
+  if(!isConfig(e))return {ok:false,error:'Откройте окно настроек агента'};
+  if(Date.now()<configRetryAt)return {ok:false,error:'Слишком много попыток. Подождите минуту.'};
+  if(typeof pw!=='string'||pw.length>200)return {ok:false,error:'Некорректный пароль'};
   if (!settings.passwordHash) {
-    if (!pw || String(pw).length < 4) return { ok: false, error: 'Пароль — минимум 4 символа' };
+    if (!pw || String(pw).length < 8) return { ok: false, error: 'Пароль — минимум 8 символов' };
     settings.passwordSalt = crypto.randomBytes(16).toString('hex');
     settings.passwordHash = hashPassword(pw, settings.passwordSalt);
     saveSettings();
@@ -817,17 +870,32 @@ ipcMain.handle('config-unlock', (e, pw) => {
   }
   const ok = crypto.timingSafeEqual(Buffer.from(hashPassword(pw, settings.passwordSalt), 'hex'), Buffer.from(settings.passwordHash, 'hex'));
   configUnlocked = ok;
+  if(ok){configFailures=0;configRetryAt=0;}else if(++configFailures>=5){configRetryAt=Date.now()+60000;configFailures=0;}
   return ok ? { ok: true } : { ok: false, error: 'Неверный пароль' };
 });
-ipcMain.handle('config-get', () => {
-  if (!configUnlocked) return null;
+ipcMain.handle('config-get', e => {
+  if (!configUnlocked||!isConfig(e)) return null;
   const { passwordHash, passwordSalt, ...rest } = settings;
   const now = Date.now();
   const found = [...discovered].filter(([, d]) => now - d.ts < 15000).map(([a, d]) => ({ address: a, room: d.room, teacher: d.teacher }));
-  return { ...rest, hostname: os.hostname(), serverAddressNow: serverAddress, connected, found };
+  return { ...rest, pendingIdentity, hostname: os.hostname(), serverAddressNow: serverAddress, connected, found };
+});
+ipcMain.handle('config-check', async (e,address) => {
+  if (!configUnlocked||!isConfig(e)) return {ok:false,error:'Откройте настройки под паролем администратора'};
+  try { pendingIdentity=await inspectServer(String(address || serverAddress || settings.serverAddress));return {ok:true,...pendingIdentity}; }
+  catch(err) { return {ok:false,error:err.message}; }
+});
+ipcMain.handle('config-trust', (e,fingerprint) => {
+  if (!configUnlocked || !isConfig(e) || !pendingIdentity || pendingIdentity.fingerprint!==fingerprint) return false;
+  settings.trustedKey=pendingIdentity.publicKey;saveSettings();
+  const address=pendingIdentity.address;serverAddress=null;setServer(address);return true;
+});
+ipcMain.handle('verify-server-event', (e,{event,args,proof,nonce}) => {
+  if (!settings.trustedKey) return false;
+  return require(path.join(SHARED_DIR,'teacher-identity')).verify(settings.trustedKey,event,args,proof,nonce);
 });
 ipcMain.handle('config-save', (e, patch) => {
-  if (!configUnlocked) return false;
+  if (!configUnlocked||!isConfig(e)) return false;
   for (const k of ['pcName', 'serverMode', 'serverAddress', 'autoStart', 'notifications', 'room']) {
     if (patch[k] !== undefined) settings[k] = patch[k];
   }
@@ -840,8 +908,8 @@ ipcMain.handle('config-save', (e, patch) => {
   if (bgWindow && !bgWindow.isDestroyed()) bgWindow.webContents.reload();
   return true;
 });
-ipcMain.handle('config-quit', () => {
-  if (!configUnlocked) return false;
+ipcMain.handle('config-quit', e => {
+  if (!configUnlocked||!isConfig(e)) return false;
   settings.stoppedAtBoot = bootTime();
   saveSettings();
   app.isQuitting = true;
@@ -849,7 +917,7 @@ ipcMain.handle('config-quit', () => {
   app.quit();
   return true;
 });
-ipcMain.on('config-lock', () => { configUnlocked = false; });
+ipcMain.on('config-lock', e => { if(isConfig(e))configUnlocked = false; });
 
 // ---------- Жизненный цикл ----------
 app.on('second-instance', (e, argv) => {

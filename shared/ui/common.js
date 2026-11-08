@@ -491,12 +491,16 @@
    *   const b = new CC.Board(container, canvas, { follow: true });
    *   b.add(stroke); b.setStrokes(list); b.setView({ cx, cy, w, h });
    */
-  const PAPER = '#fbfbf8', DOT = '#d9dcd6';
+  const boardDark=()=>document.documentElement.dataset.theme==='dark';
+  const boardPaper=()=>boardDark()?'#1b2533':'#fbfbf8';
+  const boardDot=()=>boardDark()?'#425168':'#d9dcd6';
+  const boardInk=color=>boardDark()&&['#111111','#111','#000000','#000'].includes((color||'#111').toLowerCase())?'#f1f5f9':(color||'#111');
   class Board {
     constructor(container, canvas, opts = {}) {
       this.container = container;
       this.canvas = canvas;
       this.ctx = canvas.getContext('2d');
+      Board.instances.add(this);
       this.follow = Boolean(opts.follow);
       this.strokes = [];
       this.cam = { cx: 0, cy: 0, zoom: 1 };
@@ -506,6 +510,8 @@
       Object.assign(canvas.style, { position: 'absolute', left: '0', top: '0', width: '100%', height: '100%', transform: 'none' });
       this.ro = new ResizeObserver(() => this.resize());
       this.ro.observe(container);
+      this.themeObserver=new MutationObserver(()=>this.invalidate());
+      this.themeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
       this.resize();
     }
 
@@ -592,8 +598,8 @@
       const ox = (this.cssW / 2 - this.cam.cx * this.cam.zoom) % step;
       const oy = (this.cssH / 2 - this.cam.cy * this.cam.zoom) % step;
       const st = this.container.style;
-      st.backgroundColor = PAPER;
-      st.backgroundImage = `radial-gradient(circle at 1px 1px, ${DOT} 1.1px, transparent 0)`;
+      st.backgroundColor = boardPaper();
+      st.backgroundImage = `radial-gradient(circle at 1px 1px, ${boardDot()} 1.1px, transparent 0)`;
       st.backgroundSize = `${step}px ${step}px`;
       st.backgroundPosition = `${ox}px ${oy}px`;
     }
@@ -620,13 +626,25 @@
 
     static drawSegment(c, s) {
       c.globalCompositeOperation = s.tool === 'eraser' ? 'destination-out' : 'source-over';
-      c.strokeStyle = s.color || '#111';
+      c.strokeStyle = boardInk(s.color);
       c.lineWidth = s.width;
       c.lineCap = 'round'; c.lineJoin = 'round';
-      c.beginPath();
-      c.moveTo(s.x0, s.y0);
-      c.lineTo(s.x1, s.y1);
-      c.stroke();
+      const x=Math.min(s.x0,s.x1), y=Math.min(s.y0,s.y1), w=Math.abs(s.x1-s.x0), h=Math.abs(s.y1-s.y0);
+      if (s.tool === 'text') {
+        c.fillStyle=boardInk(s.color); c.font=`${Math.max(12,s.width * 4)}px sans-serif`; c.textBaseline='top';
+        String(s.text||'').split('\n').forEach((line,i)=>c.fillText(line,x,y+i*Math.max(16,s.width*5),Math.max(1,w)));
+      } else if (s.tool === 'image') {
+        let image=Board.images.get(s.image);
+        if(!image && s.image) {image=new Image();Board.images.set(s.image,image);image.onload=()=>Board.instances.forEach(b=>b.invalidate());image.src=s.image;}
+        if(image?.complete && image.naturalWidth)c.drawImage(image,x,y,Math.max(1,w),Math.max(1,h));
+      } else {
+        c.beginPath();
+        if(s.tool==='rectangle')c.rect(x,y,w,h);
+        else if(s.tool==='ellipse')c.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2);
+        else {c.moveTo(s.x0,s.y0);c.lineTo(s.x1,s.y1);}
+        c.stroke();
+        if(s.tool==='arrow') {const angle=Math.atan2(s.y1-s.y0,s.x1-s.x0),size=Math.max(12,s.width*4);c.beginPath();c.moveTo(s.x1-size*Math.cos(angle-.45),s.y1-size*Math.sin(angle-.45));c.lineTo(s.x1,s.y1);c.lineTo(s.x1-size*Math.cos(angle+.45),s.y1-size*Math.sin(angle+.45));c.stroke();}
+      }
       c.globalCompositeOperation = 'source-over';
     }
     static bounds(strokes) {
@@ -643,7 +661,7 @@
     static renderTo(ctx, w, h, strokes, rect, opts = {}) {
       const z = Math.min(w / rect.w, h / rect.h);
       ctx.save();
-      ctx.fillStyle = PAPER;
+      ctx.fillStyle = boardPaper();
       ctx.fillRect(0, 0, w, h);
       // Штрихи (с ластиком) — на отдельном слое, чтобы ластик не стирал фон
       const layer = opts.layer || document.createElement('canvas');
@@ -670,7 +688,28 @@
     }
     toPNG() { return Board.toPNG(this.strokes); }
   }
+  Board.images = new Map();
+  Board.instances = new Set();
   CC.Board = Board;
+
+  // Trusted server events are verified in the isolated main process, before dispatch.
+  CC.agentSocket = function (address, options = {}) {
+    let nonce = '', lastSeq = 0, queue = Promise.resolve();
+    const socket = io(address, { ...options, auth: cb => { nonce = crypto.randomUUID(); lastSeq = 0; cb({ nonce }); } });
+    const dispatch = socket.onevent.bind(socket);
+    const protectedEvents = new Set('interactive-update agent-ready control remote-start remote-stop broadcast-started broadcast-stopped whiteboard-mode draw whiteboard-transform board-state board-undo clear-canvas board-strokes assignment bind-room released class-prefs screenshot-rate teacher-online teacher-disconnected seat-changed lesson-ended lesson-id poll poll-closed collect-request collect-closed focus lesson-rules signal relay-child relay-child-gone'.split(' '));
+    socket.onevent = packet => {
+      if (!protectedEvents.has(packet.data?.[0])) return dispatch(packet);
+      const session = nonce, args = packet.data.slice(1), proof = args.pop(), event = packet.data[0];
+      queue = queue.then(async () => {
+        if (session !== nonce || !proof || proof.seq <= lastSeq) return;
+        if (!await window.agentAPI.verifyEvent({ event, args, proof, nonce: session })) { console.warn('[AGENT] Неподтверждённая команда отклонена:',event); return; }
+        if (session !== nonce) return;
+        lastSeq=proof.seq; dispatch({ ...packet, data: [event,...args] });
+      }).catch(err => console.warn('[AGENT] Проверка команды:',err.message));
+    };
+    return socket;
+  };
 
   // ---------- WebRTC ----------
   CC.ICE = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] };
@@ -696,12 +735,12 @@
         if (!pc.remoteDescription) pending.push(c);
         else await pc.addIceCandidate(c).catch(() => {});
       },
-      close() { try { pc.close(); } catch (e) {} }
+      close() { pc.onconnectionstatechange = null; try { pc.close(); } catch (e) {} }
     };
   };
 
   /** Соединение, которое отправляет поток и само делает предложение. */
-  CC.offerPeer = async function ({ socket, target, kind, stream, onState, onTrack, receiveAudio, tune }) {
+  CC.offerPeer = async function ({ socket, target, kind, stream, onState, onTrack, receiveAudio, tune, onPeer }) {
     const pc = new RTCPeerConnection(CC.ICE);
     const pending = [];
     if (stream) stream.getTracks().forEach(t => pc.addTrack(t, stream));
@@ -709,11 +748,7 @@
     pc.ontrack = (e) => onTrack && onTrack(e.streams[0] || new MediaStream([e.track]), e.track);
     pc.onicecandidate = (e) => { if (e.candidate) socket.emit('signal', { target, kind, type: 'ice', payload: e.candidate }); };
     pc.onconnectionstatechange = () => onState && onState(pc.connectionState);
-    if (tune) tune(pc);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit('signal', { target, kind, type: 'offer', payload: pc.localDescription });
-    return {
+    const peer = {
       pc,
       async answer(sdp) {
         await pc.setRemoteDescription(sdp);
@@ -723,8 +758,25 @@
         if (!pc.remoteDescription) pending.push(c);
         else await pc.addIceCandidate(c).catch(() => {});
       },
-      close() { try { pc.close(); } catch (e) {} }
+      close() { pc.onconnectionstatechange = null; try { pc.close(); } catch (e) {} }
     };
+    // Register before emitting an offer: the answer/ICE can arrive immediately.
+    if (onPeer) onPeer(peer);
+    try {
+      if (tune) tune(pc);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('signal', { target, kind, type: 'offer', payload: pc.localDescription });
+      return peer;
+    } catch (err) { peer.close(); throw err; }
+  };
+
+  // Сохраняем бюджет на кадр при смене FPS. Ограничиваем общий исходящий трафик.
+  CC.videoBudget = function ({ width = 1280, height = 720, fps = 15, viewers = 1 } = {}) {
+    const pixels = Math.max(1, Math.min(3840 * 2160, Number(width) * Number(height) || 1280 * 720));
+    const rate = Math.max(1, Math.min(60, Number(fps) || 15));
+    const count = Math.max(1, Number(viewers) || 1);
+    return Math.round(Math.max(350, Math.min(16000, 40000 / count, pixels * rate * 0.18 / 1000)));
   };
 
   /** Ограничить битрейт видео у отправителя (для слабых сетей и многих зрителей). */
@@ -734,6 +786,7 @@
       const p = sender.getParameters();
       if (!p.encodings || !p.encodings.length) p.encodings = [{}];
       p.encodings[0].maxBitrate = maxKbps * 1000;
+      p.degradationPreference = 'maintain-resolution';
       try { await sender.setParameters(p); } catch (e) {}
     }
   };

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Самая лёгкая проба ClassControl: нужен только Node.js 20+ и любой браузер.
+ * Самая лёгкая проба ClassControl: нужен только Node.js 22.12+ и любой браузер.
  * Никаких программ не устанавливается — окно учителя и страница ученика открываются в браузере,
  * а «класс» из 12 компьютеров и трёх учеников из дома играет виртуальный класс.
  *
@@ -21,13 +21,13 @@ const root = path.join(__dirname, '..');
 const isWin = process.platform === 'win32';
 const say = (m) => console.log('\x1b[35m●\x1b[0m ' + m);
 
-if (Number(process.versions.node.split('.')[0]) < 20) {
-  console.error(`Нужен Node.js 20 или новее (сейчас ${process.versions.node}): https://nodejs.org`);
+if (Number(process.versions.node.split('.')[0]) < 22 || (Number(process.versions.node.split('.')[0])===22 && Number(process.versions.node.split('.')[1])<12)) {
+  console.error(`Нужен Node.js 22.12 или новее (сейчас ${process.versions.node}): https://nodejs.org`);
   process.exit(1);
 }
 if (!fs.existsSync(path.join(root, 'server', 'node_modules', 'socket.io-client'))) {
   say('Ставлю зависимости сервера урока… (один раз)');
-  const r = spawnSync(isWin ? 'npm.cmd' : 'npm', ['install', '--no-audit', '--no-fund'], { cwd: path.join(root, 'server'), stdio: 'inherit', shell: isWin });
+  const r = spawnSync(isWin ? 'npm.cmd' : 'npm', ['ci', '--no-audit', '--no-fund'], { cwd: path.join(root, 'server'), stdio: 'inherit', shell: isWin });
   if (r.status !== 0) process.exit(1);
 }
 

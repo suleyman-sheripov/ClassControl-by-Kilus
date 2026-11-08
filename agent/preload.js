@@ -4,6 +4,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 const on = (channel) => (cb) => ipcRenderer.on(channel, (e, data) => cb(data));
 
 contextBridge.exposeInMainWorld('agentAPI', {
+  verifyEvent: (data) => ipcRenderer.invoke('verify-server-event', data),
+  configCheck: (address) => ipcRenderer.invoke('config-check', address),
+  configTrust: (fingerprint) => ipcRenderer.invoke('config-trust', fingerprint),
+  interactiveSend:(event,data)=>ipcRenderer.invoke('interactive-send',event,data),
+  onInteractiveSend:on('interactive-send'),
+  interactiveResult:data=>ipcRenderer.send('interactive-result',data),
   info: () => ipcRenderer.invoke('agent-info'),
   takeScreenshot: () => ipcRenderer.invoke('take-screenshot'),
   onServerAddress: on('server-address'),
@@ -49,7 +55,7 @@ contextBridge.exposeInMainWorld('agentAPI', {
   taskAnswer: (pollId, option) => ipcRenderer.send('task-answer', { pollId, option }),
   taskSubmit: (collectId) => ipcRenderer.invoke('task-submit', collectId),
   taskClose: () => ipcRenderer.send('task-close'),
-  openFile: (p) => ipcRenderer.send('open-file', p),
+  openFile: (p, folder = false) => ipcRenderer.send('open-file', p, folder),
 
   // Чат (окно беседы ⇄ фоновое окно)
   chatSend: (msg) => ipcRenderer.send('chat-send', msg),

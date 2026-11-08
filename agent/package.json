@@ -1,6 +1,6 @@
 {
   "name": "classcontrol-agent",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "description": "ClassControl Agent — программа на компьютере ученика",
   "main": "main.js",
   "author": "Kilus",
@@ -23,7 +23,8 @@
       "preload.js",
       "renderer/**",
       "assets/**",
-      "package.json"
+      "package.json",
+      "platform/**"
     ],
     "extraResources": [
       {
@@ -68,7 +69,12 @@
       "category": "Education",
       "icon": "assets/icon.png"
     },
-    "artifactName": "ClassControl-Agent-${version}-${os}-${arch}.${ext}"
+    "artifactName": "ClassControl-Agent-${version}-${os}-${arch}.${ext}",
+    "toolsets": {
+      "nsis": "1.2.1",
+      "wine": "1.0.1",
+      "winCodeSign": "1.1.0"
+    }
   },
   "devDependencies": {
     "electron": "^45.2.0",
@@ -76,5 +82,9 @@
   },
   "optionalDependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/suleyman-sheripov/ClassControl-by-Kilus.git"
   }
 }

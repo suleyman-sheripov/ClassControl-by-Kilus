@@ -1,12 +1,12 @@
 {
   "name": "classcontrol",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "private": true,
   "description": "ClassControl — управление компьютерным классом и уроки онлайн без аренды серверов",
   "scripts": {
     "start": "node scripts/demo.js",
     "demo": "node scripts/demo.js",
-    "setup": "npm --prefix server install && npm --prefix teacher install && npm --prefix agent install",
+    "setup": "npm --prefix server ci && npm --prefix teacher ci && npm --prefix agent ci",
     "server": "node server/server.js",
     "teacher": "npm --prefix teacher start",
     "agent": "npm --prefix agent start",
@@ -14,10 +14,18 @@
     "test": "npm --prefix server test",
     "build:teacher": "npm --prefix teacher run build",
     "build:agent": "npm --prefix agent run build",
-    "demo:web": "node scripts/demo-web.js"
+    "demo:web": "node scripts/demo-web.js",
+    "test:desktop": "node scripts/smoke-desktop.cjs"
   },
   "license": "ISC",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/suleyman-sheripov/ClassControl-by-Kilus.git"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
   }
 }

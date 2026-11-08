@@ -65,6 +65,9 @@
 
   socket.on('teacher-ready', (st) => {
     S.connected = true;
+    socket.emit('interactive-sync');
+    S.voiceMode = st.voiceMode || 'permission'; S.handHistory = st.handHistory || [];
+    $('#voice-mode').value = S.voiceMode;
     // Правила чата по умолчанию — из настроек учителя; на уроке их можно менять кнопкой у чата
     socket.emit('lesson-rules', { chat: settings.chatMode || 'all', files: settings.studentFiles !== false, quiet: true });
     sendClassPrefs();
@@ -80,7 +83,7 @@
     board.setStrokes(st.board.strokes || []);
     renderLinks();
     syncMonitoring();
-    if (Broadcast.active) socket.emit('start-broadcast', { allowExit: $('#opt-exit').checked });
+    if (Broadcast.active) socket.emit('start-broadcast', { allowExit: $('#opt-exit').checked,video:Broadcast.videoPolicy() });
     socket.emit('whiteboard-mode', B.shared);
   });
 
@@ -107,7 +110,7 @@
   // Урок одноразовый: после него на компьютере ничего не остаётся, если учитель сам не сохранил
   async function endLesson() {
     if (Recorder.active) { toast('Сначала остановите запись урока', { kind: 'warning', icon: 'record' }); return; }
-    const has = board.strokes.length || chat.list.querySelector('.msg:not(.msg--system)') || S.activity.polls.length || S.activity.collections.length;
+    const has = board.strokes.length || chat.list.querySelector('.msg:not(.msg--system)') || S.activity.polls.length || S.activity.collections.length || S.interactive?.quizzes.length || S.interactive?.reviews.length;
     const choice = await CC.dialog({
       title: 'Завершить урок?',
       sub: has ? 'Чат, доска, опросы, сданные работы и файлы сотрутся с этого компьютера. Сохраните их, если нужно, — в любую папку или на флешку.' : 'Ученики из дома выйдут, у следующего урока будет новая ссылка.',
@@ -216,6 +219,10 @@
     };
     const cores = navigator.hardwareConcurrency || '?';
     const sections = [
+      { id:'students', icon:'mic', title:'Ученики и чат', build: () => [
+        setRow('Микрофоны учеников из дома', 'Свободный режим включает только учитель. Звук учеников слышен в колонках класса.', segCtl([['permission','По разрешению'],['free','Свободно']], S.voiceMode || 'permission', v => socket.emit('set-voice-mode',v))),
+        el('button',{class:'btn',onclick:()=>socket.emit('teacher-voice',{userId:'all',on:false})},'Выключить микрофоны всем')
+      ] },
       { id: 'room', icon: 'home', title: 'Кабинет', build: () => {
         const room = el('input', { class: 'input input--lg', value: settings.roomName || '', maxlength: 60 });
         room.addEventListener('change', () => { const v = room.value.trim(); if (v) { save({ roomName: v }); $('#room-name').textContent = v; } });
@@ -225,7 +232,7 @@
         ];
       } },
       { id: 'stream', icon: 'cast', title: 'Эфир', build: () => [
-        setRow('Качество', 'Слабая сеть или старые ПК — 720p или 480p.', segCtl([['1920x1080', '1080p'], ['1280x720', '720p'], ['854x480', '480p'], ['640x360', '360p']], settings.quality, (v) => { save({ quality: v }).then(applyStudio); })),
+        setRow('Разрешение', 'Слабая сеть или старые ПК — 720p или 480p.', segCtl([['1920x1080', '1080p'], ['1280x720', '720p'], ['854x480', '480p'], ['640x360', '360p']], settings.quality, (v) => { save({ quality: v }).then(applyStudio); })),
         setRow('Кадров в секунду', 'Для текста и презентаций хватает 10–15, для видео — 30.', segCtl([[5, '5'], [10, '10'], [15, '15'], [30, '30'], [60, '60']], settings.fps, (v) => { save({ fps: v }).then(applyStudio); })),
         switchCtl('Звук компьютера', boot.platform === 'win32' || !boot.platform ? 'Ученики слышат видео и музыку с вашего ПК' : 'Доступно только в Windows', settings.shareAudio, (v) => save({ shareAudio: v }).then(applyStudio), boot.platform && boot.platform !== 'win32'),
         switchCtl('Мой микрофон', 'Слышат только ученики из дома — в кабинете не будет эха', settings.shareMic, (v) => save({ shareMic: v }).then(applyStudio)),
@@ -378,14 +385,20 @@
 
     copyBtn.addEventListener('click', async () => { if (await CC.copy(inviteRefs.current)) toast('Ссылка скопирована', { kind: 'positive', icon: 'copy' }); });
     openBtn.addEventListener('click', () => api.openExternal(inviteRefs.current));
-    tunnelSwitch.addEventListener('change', async () => { S.tunnel = await api.tunnel(tunnelSwitch.checked); renderLinks(); renderInvite(); });
+    tunnelSwitch.addEventListener('change', async () => {
+      const checked = tunnelSwitch.checked;
+      tunnelSwitch.disabled = true;
+      try { S.tunnel = await api.tunnel(checked); renderLinks(); renderInvite(); }
+      catch (err) { toast('Не удалось изменить доступ из дома: ' + err.message, { kind: 'warning' }); }
+      finally { tunnelSwitch.disabled = false; }
+    });
 
     const codeEl = el('span', { class: 'code-box__code', text: S.lessonCode || '' });
     const newCode = el('button', { class: 'btn btn--sm btn--ghost', type: 'button', title: 'Старая ссылка перестанет работать' }, icon('restart', 'i-sm'), 'Новый код');
     newCode.addEventListener('click', async () => {
       if (!await CC.confirm('Сменить код урока?', 'Старые ссылки и QR-код перестанут работать. Тем, кто уже на уроке, ничего делать не нужно.', 'Сменить')) return;
       const c = await api.newLessonCode();
-      if (c) { S.lessonCode = c; codeEl.textContent = c; }
+      if (c) { S.lessonCode = c; codeEl.textContent = c; renderLinks(); renderInvite(); }
     });
     const body = el('div', { class: 'invite' },
       el('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px', minWidth: '0' } },
@@ -399,7 +412,7 @@
         note,
         el('div', { class: 'field__hint' }, 'В классе по Wi-Fi: ', lanLine)),
       qr);
-    inviteRefs = { qr, linkText, tunnelHint, note, lanLine, current: '' };
+    inviteRefs = { qr, linkText, tunnelHint, note, lanLine, tunnelSwitch, current: '' };
     renderInvite();
     CC.dialog({ title: 'Пригласить на урок', sub: 'Ученики открывают ссылку в браузере и вводят имя — ничего устанавливать не нужно.', body, wide: true })
       .then(() => { inviteRefs = null; });
@@ -413,6 +426,7 @@
     inviteRefs.linkText.textContent = url;
     inviteRefs.lanLine.textContent = lan || '—';
     const st = S.tunnel.state;
+    inviteRefs.tunnelSwitch.checked = ['on', 'starting', 'downloading'].includes(st);
     inviteRefs.tunnelHint.textContent = st === 'on' ? 'Включён — ссылка работает из любой сети'
       : st === 'starting' ? 'Подключаюсь…'
       : st === 'downloading' ? `Скачиваю модуль доступа (≈30 МБ, один раз)… ${S.tunnel.progress || 0}%`
@@ -420,7 +434,7 @@
       : 'Бесплатно, без регистрации и аренды серверов';
     inviteRefs.note.className = 'note' + (st === 'error' ? ' note--warning' : '');
     inviteRefs.note.replaceChildren(icon(st === 'error' ? 'alert' : 'info', 'i-sm'), el('span', {
-      text: pub ? 'Ссылка новая при каждом включении. Видео идёт напрямую между компьютерами; если сеть ученика не пускает — автоматически включится запасной режим.'
+      text: pub ? 'Ссылка новая при каждом включении. Видео обычно идёт напрямую; в запасном режиме — через ПК учителя, что увеличивает нагрузку. Войти может любой со ссылкой и кодом: не публикуйте их в открытых чатах. Кнопка «Новый код» сменит ссылку; после урока выключите доступ.'
         : 'Сейчас ссылка открывается только в сети школы. Включите переключатель — появится ссылка, которая работает из любой сети, пока открыто приложение.'
     }));
     inviteRefs.qr.replaceChildren();
@@ -488,10 +502,12 @@
     const hands = [...S.online.values(), ...S.agents.values()].filter(u => u.hand);
     $('#hands-badge').classList.toggle('hidden', !hands.length);
     $('#hands-count').textContent = hands.length;
+    $('#hands-global').classList.toggle('is-pending', !!hands.length);
+    $('#hands-global').textContent = hands.length ? 'Поднятые руки: ' + hands.length : 'Руки и история';
     updateRightBadge();
 
     if (S.peopleTab === 'class') {
-      const agents = [...S.agents.values()].sort((a, b) => (Boolean(b.hand) - Boolean(a.hand)) || a.name.localeCompare(b.name, 'ru', { numeric: true }));
+      const agents = [...S.agents.values()].sort((a, b) => (Boolean(b.hand) - Boolean(a.hand)) || (a.hand && b.hand ? (a.handAt || 0) - (b.handAt || 0) : 0) || a.name.localeCompare(b.name, 'ru', { numeric: true }));
       if (!agents.length) {
         list.appendChild(el('li', { class: 'empty' }, el('div', { class: 'empty__text', text: 'Пока ни один компьютер класса не подключён.' })));
         return;
@@ -514,7 +530,7 @@
       return;
     }
 
-    const users = [...S.online.values()].sort((a, b) => (b.hand - a.hand) || a.name.localeCompare(b.name, 'ru'));
+    const users = [...S.online.values()].sort((a, b) => (b.hand - a.hand) || (a.hand && b.hand ? (a.handAt || 0) - (b.handAt || 0) : 0) || a.name.localeCompare(b.name, 'ru'));
     if (!users.length) {
       list.appendChild(el('li', { class: 'empty' },
         el('div', { class: 'empty__text', text: 'Ученики из дома появятся здесь, когда откроют ссылку на урок.' }),
@@ -522,7 +538,7 @@
       return;
     }
     users.forEach(u => {
-      const sub = u.hand ? [handMark(), 'поднял руку']
+      const sub = u.hand ? [handMark(), u.handQuestion || 'поднял руку']
         : u.voice ? [icon('mic', 'i-sm'), 'говорит']
         : u.sharing ? [icon('share', 'i-sm'), 'показывает экран']
         : [u.remote ? 'из дома' : 'в сети школы'];
@@ -550,11 +566,30 @@
     });
   }
 
-  socket.on('hand-raised', ({ id, name, inClass }) => {
+  socket.on('hand-raised', ({ id, name, inClass, question, reminder }) => {
     // В классе слово даёт сам учитель вслух; ученику из дома нужен микрофон
-    toast(`${name} поднял руку`, { kind: 'accent', gesture: 'palm', motion: 'raise', duration: 7000, group: 'hand-' + id, action: inClass
+    toast(`${name}${reminder ? ' всё ещё ждёт' : ' поднял руку'}${question ? ': ' + question : ''}`, { kind: 'accent', gesture: 'palm', motion: 'raise', duration: 7000, group: 'hand-' + id, action: inClass
       ? { label: 'Опустить руку', run: () => socket.emit('lower-hand', { id }) }
       : { label: 'Дать слово', run: () => socket.emit('teacher-voice', { userId: id, on: true }) } });
+  });
+
+  socket.on('hand-history', history => { S.handHistory = history; });
+  socket.on('voice-mode', mode => { S.voiceMode = mode; $('#voice-mode').value = mode; });
+  $('#voice-mode').addEventListener('change', e => socket.emit('set-voice-mode', e.target.value));
+  $('#mute-all').addEventListener('click', () => socket.emit('teacher-voice', { userId: 'all', on: false }));
+  $('#hands-global').addEventListener('click', () => {
+    const body = el('div', { class: 'help-articles' });
+    const pending = [...S.online.values(), ...S.agents.values()].filter(u => u.hand).sort((a,b) => a.handAt - b.handAt);
+    pending.forEach((u, index) => body.appendChild(el('article', { class: 'note' },
+      el('div', null, el('strong', { text: `${index + 1}. ${u.student || u.name}` }), el('p', { text: u.handQuestion || 'Хочет задать вопрос' }),
+        S.online.has(u.id) ? el('button', { class: 'btn btn--sm', onclick: () => socket.emit('teacher-voice', { userId: u.id, on: true }) }, 'Дать слово') : null,
+        el('button', { class: 'btn btn--sm', onclick: async () => { const input = el('input', { class:'input', maxlength:1000, placeholder:'Ответ ученику' }); if (await CC.dialog({title:'Ответить ' + (u.student || u.name),body:input,actions:[{label:'Отмена',value:false},{label:'Отправить',value:true,kind:'primary'}]})) { if (!input.value.trim()) return; socket.emit('chat-message',{text:input.value.trim(),to:u.id});socket.emit('lower-hand',{id:u.id,answered:true}); } } }, 'Ответить в чат'),
+        el('button', { class: 'btn btn--sm', onclick: () => socket.emit('lower-hand',{id:u.id}) }, 'Опустить')))));
+    if (!pending.length) body.appendChild(el('p', { text:'Поднятых рук нет.' }));
+    body.appendChild(el('h3', { text:'История за урок' }));
+    const actions = { raised:'поднял руку', 'self-lowered':'опустил сам', lowered:'рука опущена учителем', 'answered-chat':'ответили в чате', voice:'дали слово', finished:'закончил говорить' };
+    (S.handHistory || []).slice().reverse().forEach(h => body.appendChild(el('p', { text:`${CC.clock(h.at)} · ${h.name}: ${actions[h.action] || h.action}${h.question ? ' — ' + h.question : ''}` })));
+    CC.dialog({title:'Руки и вопросы',body,wide:true});
   });
 
   // Выключить чат одному ученику до конца урока — для того, кто мешает, без отключения от урока
@@ -692,8 +727,12 @@
     let veil = card.querySelector('.pc__veil');
     if (a.locked && !veil) card.querySelector('.pc__screen').appendChild(el('div', { class: 'pc__veil' }, icon('lock', 'i-sm'), 'Экран заблокирован'));
     if (!a.locked && veil) veil.remove();
-    const lockBtn = card.querySelector('[data-lock] use');
-    if (lockBtn) lockBtn.setAttribute('href', a.locked ? '#i-unlock' : '#i-lock');
+    const lockBtn = card.querySelector('[data-lock]');
+    if (lockBtn) {
+      const label = a.locked ? 'Разблокировать' : 'Заблокировать';
+      lockBtn.title = label; lockBtn.setAttribute('aria-label', label + ' ' + a.name);
+      lockBtn.replaceChildren(icon(a.locked ? 'unlock' : 'lock', 'i-sm'), el('span', { text: label }));
+    }
   }
 
   socket.on('agent-screenshot', ({ agentId, image, idle }) => {
@@ -818,6 +857,7 @@
       { icon: 'pointer', label: 'Подключиться к экрану', run: () => openViewer(id) },
       { icon: 'user', label: a.student ? 'Пересадить: кто теперь за этим ПК' : 'Кто сидит за этим ПК', run: () => assignSeat(id) },
       a.student ? { icon: 'x', label: 'Освободить место', run: () => socket.emit('seat-assign', { agentId: id, name: null }) } : null,
+      { icon: a.locked ? 'unlock' : 'lock', label: a.locked ? 'Разблокировать' : 'Заблокировать', run: () => control([id], a.locked ? 'unlock' : 'lock') },
       { icon: 'list', label: 'Запущенные программы', run: () => openProcesses(id) },
       { icon: 'bell', label: 'Сообщение на экран', run: () => actMessage([id]) },
       { icon: 'chat', label: 'Написать в чат лично', run: () => chat.setRecipient({ id, name: a.name }) },
@@ -887,7 +927,7 @@
     setControl(false);
     socket.emit('remote-start', { agentId, quality: 'high' });
     Viewer.timeout = setTimeout(() => {
-      if (!Viewer.stream) $('#viewer-wait-text').textContent = 'Компьютер не отвечает. Проверьте, что агент запущен.';
+      if (!Viewer.stream || !$('#viewer-video').videoWidth) $('#viewer-wait-text').textContent = 'Ожидаю захват экрана. Подключение ещё устанавливается…';
     }, 8000);
   }
 
@@ -934,6 +974,8 @@
     $('#viewer').classList.add('hidden');
     $('#viewer-showall')?.classList.add('hidden');
   }
+  $('#viewer-video').addEventListener('playing', () => { if (Viewer.stream) { $('#viewer-wait').classList.add('hidden'); $('#viewer-state').textContent = 'На связи'; } });
+  socket.on('remote-error', ({ agentId, message }) => { if (Viewer.id === agentId) { clearTimeout(Viewer.timeout); $('#viewer-wait').classList.remove('hidden'); $('#viewer-wait-text').textContent = message || 'Не удалось захватить экран ученика'; } });
   $('#viewer-close').addEventListener('click', () => closeViewer(false));
   $('#viewer-back').addEventListener('click', () => closeViewer(false));
   $('#viewer-procs').addEventListener('click', () => Viewer.id && openProcesses(Viewer.id));
@@ -1016,15 +1058,26 @@
           Viewer.peer = CC.answerPeer({
             socket, source, kind,
             onTrack: (stream) => {
+              if (source !== Viewer.id) return;
+              clearTimeout(Viewer.timeout);
               Viewer.stream = stream;
               $('#viewer-video').srcObject = stream;
-              $('#viewer-wait').classList.add('hidden');
+              $('#viewer-video').play().catch(() => {});
+              $('#viewer-wait').classList.remove('hidden');
+              $('#viewer-wait-text').textContent='Ожидаю первый кадр…';
               if (kind === 'remote') $('#viewer-state').textContent = 'На связи';
             },
             onState: (st) => {
-              if (st === 'failed' || st === 'disconnected') {
+              if (source !== Viewer.id) return;
+              if (st === 'connected') {
+                clearTimeout(Viewer.timeout);
+                $('#viewer-state').textContent = 'На связи';
+                if ($('#viewer-video').readyState >= 2) $('#viewer-wait').classList.add('hidden');
+              } else if (st === 'disconnected') {
+                $('#viewer-state').textContent = 'Восстанавливаю связь…';
+              } else if (st === 'failed') {
                 $('#viewer-wait').classList.remove('hidden');
-                $('#viewer-wait-text').textContent = 'Связь прервалась…';
+                $('#viewer-wait-text').textContent = 'Видеосоединение прервалось. Закройте окно и подключитесь снова.';
               }
             }
           });
@@ -1164,14 +1217,14 @@
       Mixer.init();
       if (Mixer.ctx.state === 'suspended') Mixer.ctx.resume();
       this.videoTrack = this.stream.getVideoTracks()[0];
-      this.videoTrack.contentHint = fps <= 15 ? 'detail' : 'motion';
+      this.videoTrack.contentHint = 'detail'; // Чёткость текста не меняется при выборе FPS
       this.videoTrack.onended = () => this.stop();
       this.systemNode = Mixer.connect(this.stream, ['toClass', 'toHome', 'toRecord']);
       this.active = true;
       this.startedAt = Date.now();
       await Mixer.updateMic();
       $('#preview-video').srcObject = new MediaStream([this.videoTrack]);
-      socket.emit('start-broadcast', { allowExit: $('#opt-exit').checked });
+      socket.emit('start-broadcast', { allowExit: $('#opt-exit').checked,video:Broadcast.videoPolicy() });
       api.keepAwake(true);
       this.render();
       toast('Эфир начался', { kind: 'live', icon: 'live' });
@@ -1198,12 +1251,11 @@
       return new MediaStream([this.videoTrack, audio]);
     },
 
+    videoPolicy() {const [width,height]=$('#quality').value.split('x').map(Number);return {width,height,fps:Number($('#fps').value)};},
     bitrate() {
       const n = Math.max(1, this.peers.size);
-      const [w] = $('#quality').value.split('x').map(Number);
-      const top = w >= 1920 ? 4500 : w >= 1280 ? 2500 : w >= 854 ? 1200 : 700;
-      // Ноутбук учителя кодирует поток для каждого зрителя: делим бюджет
-      return Math.round(Math.max(350, Math.min(top, 40000 / n)));
+      const [width, height] = $('#quality').value.split('x').map(Number);
+      return CC.videoBudget({ width, height, fps: Number($('#fps').value), viewers: n });
     },
 
     async connect(ids) {
@@ -1213,6 +1265,7 @@
         try {
           const peer = await CC.offerPeer({
             socket, target: id, kind: 'broadcast', stream: this.streamFor(id),
+            onPeer: p => this.peers.set(id, p),
             onState: (st) => { if (st === 'failed') { this.peers.get(id)?.close(); this.peers.delete(id); this.render(); } }
           });
           this.peers.set(id, peer);
@@ -1259,7 +1312,7 @@
         this.ownTrack = null;
         this.videoTrack = track;
         $('#preview-video').srcObject = new MediaStream([track]);
-        socket.emit('start-broadcast', { allowExit: $('#opt-exit').checked });
+        socket.emit('start-broadcast', { allowExit: $('#opt-exit').checked,video:Broadcast.videoPolicy() });
         api.keepAwake(true);
         // Голос учителя ученикам из дома — как и при обычном эфире
         if (Mixer.ctx.state === 'suspended') Mixer.ctx.resume();
@@ -1286,7 +1339,7 @@
       btn.querySelector('use').setAttribute('href', live ? '#i-stop' : '#i-play');
       btn.querySelector('span').textContent = live ? 'Остановить эфир' : 'Начать эфир';
       $('#preview-empty').classList.toggle('hidden', live);
-      $('#preview').classList.toggle('is-live', live);
+      $('#source-btn').classList.toggle('is-live', live);
       $('#preview-live').classList.toggle('hidden', !live);
       $('#live-badge').classList.toggle('hidden', !live);
       const n = this.peers.size;
@@ -1308,7 +1361,7 @@
     api.saveSettings({ shareMic: e.target.checked });
     Mixer.updateMic();
   });
-  $('#opt-exit').addEventListener('change', (e) => { api.saveSettings({ allowExit: e.target.checked }); if (Broadcast.active) socket.emit('start-broadcast', { allowExit: e.target.checked }); });
+  $('#opt-exit').addEventListener('change', (e) => { api.saveSettings({ allowExit: e.target.checked }); if (Broadcast.active) socket.emit('start-broadcast', { allowExit: e.target.checked,video:Broadcast.videoPolicy() }); });
   $('#opt-audio').addEventListener('change', (e) => api.saveSettings({ shareAudio: e.target.checked }));
   $('#quality').addEventListener('change', (e) => api.saveSettings({ quality: e.target.value }));
   $('#fps').addEventListener('change', (e) => api.saveSettings({ fps: Number(e.target.value) }));
@@ -1378,7 +1431,7 @@
     }
   }
   $('#source-btn').addEventListener('click', pickSource);
-  $('#preview-empty').addEventListener('click', pickSource);
+
 
   // ---------- Запасной режим: кадры через сервер, если WebRTC из дома не пробился ----------
   const Relay = {
@@ -1452,20 +1505,39 @@
   }
 
   const bStage = $('#board-stage');
-  bStage.addEventListener('pointerdown', (e) => {
+  const objectTools = new Set(['rectangle','ellipse','arrow']);
+  const makeSid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  let objectDrag=null,selectedObject=null;
+  const addObject=s=>{board.add(s);socket.emit('draw',s);};
+  bStage.addEventListener('pointerdown', async (e) => {
     if (e.button === 1 || B.tool === 'hand' || B.space) {
-      B.panning = { x: e.clientX, y: e.clientY };
-      bStage.classList.add('is-panning');
-      bStage.setPointerCapture(e.pointerId);
-      return;
+      B.panning = { x: e.clientX, y: e.clientY };bStage.classList.add('is-panning');bStage.setPointerCapture(e.pointerId);return;
     }
-    if (e.button !== 0) return;
-    B.drawing = true;
-    B.sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    B.last = boardPoint(e);
-    emitStroke(B.last, { x: B.last.x + 0.01, y: B.last.y + 0.01 });
+    if(e.button!==0)return;
+    const point=boardPoint(e);
+    if(B.tool==='select') {
+      const margin=10/board.cam.zoom;
+      selectedObject=board.strokes.slice().reverse().find(s=>!['pen','marker','eraser'].includes(s.tool)&&point.x>=Math.min(s.x0,s.x1)-margin&&point.x<=Math.max(s.x0,s.x1)+margin&&point.y>=Math.min(s.y0,s.y1)-margin&&point.y<=Math.max(s.y0,s.y1)+margin);
+      if(selectedObject)objectDrag={kind:'edit',old:{...selectedObject},point,resize:e.shiftKey};
+    } else if(objectTools.has(B.tool)) {
+      selectedObject={sid:makeSid(),tool:B.tool,color:B.color,width:B.width,x0:point.x,y0:point.y,x1:point.x,y1:point.y};
+      board.add(selectedObject);objectDrag={kind:'new',point};
+    } else if(B.tool==='text') {
+      const input=el('textarea',{class:'input',maxlength:1000,placeholder:'Текст на доске'});
+      if(await CC.dialog({title:'Текст',body:input,actions:[{label:'Отмена',value:false},{label:'Добавить',value:true,kind:'primary'}]})) { if(input.value.trim())addObject({sid:makeSid(),tool:'text',color:B.color,width:6,x0:point.x,y0:point.y,x1:point.x+480,y1:point.y+Math.max(40,input.value.split('\n').length*32),text:input.value.trim()}); }
+      return;
+    } else {
+      B.drawing=true;B.sid=makeSid();B.last=point;emitStroke(B.last,{x:point.x+.01,y:point.y+.01});
+    }
     bStage.setPointerCapture(e.pointerId);
   });
+  $('#board-image').addEventListener('click',()=>$('#board-image-file').click());
+  $('#board-image-file').addEventListener('change',async e=>{
+    const file=e.target.files[0];e.target.value='';if(!file)return;
+    if(file.size>10*1024*1024){toast('Картинка больше 10 МБ',{kind:'warning'});return;}
+    try {const image=await createImageBitmap(file);const scale=Math.min(1,1000/image.width,1000/image.height);const c=document.createElement('canvas');c.width=Math.max(1,Math.round(image.width*scale));c.height=Math.max(1,Math.round(image.height*scale));c.getContext('2d').drawImage(image,0,0,c.width,c.height);image.close();const data=c.toDataURL('image/jpeg',.8);if(data.length>650000)throw Error('Слишком подробная картинка. Выберите меньший размер.');addObject({sid:makeSid(),tool:'image',color:B.color,width:1,x0:board.cam.cx-c.width/2,y0:board.cam.cy-c.height/2,x1:board.cam.cx+c.width/2,y1:board.cam.cy+c.height/2,image:data});}catch(err){toast('Не удалось добавить картинку: '+err.message,{kind:'warning'});}
+  });
+  document.addEventListener('keydown',e=>{if(S.tab==='board'&&B.tool==='select'&&selectedObject&&e.key==='Delete'&&!e.target.closest('input,textarea,[contenteditable=true]')){e.preventDefault();socket.emit('board-edit',{sid:selectedObject.sid,remove:true});selectedObject=null;}});
   bStage.addEventListener('pointermove', (e) => {
     if (B.panning) {
       board.panBy(e.clientX - B.panning.x, e.clientY - B.panning.y);
@@ -1473,6 +1545,7 @@
       syncView();
       return;
     }
+    if(objectDrag && selectedObject) {const point=boardPoint(e);if(objectDrag.kind==='new'){selectedObject.x1=point.x;selectedObject.y1=point.y;}else if(objectDrag.resize){selectedObject.x1=point.x;selectedObject.y1=point.y;}else{const dx=point.x-objectDrag.point.x,dy=point.y-objectDrag.point.y;for(const key of ['x0','x1'])selectedObject[key]=objectDrag.old[key]+dx;for(const key of ['y0','y1'])selectedObject[key]=objectDrag.old[key]+dy;}board.invalidate();return;}
     if (!B.drawing) return;
     const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (const ev of events) {
@@ -1484,6 +1557,7 @@
     }
   });
   const endPointer = () => {
+    if(objectDrag&&selectedObject){socket.emit(objectDrag.kind==='new'?'draw':'board-edit',{...selectedObject});objectDrag=null;}
     B.drawing = false;
     if (B.panning) { B.panning = false; bStage.classList.remove('is-panning'); }
   };
@@ -1713,14 +1787,19 @@
     return el('div', { class: 'starters' },
       tile('poll', 'Быстрый опрос', 'Вопрос с вариантами ответа. Ответы видно сразу, итоги можно показать классу.', createPoll, 'lilac'),
       tile('inbox', 'Собрать работы', 'Ученики сдают файлы одной кнопкой. Работы ложатся в папку, подписанные именами.', createCollection, 'mint'),
-      tile('download', 'Раздать файл', 'Файл появится на рабочем столе каждого компьютера класса и в чате урока.', () => $('#assign-file').click(), 'peach'));
+      tile('download', 'Раздать файл', 'Файл появится на рабочем столе каждого компьютера класса и в чате урока.', () => $('#assign-file').click(), 'peach'),
+      tile('check','Тест','Правильный ответ и мгновенная проверка.',()=>CC.createQuiz(socket),'mint'),
+      tile('list','Мини-контрольная','Несколько вопросов и таймер.',()=>CC.createQuiz(socket,true),'mint'),
+      tile('users','Взаимопроверка','Анонимная проверка сданных работ.',()=>CC.createReview(socket,S.activity.collections),'peach'));
   }
 
   function renderTasks() {
     const root = $('#tasks');
     root.replaceChildren();
     const items = taskItems();
-    if (!items.length) {
+    const hasExtra = S.interactive && (S.interactive.quizzes.length || S.interactive.reviews.length);
+    $('#task-add').classList.toggle('hidden', !items.length && !hasExtra);
+    if (!items.length && !hasExtra) {
       root.appendChild(starters(false));
       return;
     }
@@ -1863,9 +1942,16 @@
     setTab('tasks');
   }
 
-  $('#task-poll').addEventListener('click', createPoll);
-  $('#task-collect').addEventListener('click', createCollection);
-  $('#task-assign').addEventListener('click', () => $('#assign-file').click());
+  $('#task-add').addEventListener('click', (e) => CC.menu(e.currentTarget, [
+    { icon:'check',label:'Тест',run:()=>CC.createQuiz(socket) },
+    { icon:'list',label:'Мини-контрольная',run:()=>CC.createQuiz(socket,true) },
+    { icon:'users',label:'Взаимопроверка',run:()=>CC.createReview(socket,S.activity.collections) },
+    { icon: 'poll', label: 'Опрос', run: createPoll },
+    { icon: 'inbox', label: 'Собрать работы', run: createCollection },
+    { icon: 'download', label: 'Раздать файл', run: () => $('#assign-file').click() }
+  ]));
+
+
   $('#assign-file').addEventListener('change', async (e) => {
     const f = e.target.files[0];
     e.target.value = '';
@@ -2031,6 +2117,7 @@
     if (e.code === 'Space' && B.space) { B.space = false; bStage.classList.toggle('tool-hand', B.tool === 'hand'); }
   });
 
+  CC.teacherInteractive(socket,{collections:()=>S.activity.collections,onChange:state=>{S.interactive=state;const count=taskItems().length+state.quizzes.length+state.reviews.length;$('#tab-tasks-count').textContent=count;$('#tab-tasks-count').classList.toggle('hidden',!count);renderTasks();}});
   // Первичная отрисовка
   renderGrid();
   renderPeople();

@@ -36,7 +36,7 @@
       return;
     }
     info = await api.info();
-    socket = io(addr, { transports: ['websocket'], reconnectionDelayMax: 5000 });
+    socket = CC.agentSocket(addr, { transports: ['websocket'], reconnectionDelayMax: 5000 });
 
     socket.on('connect', () => {
       api.info().then((i) => {
@@ -45,6 +45,7 @@
       });
     });
     socket.on('agent-ready', (d) => {
+      socket.emit('interactive-sync');
       if (d.prefs) applyPrefs(d.prefs);
       sendRules({ ...(d.rules || {}), muted: Boolean(d.muted) });
       api.connectionState({ connected: true, socketId: socket.id, teacherName: d.teacherName, uploadToken: d.uploadToken, lessonId: d.lessonId });
@@ -53,6 +54,7 @@
       if (!d.student) api.seatChanged({ student: null, quiet: true });
       api.teacherBack();
       state.broadcast = d.broadcast || { active: false };
+      state.board = Boolean(d.board?.active);
       api.setFocus(d.focus || { enabled: false, words: [] });
       const act = d.activity || {};
       if (act.poll) api.task({ type: 'poll', poll: act.poll });
@@ -121,6 +123,7 @@
     socket.on('chat-muted', (d) => sendRules({ muted: d.on }));
 
     // Задания, опросы, сбор работ, «Фокус»
+    socket.on('interactive-update',data=>api.task({type:'interactive',data}));
     socket.on('assignment', (item) => api.assignment({ ...item, url: address + item.url }));
     socket.on('poll', (poll) => api.task({ type: 'poll', poll }));
     socket.on('poll-closed', (poll) => api.task({ type: 'poll-closed', poll }));
@@ -128,6 +131,7 @@
     socket.on('collect-closed', (c) => api.task({ type: 'collect-closed', collection: c }));
     socket.on('focus', (f) => api.setFocus(f));
     socket.on('seat-changed', (d) => {
+      socket.emit('interactive-sync');
       if (d && 'muted' in d) sendRules({ muted: d.muted });
       api.seatChanged(d);
       // Другой человек за ПК — его опрос и сбор работ (ответы прежнего ученика ушли вместе с ним)
@@ -145,13 +149,14 @@
     api.broadcast({ active: Boolean(state.broadcast.active) || state.board, allowExit: Boolean(state.broadcast.allowExit) && !state.board });
   }
 
+  api.onInteractiveSend(({id,event,data})=>{if(!socket?.connected)return api.interactiveResult({id,result:{ok:false,error:'Нет связи'}});socket.timeout(5000).emit(event,data,(err,result)=>api.interactiveResult({id,result:err?{ok:false,error:'Нет ответа'}:result}));});
   api.onChatSend((msg) => socket && socket.connected && socket.emit('chat-message', msg));
   api.onChatRequestHistory(() => socket && socket.connected && socket.emit('request-chat-history'));
   api.onProcesses((list) => socket && socket.emit('agent-processes', { list }));
   api.onControlResult((r) => socket && socket.emit('agent-control-result', r));
   api.onAgentStatus((s) => socket && socket.emit('agent-status', s));
   // Окна агента (опрос, «Фокус») отправляют события через это подключение — от имени ПК
-  const ALLOWED = new Set(['poll-answer', 'focus-violation', 'raise-hand']);
+  const ALLOWED = new Set(['poll-answer', 'focus-violation', 'raise-hand', 'assignment-receipt']);
   api.onIntroduce(({ name, confirm }) => {
     if (!socket || !socket.connected) return api.introduceResult({ ok: false });
     socket.emit('agent-student', { student: name, confirm }, (r) => api.introduceResult(r));
@@ -242,33 +247,44 @@
   }
 
   // ---------- Показ экрана учителю (для просмотра и управления) ----------
+  let remoteGeneration = 0;
   async function startRemote() {
     stopRemote();
+    const generation = remoteGeneration;
+    let stream;
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: 1920, max: 1920 }, height: { ideal: 1080, max: 1080 }, frameRate: { ideal: 20, max: 24 } },
-        audio: false
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: { ideal: 1920, max: 1920 }, height: { ideal: 1080, max: 1080 }, frameRate: { ideal: 20, max: 24 } }, audio: false
       });
+      if (generation !== remoteGeneration) { stream.getTracks().forEach(t => t.stop()); return; }
       const track = stream.getVideoTracks()[0];
-      if (track) track.contentHint = 'detail';
-      remote = { stream, peer: null };
+      if (!track || track.readyState === 'ended') throw new Error('Захват экрана не вернул видеодорожку');
+      track.contentHint = 'detail';
+      const session = remote = { stream, peer: null };
+      track.onended = () => { if (remote === session) stopRemote(); };
       api.remoteSession(true);
-      remote.peer = await CC.offerPeer({
+      const peer = await CC.offerPeer({
         socket, target: 'teacher', kind: 'remote', stream,
-        tune: (pc) => {},
-        onState: (st) => { if (st === 'failed' || st === 'closed') stopRemote(); }
+        onPeer: p => { if (remote === session) session.peer = p; else p.close(); },
+        onState: st => { if (remote === session && (st === 'failed' || st === 'closed')) { socket.emit('remote-error', { message: 'Не удалось установить видеосоединение' }); stopRemote(); } }
       });
-      CC.limitBitrate(remote.peer.pc, 6000);
+      if (generation !== remoteGeneration) { peer.close(); return; }
+      await CC.limitBitrate(peer.pc, 6000);
     } catch (err) {
-      console.error('[AGENT] Не удалось показать экран', err);
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (generation !== remoteGeneration) return;
+      console.error('[AGENT] Не удалось показать экран:', err.name, err.message);
+      if (socket?.connected) socket.emit('remote-error', { message: 'Ошибка захвата экрана: ' + (err.message || err.name) });
       stopRemote();
     }
   }
   function stopRemote() {
-    if (!remote) return;
-    if (remote.peer) remote.peer.close();
-    if (remote.stream) remote.stream.getTracks().forEach(t => t.stop());
+    remoteGeneration++;
+    const old = remote;
     remote = null;
+    if (old?.peer) old.peer.close();
+    if (old?.stream) old.stream.getTracks().forEach(t => { t.onended = null; t.stop(); });
     api.remoteSession(false);
   }
+
 })();

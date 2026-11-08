@@ -51,7 +51,7 @@ const ALLOWED_EXTENSIONS = new Set([
     '.py', '.js', '.html', '.css', '.java', '.c', '.cpp', '.cs', '.pas', '.json'
 ]);
 const INLINE_IMAGE = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
-const TOOLS = new Set(['pen', 'marker', 'eraser']);
+const TOOLS = new Set(['pen', 'marker', 'eraser', 'rectangle', 'ellipse', 'arrow', 'text', 'image']);
 const POWER_ACTIONS = new Set(['shutdown', 'restart', 'logoff']);
 const CONTROL_ACTIONS = new Set([
     'lock', 'unlock', 'message', 'open-url', 'list-processes', 'kill', 'power', 'input'
@@ -169,8 +169,9 @@ function start(options = {}) {
     const strokesPath = path.join(dataDir, 'board-strokes.jsonl');
     const log = options.log || ((...a) => console.log('[SERVER]', ...a));
     const TEACHER_TOKEN = options.token || process.env.TEACHER_TOKEN || crypto.randomBytes(24).toString('hex');
-    const preferredPort = options.port || Number(process.env.PORT) || DEFAULT_PORT;
+    const preferredPort = options.port ?? (Number(process.env.PORT) || DEFAULT_PORT);
 
+    const teacherIdentity = require('../shared/teacher-identity').loadIdentity(options.identityPath || path.join(dataDir, 'teacher-identity.pem'));
     fs.mkdirSync(uploadDir, { recursive: true });
 
     const allow = makeRateLimiter();
@@ -188,6 +189,7 @@ function start(options = {}) {
         demoViewers: new Map(),   // socketId -> host
         online: new Map(),        // socketId -> { id, name, hand, voice, sharing, since }
         broadcast: { active: false, allowExit: false, startedAt: 0 },
+        boardUndo: [],
         whiteboard: { active: false, transform: { cx: 0, cy: 0, w: 1600, h: 900 } },
         strokes: [],
         chat: [],
@@ -198,6 +200,8 @@ function start(options = {}) {
         relay: new Map(),         // demoViewerId -> { parent: 'teacher' | id, children: Set }
         polls: [],                // { id, question, options, votes: { voterKey: index }, voters: { voterKey: name }, open, createdAt }
         collections: [],          // { id, title, open, createdAt, submissions: [{ key, name, role, filename, stored, size, ts }] }
+        voiceMode: 'permission',
+        handHistory: [],
         assignments: [],          // { id, filename, url, size, ts }
         focus: { enabled: false, words: [] },
         // Правила урока против спама: chat — all (пишут все) | slow (раз в SLOW_MS) | teacher (только учителю лично);
@@ -236,6 +240,8 @@ function start(options = {}) {
                     polls: saved.polls || [],
                     collections: saved.collections || [],
                     assignments: saved.assignments || [],
+                    interactive: saved.interactive || null,
+                    handHistory: saved.handHistory || [],
                     banned: saved.banned || [],
                     strokes
                 };
@@ -273,6 +279,8 @@ function start(options = {}) {
                 polls: state.polls,
                 collections: state.collections,
                 assignments: state.assignments,
+                interactive: state.interactive,
+                handHistory: state.handHistory,
                 focus: state.focus,
                 knownAgents: [...state.knownAgents.values()]
             };
@@ -336,6 +344,9 @@ function start(options = {}) {
         res.setHeader('Permissions-Policy', 'camera=(), geolocation=()');
         next();
     });
+
+    require('../shared/teacher-identity').signEvents(io, teacherIdentity);
+    app.get('/api/identity', (req,res) => res.json({ publicKey: teacherIdentity.publicKey, fingerprint: teacherIdentity.fingerprint, room: state.roomName, teacher: state.teacherName }));
 
     app.get(['/', '/index.html'], (req, res, next) => {
         res.setHeader('Content-Security-Policy',
@@ -409,8 +420,9 @@ function start(options = {}) {
             fileMeta.set(req.file.filename, { original: req.file.originalname });
             if (req.body.assign === '1' && who.role === 'teacher') {
                 // Задание: файл сразу ложится на рабочий стол каждого ПК класса и появляется в чате
-                const item = { id: crypto.randomBytes(5).toString('hex'), filename: cleanText(req.file.originalname, 160), url: `/files/${req.file.filename}`, size: req.file.size, ts: Date.now() };
+                const item = { id: crypto.randomBytes(5).toString('hex'), filename: cleanText(req.file.originalname, 160), url: `/files/${req.file.filename}`, size: req.file.size, sha256: crypto.createHash('sha256').update(fs.readFileSync(req.file.path)).digest('hex'), ts: Date.now() };
                 state.assignments.push(item);
+                interactive.broadcast();
                 for (const id of state.agents.keys()) io.to(id).emit('assignment', item);
                 toTeacher('activity', activity());
             }
@@ -765,6 +777,8 @@ function start(options = {}) {
     }
 
     // ----- Socket.IO -----
+    const interactive = require('./interactive')({io,app,state,identity,allow,cleanText,worksDir,persist});
+
     io.on('connection', (socket) => {
         const headers = socket.handshake.headers || {};
         socket.data.tunneled = isTunneled(headers);
@@ -795,6 +809,7 @@ function start(options = {}) {
             state.teacherId = socket.id;
             if (payload.name) state.teacherName = cleanText(payload.name, 40) || 'Учитель';
             socket.emit('teacher-ready', {
+                voiceMode: state.voiceMode, handHistory: state.handHistory,
                 uploadToken: socket.data.uploadToken,
                 lessonCode: state.lessonCode,
                 roomName: state.roomName,
@@ -864,6 +879,7 @@ function start(options = {}) {
                 student,
                 teacherName: state.teacherName,
                 broadcast: state.broadcast,
+                board: boardState(),
                 monitoring: true,
                 focus: state.focus,
                 rules: state.rules,
@@ -880,7 +896,7 @@ function start(options = {}) {
             socket.data.role = 'demo';
             state.demoViewers.set(socket.id, cleanText(payload.hostname, 64));
             socket.emit('board-state', boardState());
-            if (state.broadcast.active) relayAssign(socket.id);
+            if (state.broadcast.active) {socket.emit('broadcast-started',state.broadcast);relayAssign(socket.id);}
         });
 
         socket.on('register-online-user', (payload = {}) => {
@@ -946,6 +962,7 @@ function start(options = {}) {
                 chat: visibleChat(socket),
                 board: boardState(),
                 broadcast: state.broadcast,
+                voiceMode: state.voiceMode,
                 shareLimitMs: SHARE_LIMIT_MS,
                 rules: state.rules,
                 muted: state.muted.has(key),
@@ -1060,6 +1077,11 @@ function start(options = {}) {
             io.to(data.agentId).emit('remote-start', { quality: data.quality === 'high' ? 'high' : 'normal' });
         });
 
+        socket.on('remote-error', (data = {}) => {
+            if (socket.data.role !== 'agent' || !allow('remote-error:' + socket.id, 10, 60000)) return;
+            toTeacher('remote-error', { agentId: socket.id, message: cleanText(data.message, 200) });
+        });
+
         socket.on('remote-stop', (data = {}) => {
             if (socket.data.role !== 'teacher' || !state.agents.has(data.agentId)) return;
             io.to(data.agentId).emit('remote-stop');
@@ -1068,7 +1090,8 @@ function start(options = {}) {
         // --- Трансляция ---
         socket.on('start-broadcast', (data = {}) => {
             if (socket.data.role !== 'teacher') return;
-            state.broadcast = { active: true, allowExit: Boolean(data.allowExit), startedAt: Date.now() };
+            const video=data.video||{};
+            state.broadcast = { active: true, allowExit: Boolean(data.allowExit), startedAt: Date.now(), video:{width:Math.max(320,Math.min(3840,Number(video.width)||1280)),height:Math.max(180,Math.min(2160,Number(video.height)||720)),fps:Math.max(1,Math.min(60,Number(video.fps)||15))} };
             socket.broadcast.emit('broadcast-started', state.broadcast);
             state.relay.clear();
             socket.emit('peer-request', { ids: [...state.online.keys()] });
@@ -1137,23 +1160,41 @@ function start(options = {}) {
                 color: /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#111111',
                 tool: TOOLS.has(s.tool) ? s.tool : 'pen'
             };
+            if (stroke.tool === 'text') stroke.text = cleanText(s.text, 1000);
+            if (stroke.tool === 'image') {
+                if (typeof s.image !== 'string' || s.image.length > 650000 || !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(s.image)) return;
+                if (state.strokes.filter(x=>x.tool==='image').length >= 20) return;
+                stroke.image = s.image;
+            }
+            if (!state.strokes.some(x=>x.sid===stroke.sid)) { state.boardUndo.push({kind:'add',sid:stroke.sid});if(state.boardUndo.length>100)state.boardUndo.shift(); }
             state.strokes.push(stroke);
             socket.broadcast.emit('draw', stroke);
             if (state.strokes.length > MAX_STROKES) { state.strokes.splice(0, state.strokes.length - MAX_STROKES); rewriteStrokes(); }
             else journalStroke(stroke);
         });
 
+        socket.on('board-edit', (data = {}) => {
+            if(socket.data.role!=='teacher')return;
+            const index=state.strokes.findIndex(s=>s.sid===data.sid && !['pen','marker','eraser'].includes(s.tool));
+            if(index<0)return;
+            const old={...state.strokes[index]};
+            if(!data.remove && ![data.x0,data.y0,data.x1,data.y1].every(n=>typeof n==='number'&&isFinite(n)&&Math.abs(n)<1e7))return;
+            state.boardUndo.push({kind:'edit',old,index});if(state.boardUndo.length>100)state.boardUndo.shift();
+            if(data.remove)state.strokes.splice(index,1);
+            else Object.assign(state.strokes[index],{x0:round2(data.x0),y0:round2(data.y0),x1:round2(data.x1),y1:round2(data.y1)});
+            io.emit('board-strokes',state.strokes);rewriteStrokes();
+        });
         socket.on('board-undo', () => {
-            if (socket.data.role !== 'teacher' || state.strokes.length === 0) return;
-            const sid = state.strokes[state.strokes.length - 1].sid;
-            state.strokes = state.strokes.filter(s => s.sid !== sid);
-            io.emit('board-strokes', state.strokes);
-            rewriteStrokes();
+            if (socket.data.role !== 'teacher') return;
+            const action=state.boardUndo.pop();
+            if(action?.kind==='edit') { const i=state.strokes.findIndex(s=>s.sid===action.old.sid);if(i>=0)state.strokes[i]=action.old;else state.strokes.splice(action.index,0,action.old); }
+            else {const sid=action?.sid || state.strokes[state.strokes.length-1]?.sid;if(!sid)return;state.strokes=state.strokes.filter(s=>s.sid!==sid);}
+            io.emit('board-strokes', state.strokes);rewriteStrokes();
         });
 
         socket.on('clear-canvas', () => {
             if (socket.data.role !== 'teacher') return;
-            state.strokes = [];
+            state.strokes = []; state.boardUndo = [];
             socket.broadcast.emit('clear-canvas');
             rewriteStrokes();
         });
@@ -1240,37 +1281,68 @@ function start(options = {}) {
         });
 
         // --- Онлайн-участник: рука, голос, показ экрана ---
-        socket.on('raise-hand', (up) => {
+        function recordHand(item, action) {
+            state.handHistory.push({ id: item.id, name: item.student || item.name, question: item.handQuestion || '', action, at: Date.now() });
+            if (state.handHistory.length > 500) state.handHistory.shift();
+            toTeacher('hand-history', state.handHistory);
+        }
+        function lowerHand(item, action) {
+            if (item.hand) recordHand(item, action);
+            item.hand = false; item.handAt = 0; item.handQuestion = '';
+            io.to(item.id).emit('hand-lowered');
+        }
+        socket.on('raise-hand', (data) => {
             const who = identity(socket);
             const item = state.online.get(socket.id) || state.agents.get(socket.id);
             if (!who || !item) return;
             const key = socket.data.key || socket.id;
             if (!allow(`hand:${key}`, 8, 60000)) return;
-            item.hand = Boolean(up);
+            const up = typeof data === 'object' && data ? Boolean(data.up) : Boolean(data);
+            if (up && !item.hand) {
+                item.hand = true; item.handAt = Date.now();
+                item.handQuestion = cleanText(data && data.question, 200);
+                recordHand(item, 'raised');
+                const spam = spamOf(key);
+                if (Date.now() - spam.handTs > 20000) {
+                    spam.handTs = Date.now();
+                    toTeacher('hand-raised', { id: socket.id, name: who.name, question: item.handQuestion, inClass: socket.data.role === 'agent' });
+                }
+                const raisedAt = item.handAt, lessonId = state.lessonId;
+                setTimeout(() => {
+                    if (state.lessonId === lessonId && item.hand && item.handAt === raisedAt && io.sockets.sockets.has(socket.id)) toTeacher('hand-raised', { id: socket.id, name: who.name, question: item.handQuestion, reminder: true, inClass: socket.data.role === 'agent' });
+                }, options.handReminderMs || 45000).unref();
+            } else if (!up) lowerHand(item, 'self-lowered');
             pushRoster();
-            // Руку подняли-опустили-подняли — учитель получает одно уведомление в 20 секунд, а не десять
-            const sp = spamOf(key);
-            if (item.hand && Date.now() - sp.handTs > 20000) {
-                sp.handTs = Date.now();
-                toTeacher('hand-raised', { id: socket.id, name: who.name, inClass: socket.data.role === 'agent' });
-            }
         });
         socket.on('lower-hand', (data = {}) => {
             if (socket.data.role !== 'teacher') return;
             const item = state.online.get(data.id) || state.agents.get(data.id);
             if (!item) return;
-            item.hand = false;
-            io.to(data.id).emit('hand-lowered');
+            lowerHand(item, data.answered ? 'answered-chat' : 'lowered'); pushRoster();
+        });
+        function setVoice(user, on, action = 'voice') {
+            user.voice = Boolean(on);
+            if (user.voice) lowerHand(user, action);
+            io.to(user.id).emit(user.voice ? 'voice-granted' : 'voice-revoked');
+        }
+        socket.on('set-voice-mode', (mode) => {
+            if (socket.data.role !== 'teacher' || !['free', 'permission'].includes(mode)) return;
+            state.voiceMode = mode; io.emit('voice-mode', mode);
+            if (mode === 'permission') for (const u of state.online.values()) if (u.voice) setVoice(u, false);
             pushRoster();
         });
-
+        socket.on('request-voice', (on) => {
+            const user = state.online.get(socket.id);
+            if (!user || !allow('voice:' + socket.id, 60, 60000)) return;
+            if (on && state.voiceMode !== 'free') return;
+            if (user.voice !== Boolean(on)) setVoice(user, Boolean(on));
+            if (!on) lowerHand(user, 'finished');
+            pushRoster();
+        });
         socket.on('teacher-voice', (data = {}) => {
             if (socket.data.role !== 'teacher') return;
-            const user = state.online.get(data.userId);
-            if (!user) return;
-            user.voice = Boolean(data.on);
-            if (user.voice) user.hand = false;
-            io.to(user.id).emit(user.voice ? 'voice-granted' : 'voice-revoked');
+            const users = data.userId === 'all' && !data.on ? [...state.online.values()] : [state.online.get(data.userId)].filter(Boolean);
+            for (const user of users) setVoice(user, Boolean(data.on));
             pushRoster();
         });
 
@@ -1555,12 +1627,15 @@ function start(options = {}) {
         state.banned.clear();
         state.muted.clear();
         state.spam.clear();
-        state.strokes = [];
+        state.strokes = []; state.boardUndo = [];
         rewriteStrokes();
         state.chat = [];
         state.polls = [];
         state.collections = [];
         state.assignments = [];
+        interactive.reset();
+        state.handHistory = []; state.voiceMode = 'permission';
+        io.emit('voice-mode', state.voiceMode); toTeacher('hand-history', []);
         state.focus = { enabled: false, words: [] };
         state.whiteboard = { active: false, transform: { cx: 0, cy: 0, w: 1600, h: 900 } };
         state.publicUrl = null;
@@ -1606,6 +1681,8 @@ function start(options = {}) {
         state.polls = p.polls;
         state.collections = p.collections;
         state.assignments = p.assignments;
+        interactive.restore(p.interactive);
+        state.handHistory=p.handHistory||[];toTeacher('hand-history',state.handHistory);
         state.banned = new Set(p.banned);
         if (p.lessonId) state.lessonId = p.lessonId;
         if (p.teacherName) state.teacherName = p.teacherName;
@@ -1628,6 +1705,7 @@ function start(options = {}) {
 
     function getLessonSnapshot() {
         return {
+            interactive: interactive.snapshot(),
             teacherName: state.teacherName,
             lessonStartedAt: state.lessonStartedAt,
             endedAt: Date.now(),
@@ -1691,11 +1769,12 @@ function start(options = {}) {
                 }
             });
             server.listen(port, () => {
-                actualPort = port;
+                actualPort = server.address().port;
                 log(`Сервер урока запущен: http://localhost:${port}`);
                 resolve({
-                    port,
+                    port: actualPort,
                     token: TEACHER_TOKEN,
+                    fingerprint: teacherIdentity.fingerprint,
                     io,
                     links,
                     setPublicUrl(url) {
@@ -1727,6 +1806,7 @@ function start(options = {}) {
                     discardPrevious,
                     endLesson,
                     close() {
+                        interactive.close();
                         clearInterval(announceTimer);
                         try { udp.close(); } catch (e) {}
                         try { announcer.close(); } catch (e) {}

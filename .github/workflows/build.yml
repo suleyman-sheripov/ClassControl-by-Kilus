@@ -6,6 +6,7 @@ name: Сборка установщиков
 on:
   workflow_dispatch:
   push:
+    branches: ['fix/feedback-2026-11-05']
     tags: ['v*']
   # Для PR — чтобы установщики можно было скачать и проверить до слияния
   pull_request:
@@ -23,6 +24,12 @@ jobs:
         with: { node-version: 22 }
       - run: npm --prefix server ci
       - run: npm test
+      - name: Проверка Electron и FPS на виртуальном дисплее
+        run: |
+          npm ci
+          npm --prefix teacher ci
+          npm --prefix agent ci
+          xvfb-run -a npm run test:desktop
 
   build:
     needs: test
@@ -44,6 +51,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
+      - name: Проверка системного хука Windows
+        if: runner.os == 'Windows'
+        run: node scripts/test-windows-guard.js
       - name: Приложение учителя
         run: |
           npm --prefix teacher ci
@@ -59,6 +69,7 @@ jobs:
             dist/*/*.exe
             dist/*/*.dmg
             dist/*/*.AppImage
+            dist/*/*.zip
           if-no-files-found: error
 
   release:

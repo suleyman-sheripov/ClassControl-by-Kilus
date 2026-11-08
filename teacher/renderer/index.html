@@ -36,7 +36,7 @@
           <svg class="i"><use href="#i-board"/></svg>Доска
         </button>
         <button class="seg__btn" role="tab" id="tab-tasks" aria-selected="false">
-          <svg class="i"><use href="#i-tasks"/></svg>Задания<span class="seg__count hidden" id="tab-tasks-count"></span>
+          <svg class="i"><use href="#i-tasks"/></svg>Интерактив<span class="seg__count hidden" id="tab-tasks-count"></span>
         </button>
       </nav>
 
@@ -54,7 +54,7 @@
         <button class="icon-btn" id="toggle-right" type="button" title="Участники и чат" aria-label="Участники и чат">
           <svg class="i"><use href="#i-sidebar-right"/></svg><span class="count count--accent toggle-badge hidden" id="right-badge">0</span>
         </button>
-        <button class="icon-btn" id="settings-btn" type="button" title="Настройки" aria-label="Настройки"><svg class="i"><use href="#i-settings"/></svg></button>
+        <button class="btn btn--sm" id="hands-global" type="button">Руки и история</button><button class="icon-btn" id="help-btn" type="button" title="Справка" aria-label="Справка">?</button><button class="icon-btn" id="settings-btn" type="button" title="Настройки" aria-label="Настройки"><svg class="i"><use href="#i-settings"/></svg></button>
         <button class="icon-btn" id="menu-btn" type="button" title="Урок и настройки" aria-label="Урок и настройки"><svg class="i"><use href="#i-more"/></svg></button>
       </div>
     </header>
@@ -70,22 +70,11 @@
             <span class="panel__meta" id="viewers-meta"></span>
           </div>
           <div class="panel__body">
-            <div class="preview" id="preview">
+            <button class="preview source-btn" id="source-btn" type="button" title="Сменить источник эфира">
               <video id="preview-video" autoplay playsinline muted></video>
-              <button class="preview__empty" id="preview-empty" type="button">
-                <span class="tile tile--lilac"><svg class="i i-lg"><use href="#i-cast"/></svg></span>
-                <span>Выберите, что показать</span>
-              </button>
+              <span class="preview__empty" id="preview-empty"><span class="source-btn__thumb" id="source-thumb"><svg class="i i-lg"><use href="#i-monitor"/></svg></span></span>
               <span class="preview__live hidden" id="preview-live"><span class="dot dot--live dot--pulse"></span>Эфир</span>
-            </div>
-
-            <button class="source-btn" id="source-btn" type="button">
-              <span class="source-btn__thumb" id="source-thumb"><svg class="i"><use href="#i-monitor"/></svg></span>
-              <span class="source-btn__text">
-                <span class="source-btn__label">Источник</span>
-                <span class="source-btn__name truncate" id="source-name">Весь экран</span>
-              </span>
-              <svg class="i i-sm faint"><use href="#i-chevron-down"/></svg>
+              <span class="preview-source-caption"><span id="source-name">Весь экран</span> · Сменить</span>
             </button>
 
             <button class="disclosure" id="studio-more" type="button" aria-expanded="false" aria-controls="studio-settings">
@@ -96,7 +85,7 @@
             <div class="studio-settings" id="studio-settings">
             <div class="field-row">
               <label class="field">
-                <span class="field__label">Качество</span>
+                <span class="field__label">Разрешение</span>
                 <select class="select" id="quality">
                   <option value="1920x1080">1080p</option>
                   <option value="1280x720">720p</option>
@@ -155,6 +144,8 @@
               <button class="seg__btn" data-tool="eraser" type="button" title="Ластик (E)"><svg class="i"><use href="#i-eraser"/></svg>Ластик</button>
               <button class="seg__btn" data-tool="hand" type="button" title="Рука (H или пробел)"><svg class="i"><use href="#i-hand"/></svg>Рука</button>
             </div>
+            <div class="seg" style="flex-wrap:wrap" aria-label="Объекты доски"><button class="seg__btn" data-tool="rectangle" type="button">Прямоугольник</button><button class="seg__btn" data-tool="ellipse" type="button">Овал</button><button class="seg__btn" data-tool="arrow" type="button">Стрелка</button><button class="seg__btn" data-tool="text" type="button">Текст</button><button class="seg__btn" data-tool="select" type="button">Выделение</button><button class="seg__btn" id="board-image" type="button">Картинка</button><input id="board-image-file" type="file" accept="image/png,image/jpeg,image/webp" class="hidden"></div>
+            <p class="field__hint">Выделение: тяните объект, Shift — меняйте размер, Delete — удалите.</p>
             <div class="field">
               <span class="field__label">Цвет</span>
               <div class="swatches" id="swatches"></div>
@@ -211,16 +202,14 @@
 
         <div class="view hidden" id="view-tasks">
           <div class="toolbar">
-            <span class="toolbar__title">Задания урока</span>
+            <span class="toolbar__title">Интерактив урока</span>
             <div class="toolbar__right">
-              <button class="btn btn--sm" id="task-assign" type="button"><svg class="i i-sm"><use href="#i-download"/></svg><span>Раздать файл</span></button>
-              <button class="btn btn--sm" id="task-collect" type="button"><svg class="i i-sm"><use href="#i-inbox"/></svg><span>Собрать работы</span></button>
-              <button class="btn btn--sm btn--primary" id="task-poll" type="button"><svg class="i i-sm"><use href="#i-poll"/></svg><span>Опрос</span></button>
+              <button class="btn btn--sm hidden" id="task-add" type="button">＋ Добавить</button>
               <input type="file" id="assign-file" class="hidden">
             </div>
           </div>
           <div class="tasks-scroll">
-            <div class="tasks" id="tasks"></div>
+            <div class="tasks" id="tasks"></div><div class="tasks" id="interactive-extra"></div>
           </div>
         </div>
 
@@ -249,7 +238,8 @@
             </div>
             <span class="panel__actions"><span class="badge badge--accent hidden" id="hands-badge"><svg class="i i-sm"><use href="#i-raise"/></svg><span id="hands-count">0</span></span></span>
           </div>
-          <ul class="rows people__list" id="people-list"></ul>
+          <div class="voice-controls"><label>Микрофоны дома<select class="select" id="voice-mode"><option value="permission">По разрешению</option><option value="free">Свободно</option></select></label><button class="btn btn--sm" id="mute-all" type="button">Выключить всем</button></div>
+<ul class="rows people__list" id="people-list"></ul>
         </section>
 
         <section class="panel chat-panel">
@@ -277,7 +267,7 @@
     <!-- ===== Строка состояния ===== -->
     <footer class="statusbar">
       <span class="statusbar__item" id="status-server"><span class="dot" id="server-dot"></span><span id="server-text">Запуск сервера…</span></span>
-      <button class="statusbar__item statusbar__link" id="status-lan" type="button" title="Скопировать адрес"><svg class="i i-sm"><use href="#i-wifi"/></svg><span class="mono" id="lan-text">—</span></button>
+      <button class="statusbar__item statusbar__link" id="status-lan" type="button" title="Скопировать адрес"><svg class="i i-sm"><use href="#i-wifi"/></svg><span>Адрес для ПК класса: </span><span class="mono" id="lan-text">—</span></button>
       <button class="statusbar__item statusbar__link" id="status-home" type="button"><svg class="i i-sm"><use href="#i-globe"/></svg><span id="home-text">Доступ из дома выключен</span></button>
       <span class="statusbar__spacer"></span>
       <span class="statusbar__item num" id="status-pcs"><svg class="i i-sm"><use href="#i-monitor"/></svg><span id="status-pcs-n">0</span></span>
@@ -313,6 +303,8 @@
   <script src="../../shared/ui/icons.js"></script>
   <script src="../../shared/ui/vendor/qrcode.js"></script>
   <script src="../../shared/ui/common.js"></script>
+  <script src="../../shared/ui/interactive.js"></script><script src="interactive.js"></script>
+  <script src="help.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -7,7 +7,7 @@
  *   npm start -- --agent  ещё и настоящий агент ученика на этом же компьютере
  *   npm start -- --real   без виртуального класса: настоящий урок
  *
- * Сам поставит зависимости при первом запуске. Нужен только Node.js 20+.
+ * Сам поставит зависимости при первом запуске. Нужен только Node.js 22.12+.
  */
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
@@ -19,8 +19,8 @@ const isWin = process.platform === 'win32';
 const say = (m) => console.log('\x1b[35m●\x1b[0m ' + m);
 
 const major = Number(process.versions.node.split('.')[0]);
-if (major < 20) {
-  console.error(`Нужен Node.js 20 или новее (сейчас ${process.versions.node}). Скачайте LTS: https://nodejs.org`);
+if (major < 22 || (major===22 && Number(process.versions.node.split('.')[1])<12)) {
+  console.error(`Нужен Node.js 22.12 или новее (сейчас ${process.versions.node}). Скачайте LTS: https://nodejs.org`);
   process.exit(1);
 }
 
@@ -30,7 +30,7 @@ function ensure(dir, label) {
   const marker = path.join(root, dir, 'node_modules', '.package-lock.json');
   if (fs.existsSync(marker) && fs.statSync(marker).mtimeMs >= fs.statSync(pkg).mtimeMs) return;
   say(`Ставлю зависимости: ${label}… (один раз, пару минут)`);
-  const r = spawnSync(isWin ? 'npm.cmd' : 'npm', ['install', '--no-audit', '--no-fund'], { cwd: path.join(root, dir), stdio: 'inherit', shell: isWin });
+  const r = spawnSync(isWin ? 'npm.cmd' : 'npm', ['ci', '--no-audit', '--no-fund'], { cwd: path.join(root, dir), stdio: 'inherit', shell: isWin });
   if (r.status !== 0) { console.error(`Не удалось поставить зависимости (${label}). Проверьте интернет и запустите снова.`); process.exit(1); }
 }
 ensure('server', 'сервер урока');

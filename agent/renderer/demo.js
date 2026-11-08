@@ -24,7 +24,7 @@
   async function start(address) {
     if (!address || socket) return;
     // Клиент Socket.IO — свой, из программы: с адреса учителя скрипты не загружаем
-    socket = io(address, { transports: ['websocket'] });
+    socket = CC.agentSocket(address, { transports: ['websocket'] });
     socket.on('connect', () => socket.emit('register-demo-viewer', { hostname: info.hostname }));
     socket.on('board-state', (b) => {
       board.setStrokes(b.strokes || []);

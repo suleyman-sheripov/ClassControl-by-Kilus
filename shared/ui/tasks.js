@@ -12,6 +12,7 @@
   CC.renderStudentTasks = function (root, tasks, handlers) {
     root.replaceChildren();
     const { poll, collect } = tasks || {};
+    if(tasks?.interactive)root.appendChild(CC.interactiveStudent(tasks.interactive,{send:handlers.onInteractive,workUrl:handlers.workUrl}));
     if (poll) root.appendChild(pollBlock(poll, handlers));
     if (collect) root.appendChild(collectBlock(collect, handlers));
     if (!poll && !collect) {

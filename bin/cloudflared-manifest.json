@@ -1,0 +1,11 @@
+{
+  "version": "2026.10.7",
+  "source": "https://github.com/cloudflare/cloudflared/releases/expanded_assets/2026.10.7",
+  "assets": {
+    "cloudflared-windows-amd64.exe": "2493dbc168923bb3e59e5e7716f71deced92992eea9acd6e9d74f84ac7751343",
+    "cloudflared-darwin-amd64.tgz": "02f3edfd87684dd5b705607688e4eb4b323f6e777b81e7b3a85af556aa356848",
+    "cloudflared-darwin-arm64.tgz": "3586ccf397e98e5f437e60e7c307ca6ac463e110580503af8bb8e6f9ebf831bd",
+    "cloudflared-linux-amd64": "1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872",
+    "cloudflared-linux-arm64": "3df43aedc9ff291d1735b5cb576cb97e0b157488796db2e32b28aecabb445775"
+  }
+}

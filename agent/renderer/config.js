@@ -26,6 +26,7 @@
     mode = m;
     document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('is-active', b.dataset.mode === m));
     $('#manual').classList.toggle('hidden', m !== 'manual');
+    $('#auto-hint').classList.toggle('hidden', m !== 'auto');
   }
   document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
 
@@ -39,20 +40,32 @@
     $('#autoStart').checked = c.autoStart;
     $('#notifications').checked = c.notifications;
     $('#st-dot').className = 'dot ' + (c.connected ? 'dot--positive' : 'dot--warning dot--pulse');
-    $('#st-text').textContent = c.connected ? 'На связи с учителем · ' + (c.serverAddressNow || '').replace('http://', '') : 'Учитель пока не найден';
+    $('#st-text').textContent = c.pendingIdentity&&!c.trustedKey ? 'Подтвердите ключ учителя кнопкой «Проверить подключение»' : c.connected ? 'На связи с учителем · ' + (c.serverAddressNow || '').replace('http://', '') : 'Учитель пока не найден';
     const found = $('#found');
     found.replaceChildren();
     (c.found || []).forEach(f => {
       const label = [f.room || 'кабинет не указан', f.teacher].filter(Boolean).join(', ');
       const b = CC.el('button', { class: 'found__item', type: 'button', title: 'Закрепить за этим кабинетом' }, CC.icon('monitor', 'i-sm'),
         CC.el('span', { style: { fontFamily: 'var(--font)' }, text: label }), CC.el('span', { class: 'faint', style: { marginLeft: 'auto' }, text: f.address.replace('http://', '') }));
-      b.addEventListener('click', () => { if (f.room) $('#room').value = f.room; else { setMode('manual'); $('#serverAddress').value = f.address.replace('http://', ''); } });
+      b.addEventListener('click', () => { if (f.room) $('#room').value = f.room; setMode('manual'); $('#serverAddress').value = f.address.replace('http://', ''); });
       found.appendChild(b);
     });
     $('#found-wrap').classList.toggle('hidden', !(c.found || []).length);
     setMode(c.serverMode || 'auto');
   }
 
+  $('#check-address').addEventListener('click', async () => {
+    const button=$('#check-address'), result=$('#check-result');button.disabled=true;result.textContent='Проверяю…';
+    try {
+      const state=await api.configGet();
+      const r=await api.configCheck($('#serverAddress').value.trim() || state?.serverAddressNow || state?.lastServer || state?.found?.[0]?.address || '');
+      if(!r.ok) {result.textContent='Не удалось подключиться: '+r.error;return;}
+      result.textContent=`${r.teacher} · ${r.room || 'Кабинет не указан'}. Ключ: ${r.fingerprint.match(/.{1,4}/g).join(' ')}`;
+      if (await CC.confirm('Связать ПК с этим учителем?', 'Сравните ключ с указанным у учителя в «Справке». '+r.fingerprint.match(/.{1,4}/g).join(' ')+'. Подтверждайте только совпадающий ключ своего кабинета.', 'Связать')) {
+        if(await api.configTrust(r.fingerprint)) {result.textContent='Ключ учителя сохранён. Подключаюсь…';setMode('manual');$('#serverAddress').value=r.address;}
+      }
+    } finally {button.disabled=false;}
+  });
   $('#form').addEventListener('submit', async (e) => {
     e.preventDefault();
     await api.configSave({

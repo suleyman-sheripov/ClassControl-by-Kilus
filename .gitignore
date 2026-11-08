@@ -10,3 +10,8 @@ server/uploads/
 # cloudflared кладётся вручную (необязательно) — в репозиторий не коммитим
 bin/cloudflared*
 cloudflared.exe
+
+!bin/cloudflared-manifest.json
+bin/win-*/
+bin/mac-*/
+bin/linux-*/

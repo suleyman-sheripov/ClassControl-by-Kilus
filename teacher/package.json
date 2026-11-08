@@ -1,6 +1,6 @@
 {
   "name": "classcontrol-teacher",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "description": "ClassControl — приложение учителя",
   "main": "main.js",
   "author": "Kilus",
@@ -56,10 +56,12 @@
         "to": "shared"
       },
       {
-        "from": "../bin",
+        "from": "../bin/${os}-${arch}",
         "to": "bin",
         "filter": [
-          "cloudflared*"
+          "cloudflared*",
+          "integrity.json",
+          "LICENSE-cloudflared.txt"
         ]
       }
     ],
@@ -85,7 +87,11 @@
         }
       ],
       "category": "public.app-category.education",
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.png",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Микрофон учителя используется для эфира и записи урока.",
+        "NSScreenCaptureUsageDescription": "Экран и выбранные окна используются для демонстрации ученикам и записи урока."
+      }
     },
     "linux": {
       "target": [
@@ -94,10 +100,20 @@
       "category": "Education",
       "icon": "assets/icon.png"
     },
-    "artifactName": "ClassControl-${version}-${os}-${arch}.${ext}"
+    "artifactName": "ClassControl-${version}-${os}-${arch}.${ext}",
+    "beforePack": "build/before-pack.js",
+    "toolsets": {
+      "nsis": "1.2.1",
+      "wine": "1.0.1",
+      "winCodeSign": "1.1.0"
+    }
   },
   "devDependencies": {
     "electron": "^45.2.0",
     "electron-builder": "^26.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/suleyman-sheripov/ClassControl-by-Kilus.git"
   }
 }
